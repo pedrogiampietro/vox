@@ -1,0 +1,14 @@
+# Proxy reverso com HTTPS automatico (Let's Encrypt).
+#
+# O Caddy resolve o certificado sozinho, renova sozinho e faz o upgrade para
+# WebSocket de forma transparente. E ele que transforma o servidor num destino
+# valido para o cliente web: sem HTTPS o navegador nao libera o microfone.
+
+{$VOX_DOMAIN} {
+	encode zstd gzip
+
+	# O upgrade do /vox passa direto; encode nao toca conexao ja promovida.
+	reverse_proxy vox:9987 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}

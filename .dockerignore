@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+dist
+**/dist
+data
+.git
+.env
+packages/desktop
+# O npm precisa enxergar todo workspace citado no lockfile, mesmo os que a
+# imagem nao instala.
+!packages/desktop/package.json
+packages/desktop/src-tauri

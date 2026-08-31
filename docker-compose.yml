@@ -1,0 +1,28 @@
+# Servidor sozinho, porta exposta direto. Bom para LAN, desenvolvimento, ou
+# quando ja existe um proxy reverso na sua infraestrutura.
+#
+# Para HTTPS automatico com dominio proprio, some o override:
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+
+services:
+  vox:
+    build: .
+    ports:
+      - "9987:9987"
+    environment:
+      VOX_NAME: ${VOX_NAME:-Servidor Vox}
+      VOX_MOTD: ${VOX_MOTD:-Bem-vindo.}
+      VOX_PASSWORD: ${VOX_PASSWORD:-}
+      VOX_MAX_CLIENTS: ${VOX_MAX_CLIENTS:-128}
+    volumes:
+      - vox-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9987/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  vox-data:

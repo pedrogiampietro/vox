@@ -1,0 +1,348 @@
+/* Interface do Vox. Sem framework: a folha inteira cabe em um scroll. */
+
+:root {
+  --bg: #14171c;
+  --panel: #1b1f26;
+  --panel-2: #222833;
+  --line: #2c333f;
+  --text: #e6eaf0;
+  --muted: #8b94a3;
+  --accent: #4ade80;
+  --accent-dim: #22c55e;
+  --danger: #f87171;
+  --radius: 8px;
+  --font: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+#app {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #3d4757;
+}
+
+button.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+  color: #07130c;
+  font-weight: 600;
+}
+
+button.on {
+  background: #3a2020;
+  border-color: #6b2f2f;
+  color: var(--danger);
+}
+
+input,
+select {
+  background: #12151a;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  width: 100%;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+
+/* ------------------------------------------------------------- entrada -- */
+
+.login {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login form {
+  width: min(380px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 26px;
+  display: grid;
+  gap: 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.5px;
+}
+
+.brand span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------------------------------------------------------------- app -- */
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+header .name {
+  font-weight: 600;
+}
+
+header .motd {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+header .motd.warn {
+  color: var(--danger);
+}
+
+header .spacer {
+  margin-left: auto;
+}
+
+.stat {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+main {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  min-height: 0;
+}
+
+.tree {
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  padding: 8px;
+}
+
+.channel {
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd3e0;
+}
+
+.channel:hover {
+  background: var(--panel-2);
+}
+
+.channel.here {
+  background: #1e2a22;
+  color: var(--accent);
+}
+
+.channel .count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 26px;
+  border-radius: var(--radius);
+  color: #b9c2d0;
+}
+
+.user.me {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3d4757;
+  flex: none;
+  transition: background 80ms linear;
+}
+
+.user.talking .dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.tag {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.tag.off {
+  color: var(--danger);
+}
+
+/* --------------------------------------------------------------- chat -- */
+
+.chat {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-height: 0;
+}
+
+.log {
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.line time {
+  color: var(--muted);
+  font-size: 11px;
+  margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.line b {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.line.system {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* --------------------------------------------------------- barra baixa -- */
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.meter {
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: #12151a;
+  overflow: hidden;
+}
+
+.meter i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 60ms linear;
+}
+
+footer label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+footer select {
+  width: auto;
+}
+
+.notice {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #3a2020;
+  border: 1px solid #6b2f2f;
+  color: #ffd9d9;
+  padding: 9px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+@media (max-width: 720px) {
+  main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 40% 1fr;
+  }
+
+  .tree {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+}

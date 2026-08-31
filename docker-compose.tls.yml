@@ -1,0 +1,31 @@
+# Override de producao: Caddy na frente, com certificado automatico.
+# Exige VOX_DOMAIN apontando para este servidor e as portas 80 e 443 livres.
+
+services:
+  vox:
+    # So o Caddy fala com o servidor; nada de porta exposta para a internet.
+    ports: !override []
+    environment:
+      # Sem isto o IP de todo mundo vira o do proxy e o teto por IP derruba
+      # o servidor inteiro no primeiro punhado de usuarios.
+      VOX_TRUST_PROXY: "true"
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - vox
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      VOX_DOMAIN: ${VOX_DOMAIN:?defina VOX_DOMAIN no .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
