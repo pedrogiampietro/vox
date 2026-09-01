@@ -15,8 +15,12 @@ import {
   encodeClientMessage,
 } from '@vox/protocol';
 import type { ClientMessage, ServerMessage, VoicePacket } from '@vox/protocol';
+import type { Identity } from '../identity.js';
 
 export type LinkState = 'offline' | 'connecting' | 'online';
+
+/** Por onde a voz esta andando neste momento. */
+export type VoiceTransport = 'ws' | 'quic';
 
 export interface ConnectionHandlers {
   onState(state: LinkState, detail: string): void;
@@ -32,6 +36,13 @@ const BACKPRESSURE_BYTES = 64 * 1024;
 
 const PING_INTERVAL_MS = 4000;
 
+/**
+ * Datagramas em voo antes de comecar a descartar. Diferente do WebSocket, aqui
+ * nao ha fila que cresce sozinha - mas a promessa de write ainda pode demorar
+ * se a placa de rede engasgar, e voz velha nao vale a pena.
+ */
+const MAX_INFLIGHT_DATAGRAMS = 8;
+
 /** Espera entre tentativas: 1s, 2s, 4s... ate o teto. */
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
@@ -42,10 +53,13 @@ const RETRY_MAX_MS = 15_000;
  */
 const COLD_ATTEMPTS = 3;
 
-interface Target {
+export interface Target {
   address: string;
   nickname: string;
   password: string;
+  identity: Identity;
+  /** Servidor virtual; 0 = o primeiro do processo. */
+  serverId: number;
 }
 
 export class Connection {
@@ -58,6 +72,21 @@ export class Connection {
   private everOnline = false;
   private closedByUser = false;
 
+  /** Host do socket de controle, base para achar o canal de voz. */
+  private host = '';
+  /**
+   * Sobe a cada (re)conexao. Um upgrade de voz que estava a meio caminho
+   * quando a conexao caiu descobre por aqui que ja nao interessa a ninguem.
+   */
+  private generation = 0;
+
+  private wt: WebTransport | null = null;
+  private wtWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private wtInflight = 0;
+
+  /** WebSocket ate o WebTransport subir; 'quic' quando a voz migrou. */
+  voiceTransport: VoiceTransport = 'ws';
+
   /** Ida e volta ate o servidor, em ms. */
   rtt = 0;
   /** Pacotes de voz descartados por congestionamento. */
@@ -69,9 +98,9 @@ export class Connection {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  connect(address: string, nickname: string, password: string): void {
+  connect(target: Target): void {
     this.close();
-    this.target = { address, nickname, password };
+    this.target = target;
     this.attempt = 0;
     this.everOnline = false;
     this.closedByUser = false;
@@ -88,7 +117,8 @@ export class Connection {
       this.attempt === 1 ? 'conectando...' : `reconectando (tentativa ${this.attempt})`,
     );
 
-    const url = resolveUrl(target.address);
+    const url = resolveUrl(target.address, target.serverId);
+    this.host = hostOf(url);
     let ws: WebSocket;
     try {
       ws = new WebSocket(url);
@@ -105,6 +135,7 @@ export class Connection {
         version: PROTOCOL_VERSION,
         nickname: target.nickname,
         password: target.password,
+        publicKey: target.identity.publicKey,
       });
       this.pingTimer = setInterval(() => {
         if (this.online) this.send({ t: Op.Ping, stamp: performance.now() });
@@ -178,12 +209,32 @@ export class Connection {
       this.rtt = Math.round(performance.now() - msg.stamp);
       return;
     }
+    // O desafio se resolve aqui dentro: quem chamou connect nao precisa saber
+    // que existe um handshake de tres etapas.
+    if (msg.t === Op.Challenge) {
+      void this.answerChallenge(msg.nonce);
+      return;
+    }
     if (msg.t === Op.Welcome) {
       this.attempt = 0;
       this.everOnline = true;
       this.handlers.onState('online', msg.serverName);
+      void this.upgradeVoice(msg.voiceToken, msg.wtPort, msg.wtCertHash);
     }
     this.handlers.onMessage(msg);
+  }
+
+  private async answerChallenge(nonce: Uint8Array): Promise<void> {
+    const target = this.target;
+    if (!target) return;
+    const generation = this.generation;
+    try {
+      const signature = await target.identity.sign(nonce);
+      if (generation !== this.generation) return; // caiu enquanto assinava
+      this.send({ t: Op.Auth, signature });
+    } catch {
+      this.giveUp('falha ao assinar o desafio');
+    }
   }
 
   send(m: ClientMessage): void {
@@ -193,6 +244,26 @@ export class Connection {
 
   /** Caminho quente: sem alocacao alem do proprio frame. */
   sendVoice(frame: Uint8Array): void {
+    const writer = this.wtWriter;
+    if (writer) {
+      if (this.wtInflight >= MAX_INFLIGHT_DATAGRAMS) {
+        this.droppedVoice++;
+        return;
+      }
+      this.wtInflight++;
+      const generation = this.generation;
+      writer.write(frame).then(
+        () => {
+          this.wtInflight--;
+        },
+        () => {
+          this.wtInflight--;
+          this.dropVoiceChannel(generation);
+        },
+      );
+      return;
+    }
+
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (ws.bufferedAmount > BACKPRESSURE_BYTES) {
@@ -200,6 +271,93 @@ export class Connection {
       return;
     }
     ws.send(frame);
+  }
+
+  // ------------------------------------------------------ canal de voz --
+
+  /**
+   * Tenta migrar a voz para datagramas QUIC. E oportunista de proposito:
+   * qualquer tropeco aqui deixa a voz no WebSocket, que ja funciona. O usuario
+   * nunca fica sem audio por causa de uma otimizacao.
+   */
+  private async upgradeVoice(
+    token: Uint8Array,
+    port: number,
+    certHash: Uint8Array,
+  ): Promise<void> {
+    if (port === 0 || typeof WebTransport === 'undefined') return;
+    const generation = this.generation;
+
+    try {
+      // Certificado proprio precisa do hash; com certificado valido, nao.
+      const init: WebTransportOptions = {};
+      if (certHash.length > 0) {
+        // Copia para um ArrayBuffer proprio: a API exige buffer nao compartilhado.
+        init.serverCertificateHashes = [
+          { algorithm: 'sha-256', value: Uint8Array.from(certHash) },
+        ];
+      }
+      const wt = new WebTransport(`https://${this.host}:${port}/vox`, init);
+      await wt.ready;
+      if (generation !== this.generation) return wt.close();
+
+      // O segredo vai por stream: handshake perdido deixaria o canal pendurado.
+      const stream = await wt.createBidirectionalStream();
+      const writer = stream.writable.getWriter();
+      await writer.write(token);
+      const reply = await stream.readable.getReader().read();
+      if (reply.value?.[0] !== 1) return wt.close();
+      if (generation !== this.generation) return wt.close();
+
+      // A especificacao trocou `writable` por `createWritable()`; navegadores
+      // estao em pontos diferentes dessa transicao.
+      const duplex = wt.datagrams as WebTransportDatagramDuplexStream & {
+        createWritable?: () => WritableStream<Uint8Array>;
+      };
+      const datagrams = duplex.createWritable ? duplex.createWritable() : duplex.writable;
+      this.wt = wt;
+      this.wtWriter = datagrams.getWriter();
+      this.wtInflight = 0;
+      this.voiceTransport = 'quic';
+      void wt.closed.catch(() => {}).then(() => this.dropVoiceChannel(generation));
+      void this.readDatagrams(wt, generation);
+    } catch {
+      this.dropVoiceChannel(generation);
+    }
+  }
+
+  private async readDatagrams(wt: WebTransport, generation: number): Promise<void> {
+    const reader = wt.datagrams.readable.getReader();
+    for (;;) {
+      let frame: Uint8Array | undefined;
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        frame = chunk.value;
+      } catch {
+        break;
+      }
+      if (generation !== this.generation) return;
+      if (!frame || frame[0] !== FrameKind.Voice) continue;
+      const packet = decodeVoice(frame);
+      if (packet) this.handlers.onVoice(packet);
+    }
+    this.dropVoiceChannel(generation);
+  }
+
+  /** Volta a voz para o WebSocket. Ignora avisos de uma conexao ja substituida. */
+  private dropVoiceChannel(generation: number): void {
+    if (generation !== this.generation) return;
+    this.voiceTransport = 'ws';
+    this.wtWriter = null;
+    this.wtInflight = 0;
+    const wt = this.wt;
+    this.wt = null;
+    try {
+      wt?.close();
+    } catch {
+      // ja fechada
+    }
   }
 
   /** Saida deliberada do usuario: cancela qualquer tentativa pendente. */
@@ -212,6 +370,18 @@ export class Connection {
   }
 
   private teardown(): void {
+    // Invalida qualquer upgrade de voz em andamento antes de soltar o socket.
+    this.generation++;
+    this.voiceTransport = 'ws';
+    this.wtWriter = null;
+    this.wtInflight = 0;
+    try {
+      this.wt?.close();
+    } catch {
+      // ja fechada
+    }
+    this.wt = null;
+
     if (this.pingTimer !== null) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;
@@ -242,13 +412,24 @@ const DEFAULT_PORT = 9987;
  * build servido pelo proprio Vox). No desktop nao existe origem para herdar,
  * entao vazio cai na maquina local.
  */
-function resolveUrl(address: string): string {
+/** Hostname do socket de controle: o canal de voz mora no mesmo host. */
+function hostOf(wsUrl: string): string {
+  try {
+    return new URL(wsUrl).hostname;
+  } catch {
+    return location.hostname;
+  }
+}
+
+function resolveUrl(address: string, serverId = 0): string {
+  // `/vox/3` entra no servidor virtual 3; `/vox` cai no primeiro do processo.
+  const path = serverId > 0 ? `/vox/${serverId}` : '/vox';
   const raw = address.trim();
   if (/^wss?:\/\//i.test(raw)) return raw;
 
   if (!raw) {
-    if (isDesktopShell) return `ws://127.0.0.1:${DEFAULT_PORT}/vox`;
-    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/vox`;
+    if (isDesktopShell) return `ws://127.0.0.1:${DEFAULT_PORT}${path}`;
+    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`;
   }
 
   const host = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
@@ -256,5 +437,5 @@ function resolveUrl(address: string): string {
   // Endereco escrito a mao herda o esquema da pagina: em https, ws:// seria
   // bloqueado como conteudo misto antes mesmo de sair do navegador.
   const scheme = !isDesktopShell && location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${hasPort ? host : `${host}:${DEFAULT_PORT}`}/vox`;
+  return `${scheme}://${hasPort ? host : `${host}:${DEFAULT_PORT}`}${path}`;
 }

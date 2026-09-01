@@ -1,14 +1,21 @@
-# Override de producao: Caddy na frente, com certificado automatico.
+# Override de producao: Caddy na frente com certificado automatico.
 # Exige VOX_DOMAIN apontando para este servidor e as portas 80 e 443 livres.
 
 services:
   vox:
-    # So o Caddy fala com o servidor; nada de porta exposta para a internet.
-    ports: !override []
+    ports: !override
+      # HTTP e WebSocket entram pelo Caddy. So o QUIC precisa de porta propria:
+      # WebTransport e HTTP/3, e proxy reverso HTTP nao encaminha isso.
+      - "9987:9987/udp"
     environment:
       # Sem isto o IP de todo mundo vira o do proxy e o teto por IP derruba
       # o servidor inteiro no primeiro punhado de usuarios.
       VOX_TRUST_PROXY: "true"
+      # O QUIC reaproveita o certificado que o Caddy ja mantem renovado.
+      VOX_WT_CERT: /certs/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${VOX_DOMAIN}/${VOX_DOMAIN}.crt
+      VOX_WT_KEY: /certs/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${VOX_DOMAIN}/${VOX_DOMAIN}.key
+    volumes:
+      - caddy-data:/certs:ro
 
   caddy:
     image: caddy:2-alpine

@@ -79,6 +79,13 @@ export class Writer {
     return this;
   }
 
+  /** Bytes com prefixo u16. */
+  bytes(v: Uint8Array): this {
+    if (v.length > 0xffff) throw new RangeError('bloco acima de 64KB');
+    this.u16(v.length);
+    return this.raw(v);
+  }
+
   /** Bytes crus, sem prefixo. Use por ultimo no pacote. */
   raw(v: Uint8Array): this {
     this.ensure(v.length);
@@ -156,6 +163,15 @@ export class Reader {
     const len = this.u16();
     this.need(len);
     const out = DEC.decode(this.buf.subarray(this.pos, this.pos + len));
+    this.pos += len;
+    return out;
+  }
+
+  /** Bytes com prefixo u16, copiados para memoria propria. */
+  bytes(): Uint8Array {
+    const len = this.u16();
+    this.need(len);
+    const out = this.buf.slice(this.pos, this.pos + len);
     this.pos += len;
     return out;
   }

@@ -1,6 +1,19 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
-export const PROTOCOL_VERSION = 1;
+/**
+ * 3: servidores virtuais, identidade por chave publica e grupos.
+ * 2: Welcome passou a anunciar o canal de voz por WebTransport.
+ */
+export const PROTOCOL_VERSION = 3;
+
+/** Desafio assinado no handshake, para provar a posse da chave privada. */
+export const CHALLENGE_BYTES = 32;
+
+/** Impressao digital da identidade: SHA-256 da chave publica, em hex. */
+export const FINGERPRINT_CHARS = 64;
+
+/** Segredo que liga a sessao WebTransport a sessao de controle. */
+export const VOICE_TOKEN_BYTES = 16;
 
 /** Primeiro byte de todo frame, em qualquer transporte. */
 export enum FrameKind {
@@ -13,18 +26,24 @@ export enum Op {
   // cliente -> servidor
   Hello = 0x01,
   Ping = 0x02,
+  Auth = 0x03,
   JoinChannel = 0x10,
   CreateChannel = 0x11,
   DeleteChannel = 0x12,
   EditChannel = 0x13,
   ChatSend = 0x20,
   SetSelfState = 0x30,
+  KickClient = 0x50,
+  BanClient = 0x51,
+  MoveClient = 0x52,
+  SetClientGroup = 0x53,
 
   // servidor -> cliente
   Welcome = 0x81,
   Pong = 0x82,
   Failure = 0x83,
   Snapshot = 0x84,
+  Challenge = 0x85,
   ChannelAdd = 0x90,
   ChannelRemove = 0x91,
   ChannelUpdate = 0x92,
@@ -82,13 +101,37 @@ export enum FailureCode {
   NotPermitted = 7,
   RateLimited = 8,
   Malformed = 9,
+  BadSignature = 10,
+  Banned = 11,
+  ServerNotFound = 12,
 }
+
+/**
+ * Grupos, em ordem crescente de poder. Comparacao numerica basta: quem tem
+ * grupo maior ou igual ao exigido pode agir - e ninguem age sobre alguem de
+ * grupo maior ou igual ao seu.
+ */
+export enum Group {
+  Guest = 0,
+  Moderator = 1,
+  Admin = 2,
+  Owner = 3,
+}
+
+/** Nome legivel do grupo, usado na interface e no painel. */
+export const GROUP_NAMES: Record<Group, string> = {
+  [Group.Guest]: 'convidado',
+  [Group.Moderator]: 'moderador',
+  [Group.Admin]: 'administrador',
+  [Group.Owner]: 'dono',
+};
 
 export enum RemoveReason {
   Disconnected = 0,
   Timeout = 1,
   Kicked = 2,
   Banned = 3,
+  ServerClosed = 4,
 }
 
 export interface ChannelInfo {
@@ -106,6 +149,9 @@ export interface ClientInfo {
   channelId: number;
   nickname: string;
   flags: number;
+  group: Group;
+  /** Identidade estavel entre sessoes; vazio se o cliente nao apresentou uma. */
+  fingerprint: string;
 }
 
 /** Raiz da arvore de canais / "nenhum canal". */

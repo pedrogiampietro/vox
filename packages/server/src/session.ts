@@ -1,4 +1,13 @@
-import { NO_CHANNEL } from '@vox/protocol';
+import { Group, NO_CHANNEL } from '@vox/protocol';
+
+/**
+ * Saida de voz alternativa (hoje, WebTransport). Quando existe, a voz sai por
+ * ela; quando nao, cai no mesmo socket do controle.
+ */
+export interface VoiceSink {
+  send(frame: Uint8Array): void;
+  close(): void;
+}
 
 /** O que o Hub precisa de um transporte, seja WebSocket, WebTransport ou UDP. */
 export interface PeerSocket {
@@ -27,14 +36,43 @@ export class RateLimiter {
   }
 }
 
+/**
+ * Etapas do handshake.
+ *
+ * `challenged` existe porque a identidade so vale se for provada: entre o
+ * Hello e o Welcome o cliente precisa assinar um desafio aleatorio. Sem esse
+ * estado intermediario, bastaria alegar a chave publica de outra pessoa para
+ * herdar o grupo dela.
+ */
+export type Stage = 'new' | 'challenged' | 'live';
+
 export class Session {
-  /** 0 ate o Hello ser aceito. */
+  /** 0 ate o handshake terminar. */
   id = 0;
+  stage: Stage = 'new';
   nickname = '';
   flags = 0;
   channelId: number = NO_CHANNEL;
-  authenticated = false;
   lastSeen = Date.now();
+
+  /** Servidor virtual desta sessao. */
+  serverId = 0;
+
+  // --- identidade -----------------------------------------------------------
+  publicKey: Uint8Array = new Uint8Array(0);
+  fingerprint = '';
+  group: Group = Group.Guest;
+  /** Desafio pendente de assinatura; vazio fora do estado `challenged`. */
+  nonce: Uint8Array = new Uint8Array(0);
+  /** Apelido pedido no Hello, aplicado so quando a assinatura confere. */
+  wantedNickname = '';
+  /** Se o login foi feito com a senha de admin. */
+  adminLogin = false;
+
+  /** Canal de voz dedicado, quando o cliente conseguiu abrir um. */
+  voice: VoiceSink | null = null;
+  /** Chave do segredo que autentica o canal de voz, em hex. */
+  voiceKey = '';
 
   readonly voiceLimit: RateLimiter;
   readonly controlLimit: RateLimiter;
@@ -48,7 +86,20 @@ export class Session {
     this.controlLimit = new RateLimiter(controlRate);
   }
 
+  get live(): boolean {
+    return this.stage === 'live';
+  }
+
   send(data: Uint8Array): void {
     this.socket.send(data);
+  }
+
+  /**
+   * Voz sai pelo canal dedicado quando existe. Um cliente em WebTransport e
+   * outro em WebSocket convivem no mesmo canal sem o Hub saber a diferenca.
+   */
+  sendVoice(frame: Uint8Array): void {
+    if (this.voice) this.voice.send(frame);
+    else this.socket.send(frame);
   }
 }

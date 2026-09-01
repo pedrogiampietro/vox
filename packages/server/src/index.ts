@@ -1,8 +1,9 @@
 /**
  * Entrada do servidor Vox.
  *
- * Um processo, uma porta: HTTP(S) para saude e para servir o cliente web
- * buildado, e o mesmo socket faz upgrade para WebSocket em /vox.
+ * Um processo, uma porta: HTTP(S) serve o cliente web e o painel, `/api` e a
+ * administracao, `/vox[/id]` faz upgrade para WebSocket, e a mesma porta em UDP
+ * atende o WebTransport.
  */
 
 import { createServer as createHttpServer } from 'node:http';
@@ -10,25 +11,24 @@ import { createServer as createHttpsServer } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
-import { config, tlsEnabled } from './config.js';
-import { Hub } from './hub.js';
+import { adminEnabled, config, tlsEnabled } from './config.js';
+import { AdminApi } from './admin-api.js';
+import { Registry } from './registry.js';
 import { attachWebSocket } from './transport-ws.js';
-import { loadChannels, saveChannels } from './persistence.js';
+import { startVoiceTransport, type VoiceEndpoint } from './transport-wt.js';
 
-// ---------------------------------------------------------------- estado --
+// --------------------------------------------------------------- estado --
 
-const hub = new Hub(() => saveChannels(hub.exportPermanent()));
+const registry = new Registry();
+const admin = new AdminApi(registry);
 
-for (const c of loadChannels()) {
-  const { password, ...info } = c;
-  hub.seedChannel(info, password);
-}
+// ------------------------------------------------------------- arquivos --
 
-// ------------------------------------------------------------------ http --
-
-/** Se o cliente web foi buildado, servimos dele mesmo - um processo so. */
+/** Cliente e painel, servidos do mesmo processo quando foram buildados. */
 const WEB_ROOT = resolve(process.cwd(), 'packages/web/dist');
+const PANEL_ROOT = resolve(process.cwd(), 'packages/panel/dist');
 const hasWeb = existsSync(WEB_ROOT);
+const hasPanel = existsSync(PANEL_ROOT);
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -41,43 +41,64 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-function handle(req: IncomingMessage, res: ServerResponse): void {
-  const url = new URL(req.url ?? '/', 'http://localhost');
+/** Serve um arquivo do diretorio, caindo no index.html quando nao existe. */
+function serveStatic(root: string, relative: string, res: ServerResponse): void {
+  // normalize + prefixo obrigatorio bloqueia path traversal com ../
+  const safe = normalize(decodeURIComponent(relative)).replace(/^([/\\])+/, '');
+  let file = join(root, safe);
+  if (!file.startsWith(root)) {
+    res.writeHead(403).end();
+    return;
+  }
+  if (!existsSync(file) || statSync(file).isDirectory()) file = join(root, 'index.html');
+  if (!existsSync(file)) {
+    res.writeHead(404).end();
+    return;
+  }
+  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+  createReadStream(file).pipe(res);
+}
 
-  if (url.pathname === '/health') {
+function clientIp(req: IncomingMessage): string {
+  if (config.trustProxy) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const ip = first?.split(',')[0]?.trim();
+    if (ip) return ip;
+  }
+  return req.socket.remoteAddress ?? '?';
+}
+
+function handle(req: IncomingMessage, res: ServerResponse): void {
+  const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+
+  if (path === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(
       JSON.stringify({
-        name: config.serverName,
-        clients: hub.clientCount,
-        maxClients: config.maxClients,
-        channels: hub.channelList.length,
-        protected: config.password !== '',
+        servers: registry.snapshot(),
+        clients: registry.totalClients,
+        panel: adminEnabled,
       }),
     );
     return;
+  }
+
+  if (admin.handle(req, res, path, clientIp(req))) return;
+
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    if (!hasPanel) {
+      res.writeHead(404).end('painel nao buildado (npm run build:panel)');
+      return;
+    }
+    return serveStatic(PANEL_ROOT, path.slice('/admin'.length) || '/', res);
   }
 
   if (!hasWeb) {
     res.writeHead(404).end('vox server');
     return;
   }
-
-  // normalize + prefixo obrigatorio bloqueia path traversal com ../
-  const rel = normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, '');
-  let file = join(WEB_ROOT, rel);
-  if (!file.startsWith(WEB_ROOT)) {
-    res.writeHead(403).end();
-    return;
-  }
-  if (!existsSync(file) || statSync(file).isDirectory()) file = join(WEB_ROOT, 'index.html');
-  if (!existsSync(file)) {
-    res.writeHead(404).end();
-    return;
-  }
-
-  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-  createReadStream(file).pipe(res);
+  serveStatic(WEB_ROOT, path, res);
 }
 
 const server = tlsEnabled
@@ -87,18 +108,45 @@ const server = tlsEnabled
     )
   : createHttpServer(handle);
 
-attachWebSocket(server, hub);
+attachWebSocket(server, registry);
 
-// ------------------------------------------------------------ manutencao --
+// ----------------------------------------------------------- manutencao --
 
-const sweeper = setInterval(() => hub.sweep(Date.now()), 5_000);
+const sweeper = setInterval(() => registry.sweep(Date.now()), 5_000);
+/** Presenca no painel: reenvia o estado mesmo sem ninguem clicar em nada. */
+const pulse = setInterval(() => admin.broadcastState(), 3_000);
+pulse.unref();
+
+/**
+ * WebTransport e melhoria, nao requisito: se faltar certificado ou modulo
+ * nativo, o servidor sobe do mesmo jeito e a voz continua no WebSocket.
+ */
+let voice: VoiceEndpoint | null = null;
+startVoiceTransport(registry)
+  .then((endpoint) => {
+    voice = endpoint;
+    if (!endpoint) {
+      console.log('[vox] voz no WebSocket (sem WebTransport: falta certificado UDP)');
+      return;
+    }
+    registry.voiceEndpoint = { port: endpoint.port, certHash: endpoint.certHash };
+    console.log(`[vox] voz por WebTransport em udp/${endpoint.port} (${config.wtHost})`);
+    if (endpoint.certHash.length > 0) {
+      console.log('[vox] publicando o hash do certificado (modo desenvolvimento)');
+    }
+  })
+  .catch((err) => console.error('[vox] WebTransport falhou ao iniciar:', err));
 
 server.listen(config.port, config.host, () => {
   const scheme = tlsEnabled ? 'wss' : 'ws';
-  console.log(`[vox] "${config.serverName}" em ${scheme}://${config.host}:${config.port}/vox`);
-  console.log(`[vox] canais: ${hub.channelList.length} | limite: ${config.maxClients} clientes`);
-  if (hasWeb) console.log(`[vox] servindo o cliente web de ${WEB_ROOT}`);
-  if (config.password) console.log('[vox] servidor protegido por senha');
+  console.log(`[vox] ouvindo em ${scheme}://${config.host}:${config.port}/vox`);
+  for (const s of registry.snapshot()) {
+    const lock = s.protected ? ' (com senha)' : '';
+    console.log(`[vox]   servidor ${s.id}: "${s.name}" - ${s.channels} canais${lock}`);
+  }
+  if (hasWeb) console.log(`[vox] cliente web em ${WEB_ROOT}`);
+  if (hasPanel && adminEnabled) console.log('[vox] painel em /admin');
+  if (!adminEnabled) console.log('[vox] painel desligado (defina VOX_ADMIN_PASSWORD)');
   if (config.trustProxy) console.log('[vox] confiando no X-Forwarded-For');
   if (!tlsEnabled) {
     console.log(
@@ -113,7 +161,9 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     console.log('\n[vox] encerrando...');
     clearInterval(sweeper);
-    saveChannels(hub.exportPermanent());
+    clearInterval(pulse);
+    void voice?.stop();
+    registry.saveNow();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });

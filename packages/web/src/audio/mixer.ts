@@ -30,10 +30,18 @@ interface RemoteVoice {
   pending: Map<number, Uint8Array>;
   lastPacketAt: number;
   volume: number;
+  /** Mudo local: nao viaja para o servidor, e decisao de quem ouve. */
+  muted: boolean;
 }
 
 export class VoiceMixer {
   private readonly voices = new Map<number, RemoteVoice>();
+  /**
+   * Volume e mudo escolhidos para cada pessoa, valendo antes mesmo de ela
+   * falar. Guardar aqui evita criar decodificador e no de audio para quem
+   * talvez nunca abra o microfone.
+   */
+  private readonly prefs = new Map<number, { volume: number; muted: boolean }>();
   readonly master: GainNode;
 
   constructor(private readonly ctx: AudioContext) {
@@ -117,6 +125,8 @@ export class VoiceMixer {
     const existing = this.voices.get(clientId);
     if (existing) return existing;
 
+    const pref = this.prefs.get(clientId) ?? { volume: 1, muted: false };
+
     const node = new AudioWorkletNode(this.ctx, 'vox-playback', {
       numberOfInputs: 0,
       numberOfOutputs: 1,
@@ -133,8 +143,10 @@ export class VoiceMixer {
       nextSeq: -1,
       pending: new Map(),
       lastPacketAt: 0,
-      volume: 1,
+      volume: pref.volume,
+      muted: pref.muted,
     };
+    gain.gain.value = pref.muted ? 0 : pref.volume;
 
     voice.decoder = new AudioDecoder({
       output: (data) => {
@@ -152,10 +164,30 @@ export class VoiceMixer {
   }
 
   setVolume(clientId: number, volume: number): void {
+    const pref = this.prefs.get(clientId) ?? { volume: 1, muted: false };
+    pref.volume = volume;
+    this.prefs.set(clientId, pref);
     const voice = this.voices.get(clientId);
-    if (!voice) return;
-    voice.volume = volume;
-    voice.gain.gain.value = volume;
+    if (voice) {
+      voice.volume = volume;
+      this.applyGain(voice);
+    }
+  }
+
+  setMuted(clientId: number, muted: boolean): void {
+    const pref = this.prefs.get(clientId) ?? { volume: 1, muted: false };
+    pref.muted = muted;
+    this.prefs.set(clientId, pref);
+    const voice = this.voices.get(clientId);
+    if (voice) {
+      voice.muted = muted;
+      this.applyGain(voice);
+    }
+  }
+
+  /** Mudo vence volume: silencio e silencio, sem meio termo. */
+  private applyGain(voice: RemoteVoice): void {
+    voice.gain.gain.value = voice.muted ? 0 : voice.volume;
   }
 
   isTalking(clientId: number): boolean {
@@ -180,5 +212,6 @@ export class VoiceMixer {
 
   clear(): void {
     for (const id of [...this.voices.keys()]) this.remove(id);
+    this.prefs.clear();
   }
 }

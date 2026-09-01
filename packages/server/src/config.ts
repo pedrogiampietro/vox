@@ -1,4 +1,28 @@
-/** Configuracao do servidor, toda por variavel de ambiente. */
+/**
+ * Configuracao do servidor, toda por variavel de ambiente.
+ *
+ * Le .env na raiz do monorepo se a variavel nao estiver setada.
+ */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+try {
+  const base = join(__dirname, '..', '..', '..', '.env');
+  const env = readFileSync(base, 'utf8');
+  for (const line of env.split('\n')) {
+    const eq = line.indexOf('=');
+    if (eq > 0) {
+      const key = line.slice(0, eq);
+      if (/^[A-Z_][A-Z0-9_]*$/.test(key) && !(key in process.env)) {
+        process.env[key] = line.slice(eq + 1).trim();
+      }
+    }
+  }
+} catch { /* sem .env, tudo bem */ }
 
 function num(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -56,6 +80,38 @@ export const config = {
   tlsKey: str('VOX_TLS_KEY', ''),
 
   /**
+   * WebTransport (voz em datagramas sobre QUIC). Porta UDP - pode ser a mesma
+   * da porta TCP, sao espacos separados.
+   */
+  wtPort: num('VOX_WT_PORT', num('VOX_PORT', 9987)),
+  /**
+   * Endereco do socket QUIC. "0.0.0.0" so escuta IPv4, e como quase todo host
+   * moderno resolve para IPv6 primeiro (inclusive "localhost"), o cliente bate
+   * num socket que nao existe e cai de volta para o WebSocket sem explicacao.
+   * Por isso "escutar em tudo" vira "::", que e dual-stack.
+   */
+  wtHost: str('VOX_WT_HOST', '') || (str('VOX_HOST', '0.0.0.0') === '0.0.0.0'
+    ? '::'
+    : str('VOX_HOST', '0.0.0.0')),
+  /** Certificado do QUIC. Vazio herda o do TLS; sem nenhum, sem WebTransport. */
+  wtCert: str('VOX_WT_CERT', '') || str('VOX_TLS_CERT', ''),
+  wtKey: str('VOX_WT_KEY', '') || str('VOX_TLS_KEY', ''),
+  /**
+   * Publica o SHA-256 do certificado no Welcome, para o navegador aceitar um
+   * certificado autoassinado via serverCertificateHashes. So em
+   * desenvolvimento: em producao o certificado e valido e isso nao ajuda.
+   */
+  wtPublishHash: bool('VOX_WT_PUBLISH_HASH', false),
+
+  /**
+   * Senha do painel de administracao. Vazia desliga o painel inteiro - e o
+   * padrao, porque um painel aberto e pior que nenhum painel.
+   */
+  adminPassword: str('VOX_ADMIN_PASSWORD', ''),
+  /** Validade da sessao do painel. */
+  adminSessionMs: num('VOX_ADMIN_SESSION_MS', 12 * 60 * 60 * 1000),
+
+  /**
    * Ligue quando houver proxy reverso: o IP do cliente passa a vir do
    * X-Forwarded-For em vez do socket. Com isso desligado atras de um proxy,
    * todo mundo vira o mesmo IP e o limite por IP derruba o servidor inteiro.
@@ -64,3 +120,4 @@ export const config = {
 } as const;
 
 export const tlsEnabled = config.tlsCert !== '' && config.tlsKey !== '';
+export const adminEnabled = config.adminPassword !== '';

@@ -2,24 +2,32 @@
  * Transporte WebSocket.
  *
  * E o transporte universal: funciona em qualquer navegador, atravessa proxy e
- * so precisa da porta HTTPS. O custo e o TCP - uma perda de pacote trava a fila
- * inteira e a voz engasga. Por isso a interface abaixo e estreita de proposito:
- * quando o WebTransport (datagramas sobre QUIC) entrar, ele implementa o mesmo
- * PeerSocket e o Hub nao muda uma linha.
+ * so precisa da porta HTTPS. O controle mora aqui para sempre; a voz sai por
+ * aqui ate o WebTransport subir.
+ *
+ * O caminho carrega o servidor virtual: `/vox/3` entra no servidor 3, e `/vox`
+ * sozinho cai no primeiro. Escolher pelo caminho, e nao por uma porta por
+ * servidor como o TS3 faz, mantem um certificado so e uma origem so.
  */
 
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
+import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { MAX_CONTROL_FRAME } from '@vox/protocol';
 import { config } from './config.js';
 import type { Hub } from './hub.js';
+import type { Registry } from './registry.js';
 import type { PeerSocket } from './session.js';
 
-export function attachWebSocket(server: HttpServer | HttpsServer, hub: Hub): WebSocketServer {
+const ROUTE = /^\/vox(?:\/(\d+))?\/?$/;
+
+export function attachWebSocket(
+  server: HttpServer | HttpsServer,
+  registry: Registry,
+): WebSocketServer {
   const wss = new WebSocketServer({
-    server,
-    path: '/vox',
+    noServer: true,
     // Comprimir voz Opus e desperdicio puro: ja esta comprimida e o deflate
     // adiciona latencia e CPU em cada um dos 50 pacotes por segundo.
     perMessageDeflate: false,
@@ -30,51 +38,74 @@ export function attachWebSocket(server: HttpServer | HttpsServer, hub: Hub): Web
   /** Conexoes abertas por IP, para o teto de VOX_MAX_PER_IP. */
   const openPerIp = new Map<string, number>();
 
-  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const route = ROUTE.exec(path);
+    if (!route) return reject(socket, 404, 'rota desconhecida');
+
+    const hub = route[1] ? registry.get(Number(route[1])) : registry.primary();
+    if (!hub) return reject(socket, 404, 'servidor virtual inexistente');
+
     const ip = clientIp(req);
     const open = openPerIp.get(ip) ?? 0;
     if (config.maxPerIp > 0 && open >= config.maxPerIp) {
-      ws.close(4001, 'limite de conexoes por IP');
-      return;
+      return reject(socket, 429, 'limite de conexoes por IP');
     }
-    openPerIp.set(ip, open + 1);
 
-    ws.binaryType = 'nodebuffer';
-
-    const peer: PeerSocket = {
-      remote: ip,
-      send(data) {
-        if (ws.readyState === ws.OPEN) ws.send(data);
-      },
-      close(reason) {
-        try {
-          ws.close(4000, reason.slice(0, 120));
-        } catch {
-          ws.terminate();
-        }
-      },
-    };
-
-    const session = hub.accept(peer);
-
-    ws.on('message', (data, isBinary) => {
-      // O protocolo e inteiramente binario; texto so pode ser cliente errado.
-      if (!isBinary) return peer.close('esperado binario');
-      hub.handleFrame(session, toBytes(data));
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      openPerIp.set(ip, open + 1);
+      serve(ws, hub, ip, () => {
+        const left = (openPerIp.get(ip) ?? 1) - 1;
+        if (left <= 0) openPerIp.delete(ip);
+        else openPerIp.set(ip, left);
+      });
     });
-
-    const release = (): void => {
-      const left = (openPerIp.get(ip) ?? 1) - 1;
-      if (left <= 0) openPerIp.delete(ip);
-      else openPerIp.set(ip, left);
-      hub.drop(session);
-    };
-
-    ws.once('close', release);
-    ws.once('error', release);
   });
 
   return wss;
+}
+
+function serve(ws: WebSocket, hub: Hub, ip: string, onClose: () => void): void {
+  ws.binaryType = 'nodebuffer';
+
+  const peer: PeerSocket = {
+    remote: ip,
+    send(data) {
+      if (ws.readyState === ws.OPEN) ws.send(data);
+    },
+    close(reason) {
+      try {
+        ws.close(4000, reason.slice(0, 120));
+      } catch {
+        ws.terminate();
+      }
+    },
+  };
+
+  const session = hub.accept(peer);
+
+  ws.on('message', (data, isBinary) => {
+    // O protocolo e inteiramente binario; texto so pode ser cliente errado.
+    if (!isBinary) return peer.close('esperado binario');
+    hub.handleFrame(session, toBytes(data));
+  });
+
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    onClose();
+    hub.drop(session);
+  };
+
+  ws.once('close', release);
+  ws.once('error', release);
+}
+
+/** Recusa antes do upgrade: o cliente recebe um status HTTP de verdade. */
+function reject(socket: Duplex, status: number, reason: string): void {
+  socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
+  socket.destroy();
 }
 
 /**

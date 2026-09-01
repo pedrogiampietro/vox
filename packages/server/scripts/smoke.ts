@@ -14,10 +14,13 @@
  *   npx tsx packages/server/scripts/smoke.ts
  */
 
+import { webcrypto } from 'node:crypto';
 import { WebSocket } from 'ws';
 import {
   ChatScope,
+  FailureCode,
   FrameKind,
+  Group,
   Op,
   PROTOCOL_VERSION,
   decodeServerMessage,
@@ -26,6 +29,24 @@ import {
   encodeVoice,
 } from '@vox/protocol';
 import type { ChannelInfo, ClientInfo, ClientMessage, ServerMessage } from '@vox/protocol';
+
+interface Welcome {
+  voiceToken: Uint8Array;
+  wtPort: number;
+  wtCertHash: Uint8Array;
+  serverId: number;
+  group: Group;
+}
+
+const KEY_ALGORITHM = { name: 'ECDSA', namedCurve: 'P-256' } as const;
+const SIGN_ALGORITHM = { name: 'ECDSA', hash: 'SHA-256' } as const;
+
+/** Uma identidade descartavel por cliente de teste, como o cliente real faz. */
+async function newIdentity(): Promise<{ spki: Uint8Array; key: CryptoKey }> {
+  const pair = await webcrypto.subtle.generateKey(KEY_ALGORITHM, true, ['sign', 'verify']);
+  const spki = new Uint8Array(await webcrypto.subtle.exportKey('spki', pair.publicKey));
+  return { spki, key: pair.privateKey };
+}
 
 const URL = process.env.VOX_URL ?? 'ws://127.0.0.1:9987/vox';
 
@@ -52,10 +73,18 @@ class TestClient {
   readonly clients = new Map<number, ClientInfo>();
   readonly chat: { senderId: number; text: string }[] = [];
   readonly voice: HeardVoice[] = [];
+  readonly failures: { code: FailureCode; message: string }[] = [];
   id = 0;
+  group: Group = Group.Guest;
+  welcome: Welcome | null = null;
 
-  constructor(readonly nickname: string) {
-    this.ws = new WebSocket(URL);
+  private identity: { spki: Uint8Array; key: CryptoKey } | null = null;
+
+  constructor(
+    readonly nickname: string,
+    url: string = URL,
+  ) {
+    this.ws = new WebSocket(url);
     this.ws.binaryType = 'nodebuffer';
     this.ws.on('message', (data: Buffer) => {
       const frame = new Uint8Array(data);
@@ -72,6 +101,14 @@ class TestClient {
     switch (m.t) {
       case Op.Welcome:
         this.id = m.clientId;
+        this.group = m.group;
+        this.welcome = m;
+        break;
+      case Op.Challenge:
+        void this.answer(m.nonce);
+        break;
+      case Op.Failure:
+        this.failures.push({ code: m.code, message: m.message });
         break;
       case Op.Snapshot:
         this.channels.clear();
@@ -115,8 +152,25 @@ class TestClient {
     });
   }
 
-  hello(): void {
-    this.send({ t: Op.Hello, version: PROTOCOL_VERSION, nickname: this.nickname, password: '' });
+  /** Hello com a chave publica; o Auth sai sozinho quando o desafio chegar. */
+  async hello(): Promise<void> {
+    this.identity = await newIdentity();
+    this.send({
+      t: Op.Hello,
+      version: PROTOCOL_VERSION,
+      nickname: this.nickname,
+      password: '',
+      publicKey: this.identity.spki,
+    });
+  }
+
+  /** Assina o desafio: e o que prova a posse da chave privada. */
+  private async answer(nonce: Uint8Array): Promise<void> {
+    if (!this.identity) return;
+    const signature = new Uint8Array(
+      await webcrypto.subtle.sign(SIGN_ALGORITHM, this.identity.key, nonce),
+    );
+    this.send({ t: Op.Auth, signature });
   }
 
   send(m: ClientMessage): void {
@@ -162,6 +216,93 @@ async function until(label: string, ready: () => boolean, timeoutMs = 3000): Pro
   return false;
 }
 
+/**
+ * Abre o canal de voz por WebTransport de um cliente ja autenticado, do mesmo
+ * jeito que o navegador faz: token por stream confiavel, voz por datagrama.
+ */
+async function openVoiceLink(
+  client: TestClient,
+  port: number,
+): Promise<{
+  send: (seq: number, payload: Uint8Array) => Promise<void>;
+  received: HeardVoice[];
+  close: () => void;
+} | null> {
+  const welcome = client.welcome;
+  if (!welcome) return null;
+
+  let WebTransport: typeof import('@fails-components/webtransport').WebTransport;
+  try {
+    const mod = await import('@fails-components/webtransport');
+    // O addon nativo carrega em background; sem esperar, o construtor falha.
+    await mod.quicheLoaded;
+    ({ WebTransport } = mod);
+  } catch {
+    console.log('   --    modulo do WebTransport ausente; secao pulada');
+    return null;
+  }
+
+  try {
+    const wt = new WebTransport(
+      `https://127.0.0.1:${port}/vox`,
+      welcome.wtCertHash.length > 0
+        ? { serverCertificateHashes: [{ algorithm: 'sha-256', value: welcome.wtCertHash }] }
+        : {},
+    );
+    await wt.ready;
+
+    const stream = await wt.createBidirectionalStream();
+    const writer = stream.writable.getWriter();
+    await writer.write(welcome.voiceToken);
+    const reply = await stream.readable.getReader().read();
+    if (reply.value?.[0] !== 1) {
+      wt.close();
+      return null;
+    }
+
+    const out = (
+      wt.datagrams.createWritable ? wt.datagrams.createWritable() : wt.datagrams.writable!
+    ).getWriter();
+    const received: HeardVoice[] = [];
+    const reader = wt.datagrams.readable.getReader();
+    void (async () => {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done || !chunk.value) return;
+        const p = decodeVoice(chunk.value);
+        if (p) received.push({ clientId: p.clientId, seq: p.seq, payload: [...p.payload] });
+      }
+    })().catch(() => {});
+
+    return {
+      send: (seq, payload) => out.write(encodeVoice(seq, 0, payload)),
+      received,
+      close: () => wt.close(),
+    };
+  } catch (err) {
+    console.log(`   --    WebTransport nao conectou: ${String(err)}`);
+    return null;
+  }
+}
+
+/** Conta como sucesso quando o servidor recusa a conexao. */
+function refusedConnection(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(url);
+    const done = (refused: boolean): void => {
+      try {
+        ws.close();
+      } catch {
+        // ja fechado
+      }
+      resolve(refused);
+    };
+    ws.once('open', () => done(false));
+    ws.once('error', () => done(true));
+    setTimeout(() => done(false), 2000);
+  });
+}
+
 async function main(): Promise<void> {
   console.log(`conectando em ${URL}\n`);
 
@@ -169,12 +310,19 @@ async function main(): Promise<void> {
   const bob = new TestClient(`bob-${RUN}`);
   await Promise.all([alice.ready(), bob.ready()]);
 
-  alice.hello();
-  bob.hello();
+  // Alice entra primeiro de proposito: num servidor novo, o primeiro a provar
+  // identidade vira dono, e e isso que torna o teste de moderacao previsivel.
+  await alice.hello();
+  await until('alice completa o handshake', () => alice.id > 0);
+  await bob.hello();
 
   await until('handshake dos dois clientes', () => alice.id > 0 && bob.id > 0);
-  check('handshake atribui ids distintos', alice.id > 0 && bob.id > 0 && alice.id !== bob.id);
+  check('handshake com desafio assinado atribui ids distintos',
+    alice.id > 0 && bob.id > 0 && alice.id !== bob.id);
   check('snapshot traz os canais', alice.channels.size >= 3);
+  check('welcome informa o servidor virtual', (alice.welcome?.serverId ?? 0) > 0);
+  check('a identidade recebe uma impressao digital',
+    (alice.clients.get(alice.id)?.fingerprint.length ?? 0) === 64);
 
   await until('os dois se enxergam', () => alice.clients.has(bob.id) && bob.clients.has(alice.id));
   check('alice ve o bob na lista', alice.clients.has(bob.id));
@@ -193,6 +341,45 @@ async function main(): Promise<void> {
   check('o seq e preservado', heard?.seq === 42);
   check('o payload chega intacto', heard?.payload.join() === [...payload].join());
   check('alice nao ouve a si mesma', alice.voice.length === 0);
+
+  // --- voz por WebTransport -----------------------------------------------
+
+  const wtPort = alice.welcome?.wtPort ?? 0;
+  if (wtPort === 0) {
+    console.log('   --    WebTransport desligado no servidor; secao pulada');
+  } else {
+    const link = await openVoiceLink(alice, wtPort);
+    check('canal de voz QUIC abre e o token e aceito', link !== null);
+
+    if (link) {
+      // QUIC -> WebSocket: quem migrou continua sendo ouvido por quem nao migrou.
+      const before = bob.voice.length;
+      await link.send(77, payload);
+      await until('bob ouve a voz que veio por QUIC', () => bob.voice.length > before);
+      const viaQuic = bob.voice.at(-1);
+      check('voz de QUIC chega a um cliente WebSocket', viaQuic?.seq === 77);
+      check('o carimbo do remetente sobrevive a troca de transporte', viaQuic?.clientId === alice.id);
+
+      // WebSocket -> QUIC: o sentido inverso, no mesmo canal.
+      bob.sendVoice(88, payload);
+      await until('alice recebe datagrama do cliente WebSocket', () => link.received.length > 0);
+      const viaWs = link.received.at(-1);
+      check('voz de WebSocket chega por datagrama QUIC', viaWs?.seq === 88);
+      check('payload intacto atravessando os dois transportes',
+        viaWs?.payload.join() === [...payload].join());
+
+      link.close();
+      // Fechado o canal QUIC, a voz tem que voltar sozinha para o WebSocket.
+      const backOnWs = bob.voice.length;
+      await wait(300); // deixa o servidor perceber a sessao QUIC fechada
+      alice.sendVoice(99, payload);
+      const recovered = await until(
+        'voz volta pelo WebSocket apos o QUIC cair',
+        () => bob.voice.length > backOnWs,
+      );
+      check('queda do canal QUIC nao deixa o cliente mudo', recovered);
+    }
+  }
 
   // --- isolamento entre canais --------------------------------------------
 
@@ -222,6 +409,39 @@ async function main(): Promise<void> {
   );
   check('chat volta para o remetente com o texto intacto', delivered);
   check('chat de servidor alcanca quem esta em outro canal', alice.chat.some((c) => c.text === line));
+
+  // --- servidores virtuais e permissoes ------------------------------------
+
+  const serverId = alice.welcome?.serverId ?? 1;
+  const carol = new TestClient(`carol-${RUN}`, URL.replace(/\/vox\/?$/, `/vox/${serverId}`));
+  await carol.ready();
+  await carol.hello();
+  await until('cliente entra pela rota /vox/<id>', () => carol.id > 0);
+  check('rota com id do servidor virtual conecta', carol.id > 0);
+  check('cai no mesmo servidor virtual', carol.welcome?.serverId === serverId);
+
+  const ghost = await refusedConnection(URL.replace(/\/vox\/?$/, '/vox/9999'));
+  check('servidor virtual inexistente e recusado no upgrade', ghost);
+
+  // Carol e sempre convidada: alice chegou antes e, num servidor novo, levou o
+  // grupo de dono. A recusa abaixo e o teste que vale em qualquer estado.
+  const failuresBefore = carol.failures.length;
+  carol.send({ t: Op.KickClient, clientId: bob.id, reason: 'teste' });
+  await until('convidado recebe recusa', () => carol.failures.length > failuresBefore);
+  check(
+    'convidado nao consegue expulsar ninguem',
+    carol.failures.at(-1)?.code === FailureCode.NotPermitted,
+  );
+  check('o alvo continua online', bob.clients.has(bob.id));
+
+  if (alice.group >= Group.Moderator) {
+    alice.send({ t: Op.KickClient, clientId: carol.id, reason: 'teste de moderacao' });
+    const gone = await until('moderador expulsa de fato', () => !bob.clients.has(carol.id));
+    check(`quem tem grupo ${alice.group} consegue expulsar`, gone);
+  } else {
+    console.log('   --    alice entrou como convidada (o servidor ja tem dono); expulsao nao testada');
+    await carol.close();
+  }
 
   // --- saida ---------------------------------------------------------------
 

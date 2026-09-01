@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts"
+    "start": "tsx src/index.ts",
+    "dev-cert": "tsx scripts/dev-cert.ts"
   },
   "dependencies": {
     "@vox/protocol": "*",
@@ -14,6 +15,11 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "@peculiar/x509": "^1.12.3"
+  },
+  "optionalDependencies": {
+    "@fails-components/webtransport": "^1.6.7",
+    "@fails-components/webtransport-transport-http3-quiche": "^1.6.7"
   }
 }

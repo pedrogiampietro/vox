@@ -5,6 +5,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@vox/protocol': fileURLToPath(new URL('../protocol/src/index.ts', import.meta.url)),
+      '@vox/ui/dom.js': fileURLToPath(new URL('../ui/dom.ts', import.meta.url)),
+      '@vox/ui/tokens.css': fileURLToPath(new URL('../ui/tokens.css', import.meta.url)),
     },
   },
   server: {

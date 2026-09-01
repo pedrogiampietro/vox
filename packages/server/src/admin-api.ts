@@ -1,0 +1,325 @@
+/**
+ * API do painel de administracao.
+ *
+ * JSON sobre HTTP, separado do protocolo binario de propósito: o painel nao
+ * precisa de latencia nem de bytes contados, precisa ser facil de inspecionar
+ * com o devtools aberto. E ele nunca fala com o Hub por atalho - passa pelos
+ * mesmos metodos que a moderacao do cliente usa.
+ *
+ * Autenticacao e uma senha unica trocada por um token de sessao em memoria.
+ * Nada de cookie: o painel guarda o token e manda no Authorization, o que
+ * elimina CSRF sem precisar de token anti-CSRF.
+ */
+
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { Group, RemoveReason } from '@vox/protocol';
+import { adminEnabled, config } from './config.js';
+import type { Registry } from './registry.js';
+
+/** Corpo maior que isto so pode ser abuso: o painel manda objetos minusculos. */
+const MAX_BODY_BYTES = 16 * 1024;
+/** Tentativas de login por IP, por janela. */
+const LOGIN_ATTEMPTS = 8;
+const LOGIN_WINDOW_MS = 5 * 60 * 1000;
+
+interface Attempts {
+  count: number;
+  windowStart: number;
+}
+
+export class AdminApi {
+  /** Token -> expiracao. Em memoria: reiniciar o servidor desloga o painel. */
+  private readonly tokens = new Map<string, number>();
+  private readonly attempts = new Map<string, Attempts>();
+  /** Conexoes SSE abertas, para empurrar o estado ao vivo. */
+  private readonly streams = new Set<ServerResponse>();
+
+  constructor(private readonly registry: Registry) {}
+
+  /** Empurra o estado atual para todo painel aberto. */
+  broadcastState(): void {
+    if (this.streams.size === 0) return;
+    const payload = `data: ${JSON.stringify(this.overview())}\n\n`;
+    for (const res of this.streams) {
+      try {
+        res.write(payload);
+      } catch {
+        this.streams.delete(res);
+      }
+    }
+  }
+
+  /** Retorna true quando a requisicao era da API e ja foi respondida. */
+  handle(req: IncomingMessage, res: ServerResponse, path: string, ip: string): boolean {
+    if (!path.startsWith('/api/')) return false;
+
+    if (!adminEnabled) {
+      send(res, 503, { error: 'painel desligado: defina VOX_ADMIN_PASSWORD' });
+      return true;
+    }
+
+    void this.route(req, res, path, ip).catch((err) => {
+      console.error('[vox] erro na API do painel:', err);
+      if (!res.headersSent) send(res, 500, { error: 'erro interno' });
+    });
+    return true;
+  }
+
+  private async route(
+    req: IncomingMessage,
+    res: ServerResponse,
+    path: string,
+    ip: string,
+  ): Promise<void> {
+    const method = req.method ?? 'GET';
+
+    if (path === '/api/login' && method === 'POST') {
+      return this.login(req, res, ip);
+    }
+
+    if (!this.authorized(req)) {
+      send(res, 401, { error: 'nao autenticado' });
+      return;
+    }
+
+    if (path === '/api/overview' && method === 'GET') {
+      return send(res, 200, this.overview());
+    }
+
+    if (path === '/api/stream' && method === 'GET') {
+      return this.stream(req, res);
+    }
+
+    if (path === '/api/servers' && method === 'POST') {
+      const body = await readJson(req);
+      const hub = this.registry.create({
+        name: str(body.name),
+        motd: str(body.motd),
+        password: str(body.password),
+        maxClients: int(body.maxClients, 128),
+      });
+      this.broadcastState();
+      return send(res, 201, { id: hub.id });
+    }
+
+    const match = /^\/api\/servers\/(\d+)(\/[a-z-]+)?(?:\/(.+))?$/.exec(path);
+    if (!match) return send(res, 404, { error: 'rota desconhecida' });
+
+    const hub = this.registry.get(Number(match[1]));
+    if (!hub) return send(res, 404, { error: 'servidor inexistente' });
+    const action = match[2] ?? '';
+    const rest = match[3] ?? '';
+
+    // ---- servidor ----------------------------------------------------------
+
+    if (action === '' && method === 'GET') {
+      return send(res, 200, {
+        ...hub.settings,
+        password: hub.settings.password ? '(definida)' : '',
+        channels: hub.channelList,
+        clients: hub.clientList(),
+        bans: hub.banList(),
+        groups: hub.groupList(),
+      });
+    }
+
+    if (action === '' && method === 'PATCH') {
+      const body = await readJson(req);
+      this.registry.update(hub.id, {
+        ...(body.name !== undefined ? { name: str(body.name) } : {}),
+        ...(body.motd !== undefined ? { motd: str(body.motd) } : {}),
+        ...(body.password !== undefined ? { password: str(body.password) } : {}),
+        ...(body.maxClients !== undefined ? { maxClients: int(body.maxClients, 128) } : {}),
+      });
+      this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '' && method === 'DELETE') {
+      const removed = this.registry.remove(hub.id);
+      this.broadcastState();
+      return removed
+        ? send(res, 200, { ok: true })
+        : send(res, 409, { error: 'o ultimo servidor nao pode ser removido' });
+    }
+
+    // ---- moderacao ---------------------------------------------------------
+
+    if (action === '/kick' && method === 'POST') {
+      const body = await readJson(req);
+      const target = hub.sessionById(int(body.clientId, 0));
+      if (!target) return send(res, 404, { error: 'usuario nao esta online' });
+      hub.expel(target, RemoveReason.Kicked, str(body.reason) || 'expulso pelo painel');
+      this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/ban' && method === 'POST') {
+      const body = await readJson(req);
+      const target = hub.sessionById(int(body.clientId, 0));
+      if (!target) return send(res, 404, { error: 'usuario nao esta online' });
+      hub.banSession(target, int(body.minutes, 0), str(body.reason) || 'banido pelo painel');
+      this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bans' && method === 'DELETE') {
+      const ok = hub.removeBan(rest);
+      this.broadcastState();
+      return send(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'banimento inexistente' });
+    }
+
+    if (action === '/move' && method === 'POST') {
+      const body = await readJson(req);
+      const target = hub.sessionById(int(body.clientId, 0));
+      if (!target) return send(res, 404, { error: 'usuario nao esta online' });
+      hub.forceMove(target, int(body.channelId, 0));
+      this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/group' && method === 'POST') {
+      const body = await readJson(req);
+      const group = int(body.group, Group.Guest);
+      if (group < Group.Guest || group > Group.Owner) {
+        return send(res, 400, { error: 'grupo invalido' });
+      }
+      hub.setGroupByFingerprint(str(body.fingerprint), group as Group);
+      this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/announce' && method === 'POST') {
+      const body = await readJson(req);
+      const text = str(body.text);
+      if (!text) return send(res, 400, { error: 'texto vazio' });
+      hub.announce(text);
+      return send(res, 200, { ok: true });
+    }
+
+    return send(res, 404, { error: 'rota desconhecida' });
+  }
+
+  // ------------------------------------------------------------ sessao --
+
+  private async login(req: IncomingMessage, res: ServerResponse, ip: string): Promise<void> {
+    if (!this.allowAttempt(ip)) {
+      return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
+    }
+    const body = await readJson(req);
+    if (!matches(str(body.password), config.adminPassword)) {
+      return send(res, 401, { error: 'senha incorreta' });
+    }
+    const token = randomBytes(32).toString('hex');
+    this.tokens.set(token, Date.now() + config.adminSessionMs);
+    this.pruneTokens();
+    send(res, 200, { token, expiresIn: config.adminSessionMs });
+  }
+
+  private allowAttempt(ip: string): boolean {
+    const now = Date.now();
+    const entry = this.attempts.get(ip);
+    if (!entry || now - entry.windowStart > LOGIN_WINDOW_MS) {
+      this.attempts.set(ip, { count: 1, windowStart: now });
+      return true;
+    }
+    entry.count++;
+    return entry.count <= LOGIN_ATTEMPTS;
+  }
+
+  private authorized(req: IncomingMessage): boolean {
+    const header = req.headers.authorization ?? '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    if (!token) return false;
+    const expires = this.tokens.get(token);
+    if (expires === undefined) return false;
+    if (expires < Date.now()) {
+      this.tokens.delete(token);
+      return false;
+    }
+    return true;
+  }
+
+  private pruneTokens(): void {
+    const now = Date.now();
+    for (const [token, expires] of this.tokens) {
+      if (expires < now) this.tokens.delete(token);
+    }
+  }
+
+  // ------------------------------------------------------------ leitura --
+
+  private overview(): unknown {
+    return {
+      servers: this.registry.snapshot(),
+      totals: {
+        clients: this.registry.totalClients,
+        servers: this.registry.list().length,
+      },
+      stamp: Date.now(),
+    };
+  }
+
+  /** Server-Sent Events: presenca ao vivo sem inventar outro protocolo. */
+  private stream(req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+    res.write(`data: ${JSON.stringify(this.overview())}\n\n`);
+    this.streams.add(res);
+    req.on('close', () => this.streams.delete(res));
+  }
+}
+
+// -------------------------------------------------------------- utilidades --
+
+function send(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY_BYTES) throw new Error('corpo grande demais');
+    chunks.push(chunk as Buffer);
+  }
+  if (size === 0) return {};
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Comparacao de tempo constante: senha nao se compara com ===. */
+function matches(given: string, expected: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) {
+    // Ainda assim gasta o mesmo tempo, para nao vazar o tamanho da senha.
+    timingSafeEqual(b, b);
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
+
+function str(v: unknown): string {
+  return typeof v === 'string' ? v : '';
+}
+
+function int(v: unknown, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}

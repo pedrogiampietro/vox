@@ -8,20 +8,52 @@
 
 import { Reader, Writer } from './codec.js';
 import type { ChannelInfo, ClientInfo } from './types.js';
-import { ChatScope, FailureCode, FrameKind, Op, RemoveReason } from './types.js';
+import { ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
 
 export type ClientMessage =
-  | { t: Op.Hello; version: number; nickname: string; password: string }
+  | {
+      t: Op.Hello;
+      version: number;
+      nickname: string;
+      password: string;
+      /** Chave publica SPKI. Vazia = sessao anonima, sempre convidado. */
+      publicKey: Uint8Array;
+    }
+  | { t: Op.Auth; signature: Uint8Array }
   | { t: Op.Ping; stamp: number }
   | { t: Op.JoinChannel; channelId: number; password: string }
   | { t: Op.CreateChannel; name: string; parentId: number; maxClients: number; password: string }
   | { t: Op.DeleteChannel; channelId: number }
   | { t: Op.EditChannel; channelId: number; name: string; topic: string; maxClients: number }
   | { t: Op.ChatSend; scope: ChatScope; targetId: number; text: string }
-  | { t: Op.SetSelfState; flags: number };
+  | { t: Op.SetSelfState; flags: number; nickname?: string }
+  | { t: Op.KickClient; clientId: number; reason: string }
+  | { t: Op.BanClient; clientId: number; reason: string; minutes: number }
+  | { t: Op.MoveClient; clientId: number; channelId: number }
+  | { t: Op.SetClientGroup; clientId: number; group: Group };
 
 export type ServerMessage =
-  | { t: Op.Welcome; clientId: number; serverName: string; motd: string }
+  | { t: Op.Challenge; nonce: Uint8Array }
+  | {
+      t: Op.Welcome;
+      clientId: number;
+      /** Servidor virtual em que a sessao entrou. */
+      serverId: number;
+      serverName: string;
+      motd: string;
+      /** Grupo concedido a esta sessao. */
+      group: Group;
+      /** Prova a identidade da sessao ao abrir o canal de voz separado. */
+      voiceToken: Uint8Array;
+      /** Porta UDP do WebTransport; 0 quando o servidor nao oferece. */
+      wtPort: number;
+      /**
+       * SHA-256 do certificado, para serverCertificateHashes. Vazio em
+       * producao, onde o certificado e valido e o navegador nao precisa de
+       * ajuda. Preenchido em desenvolvimento, com certificado proprio.
+       */
+      wtCertHash: Uint8Array;
+    }
   | { t: Op.Pong; stamp: number }
   | { t: Op.Failure; code: FailureCode; message: string }
   | { t: Op.Snapshot; channels: ChannelInfo[]; clients: ClientInfo[] }
@@ -64,11 +96,18 @@ function readChannel(r: Reader): ChannelInfo {
 }
 
 function writeClient(w: Writer, c: ClientInfo): void {
-  w.u16(c.id).u16(c.channelId).str(c.nickname).u8(c.flags);
+  w.u16(c.id).u16(c.channelId).str(c.nickname).u8(c.flags).u8(c.group).str(c.fingerprint);
 }
 
 function readClient(r: Reader): ClientInfo {
-  return { id: r.u16(), channelId: r.u16(), nickname: r.str(), flags: r.u8() };
+  return {
+    id: r.u16(),
+    channelId: r.u16(),
+    nickname: r.str(),
+    flags: r.u8(),
+    group: r.u8() as Group,
+    fingerprint: r.str(),
+  };
 }
 
 // ------------------------------------------------------- cliente -> servidor --
@@ -77,7 +116,10 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
   const w = new Writer(128).u8(FrameKind.Control).u8(m.t);
   switch (m.t) {
     case Op.Hello:
-      w.u16(m.version).str(m.nickname).str(m.password);
+      w.u16(m.version).str(m.nickname).str(m.password).bytes(m.publicKey);
+      break;
+    case Op.Auth:
+      w.bytes(m.signature);
       break;
     case Op.Ping:
       w.f64(m.stamp);
@@ -99,6 +141,19 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
       break;
     case Op.SetSelfState:
       w.u8(m.flags);
+      if (m.nickname !== undefined) w.str(m.nickname);
+      break;
+    case Op.KickClient:
+      w.u16(m.clientId).str(m.reason);
+      break;
+    case Op.BanClient:
+      w.u16(m.clientId).str(m.reason).u32(m.minutes);
+      break;
+    case Op.MoveClient:
+      w.u16(m.clientId).u16(m.channelId);
+      break;
+    case Op.SetClientGroup:
+      w.u16(m.clientId).u8(m.group);
       break;
   }
   return w.finish();
@@ -111,7 +166,15 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
   const t = r.u8() as ClientMessage['t'];
   switch (t) {
     case Op.Hello:
-      return { t, version: r.u16(), nickname: r.str(), password: r.str() };
+      return {
+        t,
+        version: r.u16(),
+        nickname: r.str(),
+        password: r.str(),
+        publicKey: r.bytes(),
+      };
+    case Op.Auth:
+      return { t, signature: r.bytes() };
     case Op.Ping:
       return { t, stamp: r.f64() };
     case Op.JoinChannel:
@@ -124,8 +187,19 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, channelId: r.u16(), name: r.str(), topic: r.str(), maxClients: r.u16() };
     case Op.ChatSend:
       return { t, scope: r.u8() as ChatScope, targetId: r.u16(), text: r.str() };
-    case Op.SetSelfState:
-      return { t, flags: r.u8() };
+    case Op.SetSelfState: {
+      const flags = r.u8();
+      const nickname = r.remaining > 0 ? r.str() : undefined;
+      return { t, flags, ...(nickname !== undefined ? { nickname } : {}) };
+    }
+    case Op.KickClient:
+      return { t, clientId: r.u16(), reason: r.str() };
+    case Op.BanClient:
+      return { t, clientId: r.u16(), reason: r.str(), minutes: r.u32() };
+    case Op.MoveClient:
+      return { t, clientId: r.u16(), channelId: r.u16() };
+    case Op.SetClientGroup:
+      return { t, clientId: r.u16(), group: r.u8() as Group };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -136,8 +210,19 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
 export function encodeServerMessage(m: ServerMessage): Uint8Array {
   const w = new Writer(256).u8(FrameKind.Control).u8(m.t);
   switch (m.t) {
+    case Op.Challenge:
+      w.bytes(m.nonce);
+      break;
     case Op.Welcome:
-      w.u16(m.clientId).str(m.serverName).str(m.motd);
+      w
+        .u16(m.clientId)
+        .u16(m.serverId)
+        .str(m.serverName)
+        .str(m.motd)
+        .u8(m.group)
+        .bytes(m.voiceToken)
+        .u16(m.wtPort)
+        .bytes(m.wtCertHash);
       break;
     case Op.Pong:
       w.f64(m.stamp);
@@ -179,8 +264,20 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
   if (r.u8() !== FrameKind.Control) throw new Error('frame de controle esperado');
   const t = r.u8() as ServerMessage['t'];
   switch (t) {
+    case Op.Challenge:
+      return { t, nonce: r.bytes() };
     case Op.Welcome:
-      return { t, clientId: r.u16(), serverName: r.str(), motd: r.str() };
+      return {
+        t,
+        clientId: r.u16(),
+        serverId: r.u16(),
+        serverName: r.str(),
+        motd: r.str(),
+        group: r.u8() as Group,
+        voiceToken: r.bytes(),
+        wtPort: r.u16(),
+        wtCertHash: r.bytes(),
+      };
     case Op.Pong:
       return { t, stamp: r.f64() };
     case Op.Failure:
