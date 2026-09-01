@@ -37,6 +37,7 @@ export enum Op {
   BanClient = 0x51,
   MoveClient = 0x52,
   SetClientGroup = 0x53,
+  SetGroupDef = 0x54,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -52,6 +53,7 @@ export enum Op {
   ClientMove = 0xa2,
   ClientState = 0xa3,
   ChatDeliver = 0xb0,
+  GroupDefs = 0xc0,
 }
 
 /** Bits de estado do cliente (auto-declarado, o servidor apenas replica). */
@@ -152,7 +154,28 @@ export interface ClientInfo {
   group: Group;
   /** Identidade estavel entre sessoes; vazio se o cliente nao apresentou uma. */
   fingerprint: string;
+  /** Timestamp Unix (ms) de quando conectou. 0 = desconhecido. */
+  connectedAt: number;
+  /** Plataforma do cliente (ex: "Web", "Desktop"). Vazio = desconhecido. */
+  platform: string;
 }
+
+/** Definicao visual de um grupo. */
+export interface GroupDef {
+  id: Group;
+  name: string;
+  /** Data URI do icone (PNG/JPG). Vazio = sem icone. */
+  icon: string;
+  /** Cor hex para o nome. Vazio = cor padrao. */
+  color: string;
+}
+
+export const DEFAULT_GROUP_DEFS: GroupDef[] = [
+  { id: Group.Guest, name: 'Convidado', icon: '', color: '' },
+  { id: Group.Moderator, name: 'Moderador', icon: '', color: '' },
+  { id: Group.Admin, name: 'Administrador', icon: '', color: '#e0a040' },
+  { id: Group.Owner, name: 'Dono', icon: '', color: '#e8a33d' },
+];
 
 /** Raiz da arvore de canais / "nenhum canal". */
 export const NO_CHANNEL = 0;

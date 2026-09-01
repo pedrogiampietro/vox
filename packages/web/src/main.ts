@@ -20,7 +20,7 @@ import {
   NO_CHANNEL,
   ChatScope,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, GroupDef } from '@vox/protocol';
 import {
   listFavorites,
   saveFavorite,
@@ -41,6 +41,7 @@ let serverList: ServerStatus[] = [];
 let settingsOpen = false;
 
 let selectedChannelId = 0;
+let selectedClientId = 0;
 
 // ---- drag-to-move state ----
 let dragClientId = 0;
@@ -535,6 +536,7 @@ function renderChannelTree(parent: HTMLElement, parentId: number, depth: number)
 
     row.addEventListener('click', () => {
       selectedChannelId = ch.id;
+      selectedClientId = 0;
       render();
     });
     row.addEventListener('dblclick', () => {
@@ -561,6 +563,7 @@ function renderChannelTree(parent: HTMLElement, parentId: number, depth: number)
 function renderPeer(c: ClientInfo): HTMLElement {
   const row = $('div', 'peer');
   if (c.id === client.selfId) row.classList.add('me');
+  if (c.id === selectedClientId) row.classList.add('selected');
 
   const talking = client.isTalking(c.id);
   const muted = (c.flags & ClientFlags.MutedMic) !== 0;
@@ -597,15 +600,24 @@ function renderPeer(c: ClientInfo): HTMLElement {
       input.select();
     });
   }
-  if (c.group >= Group.Owner) nick.style.color = 'var(--amber)';
+  const gdef = client.groupDef(c.group);
+  if (gdef.color) nick.style.color = gdef.color;
+  else if (c.group >= Group.Owner) nick.style.color = 'var(--amber)';
   row.append(vu, nick);
 
-  // rank badge
-  if (c.group > Group.Guest) {
+  // rank badge — mostra se o grupo tem icone ou se nao e guest
+  if (gdef.icon) {
+    const iconImg = $('img') as HTMLImageElement;
+    iconImg.src = gdef.icon;
+    iconImg.title = gdef.name;
+    iconImg.style.cssText = 'width:14px;height:14px;object-fit:contain;flex-shrink:0;';
+    row.append(iconImg);
+  } else if (c.group > Group.Guest) {
     const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛' };
-    const badge = text('span', 'rank', icons[c.group] || GROUP_NAMES[c.group].charAt(0).toUpperCase());
-    badge.title = GROUP_NAMES[c.group];
-    if (c.group === Group.Owner) badge.style.color = 'var(--amber)';
+    const badge = text('span', 'rank', icons[c.group] || gdef.name.charAt(0).toUpperCase());
+    badge.title = gdef.name;
+    if (gdef.color) badge.style.color = gdef.color;
+    else if (c.group === Group.Owner) badge.style.color = 'var(--amber)';
     else if (c.group === Group.Admin) badge.style.color = '#e0a040';
     else badge.style.color = 'var(--text-dim)';
     row.append(badge);
@@ -615,6 +627,12 @@ function renderPeer(c: ClientInfo): HTMLElement {
   if (muted) row.append(text('span', 'flag', '🔇'));
   if (away) row.append(text('span', 'flag', 'Away'));
   if (noInput) row.append(text('span', 'flag', '⚠'));
+
+  row.addEventListener('click', () => {
+    selectedClientId = c.id;
+    selectedChannelId = 0;
+    render();
+  });
 
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -660,6 +678,10 @@ function renderPeer(c: ClientInfo): HTMLElement {
           else client.moveUser(c.id, target);
         }
         clearDropHighlight();
+      } else {
+        selectedClientId = c.id;
+        selectedChannelId = 0;
+        render();
       }
       if (dragGhost) { dragGhost.remove(); dragGhost = null; }
       dragClientId = 0;
@@ -701,10 +723,13 @@ function renderTalk(): HTMLElement {
   hdr.append(serverLabel, motd, stat);
   pane.append(hdr);
 
-  // channel info panel
+  // info panel (channel or client)
   const selCh = selectedChannelId ? client.channels.get(selectedChannelId) : null;
+  const selCl = selectedClientId ? client.clients.get(selectedClientId) : null;
   if (selCh) {
     pane.append(renderChannelInfoPanel(selCh));
+  } else if (selCl) {
+    pane.append(renderClientInfoPanel(selCl));
   }
 
   // chat log
@@ -821,11 +846,18 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
       else if (muted) statusDot.classList.add('muted');
       else statusDot.classList.add('online');
 
+      const mgdef = client.groupDef(m.group);
       const mNick = text('span', '', m.nickname);
-      if (m.group >= Group.Owner) mNick.style.color = 'var(--amber)';
+      if (mgdef.color) mNick.style.color = mgdef.color;
+      else if (m.group >= Group.Owner) mNick.style.color = 'var(--amber)';
       item.append(statusDot, mNick);
 
-      if (m.group > Group.Guest) {
+      if (mgdef.icon) {
+        const mIcon = $('img') as HTMLImageElement;
+        mIcon.src = mgdef.icon;
+        mIcon.style.cssText = 'width:12px;height:12px;object-fit:contain;';
+        item.append(mIcon);
+      } else if (m.group > Group.Guest) {
         const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛' };
         const badge = text('span', 'rank', icons[m.group] || '');
         badge.style.fontSize = '8px';
@@ -838,6 +870,157 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
   }
 
   return panel;
+}
+
+function renderClientInfoPanel(c: ClientInfo): HTMLElement {
+  const panel = $('div', 'channel-info');
+  const gdef = client.groupDef(c.group);
+  const isSelf = c.id === client.selfId;
+  const ch = client.channels.get(c.channelId);
+  const isOwner = client.myGroup >= Group.Owner;
+
+  // header: icon + nickname + dismiss
+  const top = $('div', 'channel-info-header');
+
+  if (gdef.icon) {
+    const icon = $('img') as HTMLImageElement;
+    icon.src = gdef.icon;
+    icon.style.cssText = 'width:18px;height:18px;object-fit:contain;';
+    top.append(icon);
+  }
+
+  const nm = text('span', 'channel-name', c.nickname);
+  if (gdef.color) nm.style.color = gdef.color;
+  top.append(nm);
+
+  if (isSelf) {
+    const badge = text('span', 'label', 'voce');
+    badge.style.color = 'var(--signal)';
+    top.append(badge);
+  }
+
+  const dismiss = $('button', 'ghost');
+  dismiss.textContent = '✕';
+  dismiss.style.cssText = 'padding:2px 6px;font-size:12px;min-width:unset;margin-left:auto;';
+  dismiss.addEventListener('click', () => { selectedClientId = 0; render(); });
+  top.append(dismiss);
+  panel.append(top);
+
+  // info rows (TS3 style)
+  const info = $('div', 'client-info-rows');
+
+  const addRow = (label: string, value: string, color?: string) => {
+    const row = $('div', 'client-info-row');
+    row.append(text('span', 'client-info-label', label));
+    const val = text('span', 'client-info-value', value);
+    if (color) val.style.color = color;
+    row.append(val);
+    info.append(row);
+  };
+
+  // platform
+  if (c.platform) {
+    addRow('Plataforma:', c.platform);
+  }
+
+  // online since
+  if (c.connectedAt > 0) {
+    const elapsed = Date.now() - c.connectedAt;
+    addRow('On-line desde:', formatDuration(elapsed));
+  }
+
+  // server group
+  const groupRow = $('div', 'client-info-row');
+  groupRow.append(text('span', 'client-info-label', 'Grupo do servidor:'));
+  const groupVal = $('span', 'client-info-value');
+  groupVal.style.display = 'inline-flex';
+  groupVal.style.alignItems = 'center';
+  groupVal.style.gap = '4px';
+  if (gdef.icon) {
+    const gi = $('img') as HTMLImageElement;
+    gi.src = gdef.icon;
+    gi.style.cssText = 'width:14px;height:14px;object-fit:contain;';
+    groupVal.append(gi);
+  }
+  const gname = document.createTextNode(gdef.name);
+  groupVal.append(gname);
+  if (gdef.color) groupVal.style.color = gdef.color;
+  groupRow.append(groupVal);
+  info.append(groupRow);
+
+  // channel
+  if (ch) {
+    addRow('Canal:', ch.name);
+  }
+
+  // status
+  const muted = (c.flags & ClientFlags.MutedMic) !== 0;
+  const deaf = (c.flags & ClientFlags.MutedSpeakers) !== 0;
+  const away = (c.flags & ClientFlags.Away) !== 0;
+  const statusParts: string[] = [];
+  if (away) statusParts.push('Ausente');
+  if (deaf) statusParts.push('Fones de ouvido/alto-falantes silenciados');
+  else if (muted) statusParts.push('Microfone silenciado');
+  if (statusParts.length > 0) {
+    for (const s of statusParts) {
+      addRow('', s, 'var(--amber)');
+    }
+  }
+
+  // fingerprint / ID (only visible to owners)
+  if (c.fingerprint && isOwner) {
+    addRow('ID:', c.fingerprint);
+  }
+
+  panel.append(info);
+
+  // volume + mute controls (only for other users)
+  if (!isSelf) {
+    const controls = $('div', 'client-controls');
+
+    const volLabel = text('span', 'stat-label', 'volume');
+    const volSlider = $('input') as HTMLInputElement;
+    volSlider.type = 'range';
+    volSlider.min = '0';
+    volSlider.max = '200';
+    volSlider.value = String(Math.round(client.userVolume(c) * 100));
+    volSlider.style.cssText = 'flex:1;accent-color:var(--amber);';
+    const volVal = text('span', 'stat-value', `${volSlider.value}%`);
+    volVal.style.minWidth = '40px';
+    volVal.style.textAlign = 'right';
+    volSlider.addEventListener('input', () => {
+      const v = Number(volSlider.value) / 100;
+      client.setUserVolume(c, v);
+      volVal.textContent = `${volSlider.value}%`;
+    });
+
+    const volRow = $('div', 'client-vol-row');
+    volRow.append(volLabel, volSlider, volVal);
+    controls.append(volRow);
+
+    const muteBtn = $('button', 'ghost');
+    muteBtn.textContent = client.isUserMuted(c) ? '🔇 som desativado' : '🔊 som ativado';
+    muteBtn.style.cssText = 'font-size:11px;padding:3px 8px;';
+    muteBtn.addEventListener('click', () => { client.toggleUserMute(c); render(); });
+    controls.append(muteBtn);
+
+    panel.append(controls);
+  }
+
+  return panel;
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s} segundos`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} minuto${m > 1 ? 's' : ''}`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  if (h < 24) return `${h}h ${rm}min`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return `${d}d ${rh}h`;
 }
 
 // ----------------------------------------------------------------- console --
@@ -966,6 +1149,7 @@ function renderSettings(): HTMLElement {
   const sections = [
     { id: 'capture', icon: '🎙', label: 'Capturar' },
     { id: 'playback', icon: '🔊', label: 'Reprodução' },
+    ...(client.myGroup >= Group.Owner ? [{ id: 'groups', icon: '👥', label: 'Grupos' }] : []),
   ];
   let activeSection = 'capture';
 
@@ -990,7 +1174,8 @@ function renderSettings(): HTMLElement {
   function buildBody(): void {
     body.replaceChildren();
     if (activeSection === 'capture') buildCaptureSection(body, buildBody);
-    else buildPlaybackSection(body);
+    else if (activeSection === 'playback') buildPlaybackSection(body);
+    else if (activeSection === 'groups') buildGroupsSection(body, buildBody);
   }
 
   // --- footer ---
@@ -1258,6 +1443,121 @@ function buildPlaybackSection(body: HTMLElement): void {
   body.append(preRow);
 }
 
+function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
+  body.append(text('h3', '', 'GRUPOS DO SERVIDOR'));
+  body.append(text('span', '', 'Configure nome, cor e ícone dos grupos'));
+
+  for (const def of client.groupDefs) {
+    const card = $('div', 'group-card');
+
+    // icon area
+    const iconArea = $('div', 'group-icon-area');
+    if (def.icon) {
+      const img = $('img') as HTMLImageElement;
+      img.src = def.icon;
+      img.style.cssText = 'width:32px;height:32px;object-fit:contain;border-radius:var(--r);';
+      iconArea.append(img);
+    } else {
+      const placeholder = $('div', 'group-icon-placeholder');
+      placeholder.textContent = def.name.charAt(0).toUpperCase();
+      iconArea.append(placeholder);
+    }
+
+    const iconBtn = $('button', 'ghost');
+    iconBtn.textContent = def.icon ? 'trocar' : 'ícone';
+    iconBtn.style.cssText = 'padding:2px 8px;font-size:11px;';
+    iconBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/png,image/jpeg,image/gif,image/webp';
+      input.addEventListener('change', () => {
+        const file = input.files?.[0];
+        if (!file || file.size > 32 * 1024) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUri = reader.result as string;
+          client.setGroupDef(def.id, def.name, dataUri, def.color);
+          setTimeout(rebuild, 200);
+        };
+        reader.readAsDataURL(file);
+      });
+      input.click();
+    });
+
+    const removeIconBtn = $('button', 'ghost danger');
+    removeIconBtn.textContent = '✕';
+    removeIconBtn.style.cssText = 'padding:2px 6px;font-size:10px;min-width:unset;';
+    removeIconBtn.addEventListener('click', () => {
+      client.setGroupDef(def.id, def.name, '', def.color);
+      setTimeout(rebuild, 200);
+    });
+
+    const iconBtns = $('div', '');
+    iconBtns.style.cssText = 'display:flex;gap:4px;';
+    iconBtns.append(iconBtn);
+    if (def.icon) iconBtns.append(removeIconBtn);
+    iconArea.append(iconBtns);
+    card.append(iconArea);
+
+    // info area
+    const infoArea = $('div', 'group-info-area');
+
+    const nameRow = $('div', 'settings-row');
+    const nameLabel = $('label');
+    nameLabel.append(text('span', '', 'Nome'));
+    const nameInput = $('input') as HTMLInputElement;
+    nameInput.value = def.name;
+    nameInput.placeholder = 'Nome do grupo';
+    nameLabel.append(nameInput);
+    nameRow.append(nameLabel);
+    infoArea.append(nameRow);
+
+    const colorRow = $('div', '');
+    colorRow.style.cssText = 'display:flex;align-items:center;gap:10px;';
+    const colorLabel = text('span', '', 'Cor');
+    colorLabel.style.cssText = 'font-size:12px;color:var(--text-dim);';
+    const colorInput = $('input') as HTMLInputElement;
+    colorInput.type = 'color';
+    colorInput.value = def.color || '#ebe5dc';
+    colorInput.style.cssText = 'width:32px;height:28px;padding:2px;border:1px solid var(--line);background:var(--ink-900);border-radius:var(--r);cursor:pointer;';
+
+    const colorClear = $('button', 'ghost');
+    colorClear.textContent = 'padrão';
+    colorClear.style.cssText = 'padding:2px 8px;font-size:11px;';
+    colorClear.addEventListener('click', () => {
+      colorInput.value = '#ebe5dc';
+      client.setGroupDef(def.id, nameInput.value.trim() || def.name, def.icon, '');
+      setTimeout(rebuild, 200);
+    });
+
+    const preview = text('span', '', def.name);
+    preview.style.cssText = `font-weight:600;font-size:13px;color:${def.color || 'var(--text)'};`;
+    colorRow.append(colorLabel, colorInput, colorClear, preview);
+    infoArea.append(colorRow);
+
+    // save button
+    const saveBtn = $('button', 'primary');
+    saveBtn.textContent = 'salvar';
+    saveBtn.style.cssText = 'padding:4px 14px;font-size:12px;justify-self:start;';
+    saveBtn.addEventListener('click', () => {
+      const name = nameInput.value.trim() || def.name;
+      const color = colorInput.value === '#ebe5dc' ? '' : colorInput.value;
+      client.setGroupDef(def.id, name, def.icon, color);
+      setTimeout(rebuild, 200);
+    });
+    infoArea.append(saveBtn);
+
+    card.append(infoArea);
+
+    // power level label
+    const powerLabel = text('span', 'label', `nível ${def.id}`);
+    powerLabel.style.cssText = 'position:absolute;top:8px;right:10px;';
+    card.append(powerLabel);
+
+    body.append(card);
+  }
+}
+
 // ============================================================ context menus --
 
 function closeMenu(): void {
@@ -1343,10 +1643,19 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
   nickRow.append(text('div', 'nick', target.nickname));
   // rank badge in header
   if (target.group > Group.Guest) {
-    const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛' };
-    const badge = text('span', 'rank', icons[target.group] || GROUP_NAMES[target.group].charAt(0).toUpperCase());
-    badge.title = GROUP_NAMES[target.group];
-    nickRow.append(badge);
+    const tgdef = client.groupDef(target.group);
+    if (tgdef.icon) {
+      const iconImg = $('img') as HTMLImageElement;
+      iconImg.src = tgdef.icon;
+      iconImg.title = tgdef.name;
+      iconImg.style.cssText = 'width:16px;height:16px;object-fit:contain;';
+      nickRow.append(iconImg);
+    } else {
+      const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛' };
+      const badge = text('span', 'rank', icons[target.group] || tgdef.name.charAt(0).toUpperCase());
+      badge.title = tgdef.name;
+      nickRow.append(badge);
+    }
   }
   head.append(nickRow);
   if (target.fingerprint) {
@@ -1477,23 +1786,24 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
       const { toggle, sub } = collapsible('grupo');
       items.push(toggle);
 
-      const groups: { value: Group; label: string }[] = [
-        { value: Group.Guest, label: 'convidado' },
-        { value: Group.Moderator, label: 'moderador' },
-        { value: Group.Admin, label: 'administrador' },
-      ];
+      const groups = client.groupDefs.filter((g) => g.id < client.myGroup);
       for (const g of groups) {
-        if (g.value >= client.myGroup) continue;
         const gBtn = $('button');
-        const isCurrent = target.group === g.value;
-        gBtn.textContent = isCurrent ? `✓ ${g.label}` : g.label;
+        const isCurrent = target.group === g.id;
+        if (g.icon) {
+          const gIcon = $('img') as HTMLImageElement;
+          gIcon.src = g.icon;
+          gIcon.style.cssText = 'width:14px;height:14px;object-fit:contain;';
+          gBtn.append(gIcon);
+        }
+        gBtn.append(document.createTextNode(isCurrent ? `✓ ${g.name}` : g.name));
         if (isCurrent) {
           gBtn.style.color = 'var(--amber)';
           gBtn.disabled = true;
         }
         gBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          client.setGroup(target.id, g.value);
+          client.setGroup(target.id, g.id);
           closeMenu();
         });
         sub.firstElementChild!.append(gBtn);
@@ -1686,6 +1996,26 @@ function showTreeMenu(e: MouseEvent): void {
       closeMenu();
     });
     items.push(editBtn);
+  }
+
+  // group management (owner)
+  if (client.myGroup >= Group.Owner) {
+    const groupsBtn = $('button');
+    groupsBtn.textContent = 'gerenciar grupos';
+    groupsBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeMenu();
+      settingsOpen = true;
+      openSettings();
+      // switch to groups tab after settings opens
+      requestAnimationFrame(() => {
+        const navBtns = document.querySelectorAll('.settings-nav button');
+        for (const btn of navBtns) {
+          if (btn.textContent?.includes('Grupos')) (btn as HTMLElement).click();
+        }
+      });
+    });
+    items.push(groupsBtn);
   }
 
   const anchor = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;

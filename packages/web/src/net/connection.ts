@@ -136,6 +136,7 @@ export class Connection {
         nickname: target.nickname,
         password: target.password,
         publicKey: target.identity.publicKey,
+        platform: '__TAURI_INTERNALS__' in window ? 'Desktop' : 'Web',
       });
       this.pingTimer = setInterval(() => {
         if (this.online) this.send({ t: Op.Ping, stamp: performance.now() });

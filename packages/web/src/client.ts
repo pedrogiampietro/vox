@@ -4,8 +4,8 @@
  * daqui - nao conhece protocolo nem Web Audio.
  */
 
-import { ChatScope, ClientFlags, Group, NO_CHANNEL, Op } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, ServerMessage } from '@vox/protocol';
+import { ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, Group, NO_CHANNEL, Op } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, GroupDef, ServerMessage } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer } from './audio/mixer.js';
@@ -55,6 +55,7 @@ export class VoxClient {
   identity: Identity | null = null;
   favorite: Favorite | null = null;
 
+  groupDefs: GroupDef[] = [...DEFAULT_GROUP_DEFS];
   mic: MicSettings = { ...DEFAULT_MIC };
   outputVolume = 1;
   soundsEnabled = true;
@@ -131,6 +132,10 @@ export class VoxClient {
     return this.myGroup >= Group.Moderator && this.myGroup >= target.group;
   }
 
+  groupDef(group: Group): GroupDef {
+    return this.groupDefs.find((g) => g.id === group) ?? DEFAULT_GROUP_DEFS[group] ?? { id: group, name: `Grupo ${group}`, icon: '', color: '' };
+  }
+
   // --------------------------------------------------------------- sessao --
 
   async connect(favorite: Favorite): Promise<void> {
@@ -157,6 +162,7 @@ export class VoxClient {
     this.clients.clear();
     this.selfId = 0;
     this.myGroup = Group.Guest;
+    this.groupDefs = [...DEFAULT_GROUP_DEFS];
     this.suspend();
   }
 
@@ -313,6 +319,10 @@ export class VoxClient {
     this.connection.send({ t: Op.SetClientGroup, clientId, group });
   }
 
+  setGroupDef(group: Group, name: string, icon: string, color: string): void {
+    this.connection.send({ t: Op.SetGroupDef, group, name, icon, color });
+  }
+
   toggleMic(): void {
     this.setFlags(this.flags ^ ClientFlags.MutedMic);
   }
@@ -423,6 +433,10 @@ export class VoxClient {
           this.unread++;
           this.play('message');
         }
+        break;
+
+      case Op.GroupDefs:
+        this.groupDefs = m.groups;
         break;
 
       case Op.Failure:

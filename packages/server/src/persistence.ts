@@ -8,8 +8,8 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ChannelFlags, Group } from '@vox/protocol';
-import type { ChannelInfo } from '@vox/protocol';
+import { ChannelFlags, DEFAULT_GROUP_DEFS, Group } from '@vox/protocol';
+import type { ChannelInfo, GroupDef } from '@vox/protocol';
 import { config } from './config.js';
 
 export interface StoredChannel extends ChannelInfo {
@@ -33,6 +33,8 @@ export interface StoredServer {
   /** Impressao digital -> grupo. Quem nao esta aqui e convidado. */
   groups: Record<string, Group>;
   bans: StoredBan[];
+  /** Definicoes visuais dos grupos (nome, icone, cor). */
+  groupDefs: GroupDef[];
 }
 
 const FILE = (): string => join(config.dataDir, 'servers.json');
@@ -84,6 +86,7 @@ export function defaultServer(id = 1): StoredServer {
     channels: defaultChannels(),
     groups: {},
     bans: [],
+    groupDefs: [...DEFAULT_GROUP_DEFS],
   };
 }
 
@@ -122,6 +125,7 @@ function normalize(s: Partial<StoredServer>): StoredServer {
     channels: s.channels?.length ? s.channels : base.channels,
     groups: s.groups ?? {},
     bans: s.bans ?? [],
+    groupDefs: s.groupDefs?.length ? s.groupDefs : [...DEFAULT_GROUP_DEFS],
   };
 }
 

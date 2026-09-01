@@ -54,6 +54,8 @@ export class Session {
   flags = 0;
   channelId: number = NO_CHANNEL;
   lastSeen = Date.now();
+  connectedAt = Date.now();
+  platform = 'Web';
 
   /** Servidor virtual desta sessao. */
   serverId = 0;

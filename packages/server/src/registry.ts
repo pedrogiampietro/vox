@@ -92,6 +92,7 @@ export class Registry {
       channels: defaultChannels(),
       groups: {},
       bans: [],
+      groupDefs: [],
     };
     const hub = this.attach(stored);
     this.scheduleSave();

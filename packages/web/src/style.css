@@ -321,6 +321,11 @@ label.field {
   background: var(--ink-700);
 }
 
+.peer.selected {
+  background: var(--ink-600);
+  box-shadow: inset 2px 0 0 var(--text-faint);
+}
+
 .peer.me .nick {
   color: var(--text);
   font-weight: 600;
@@ -477,6 +482,45 @@ label.field {
   border-top: 1px solid var(--line);
 }
 
+/* ------------------------------------------------------------ group editor -- */
+
+.group-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  padding: 14px;
+  background: var(--ink-900);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.group-icon-area {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  align-content: start;
+}
+
+.group-icon-placeholder {
+  width: 32px;
+  height: 32px;
+  background: var(--ink-600);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.group-info-area {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
 /* ------------------------------------------------------------- channel info -- */
 
 .channel-info {
@@ -585,6 +629,44 @@ label.field {
 
 .member-dot.away {
   background: var(--amber-dim);
+}
+
+.client-info-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+}
+
+.client-info-row {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.client-info-label {
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.client-info-value {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.client-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.client-vol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ---------------------------------------------------------------- console -- */

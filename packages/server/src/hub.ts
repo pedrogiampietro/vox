@@ -15,6 +15,7 @@ import {
   ChannelFlags,
   ChatScope,
   ClientFlags,
+  DEFAULT_GROUP_DEFS,
   FailureCode,
   FrameKind,
   Group,
@@ -31,7 +32,7 @@ import {
   MAX_VOICE_PACKET,
   VOICE_HEADER_SIZE,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, ClientMessage, ServerMessage } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, ClientMessage, GroupDef, ServerMessage } from '@vox/protocol';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
 import { fingerprintOf, looksLikePublicKey, verifyChallenge } from './identity.js';
@@ -80,6 +81,7 @@ export class Hub {
   private readonly pending = new Set<Session>();
   private readonly nicknames = new Set<string>();
   private readonly groups = new Map<string, Group>();
+  private groupDefs: GroupDef[];
   private bans: StoredBan[] = [];
 
   private nextClientId = 1;
@@ -87,7 +89,7 @@ export class Hub {
 
   constructor(
     public settings: ServerSettings,
-    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans'>,
+    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs'>,
     private readonly deps: HubDeps,
   ) {
     for (const c of stored.channels) {
@@ -95,6 +97,7 @@ export class Hub {
       this.seedChannel(info, password);
     }
     for (const [fp, group] of Object.entries(stored.groups)) this.groups.set(fp, group);
+    this.groupDefs = stored.groupDefs?.length ? [...stored.groupDefs] : [...DEFAULT_GROUP_DEFS];
     this.bans = [...stored.bans];
   }
 
@@ -133,7 +136,12 @@ export class Hub {
         .map((c): StoredChannel => ({ ...c.info, password: c.password })),
       groups: this.groupList(),
       bans: this.banList(),
+      groupDefs: [...this.groupDefs],
     };
+  }
+
+  get groupDefList(): GroupDef[] {
+    return this.groupDefs;
   }
 
   // ------------------------------------------------------------- canais --
@@ -350,6 +358,19 @@ export class Hub {
         this.assignGroup(target, m.group);
         break;
       }
+
+      case Op.SetGroupDef: {
+        if (s.group < Group.Owner) {
+          return this.fail(s, FailureCode.NotPermitted, 'apenas donos podem editar grupos');
+        }
+        const def: GroupDef = { id: m.group, name: clean(m.name, 32) || 'Grupo', icon: m.icon, color: clean(m.color, 9) };
+        const idx = this.groupDefs.findIndex((g) => g.id === m.group);
+        if (idx >= 0) this.groupDefs[idx] = def;
+        else this.groupDefs.push(def);
+        this.broadcast({ t: Op.GroupDefs, groups: this.groupDefs });
+        this.deps.onChanged();
+        break;
+      }
     }
   }
 
@@ -376,6 +397,7 @@ export class Hub {
     s.stage = 'challenged';
     s.publicKey = m.publicKey;
     s.wantedNickname = clean(m.nickname, MAX_NICKNAME) || 'convidado';
+    s.platform = clean(m.platform, 32) || 'Web';
 
     // Admin password: quem manda a senha de admin vira dono.
     s.adminLogin = Boolean(this.settings.adminPassword && m.password === this.settings.adminPassword);
@@ -459,6 +481,7 @@ export class Hub {
         clients: this.clientList(),
       }),
     );
+    s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
     this.broadcast({ t: Op.ClientAdd, client: describe(s) }, s);
   }
 
@@ -834,5 +857,7 @@ function describe(s: Session): ClientInfo {
     flags: s.flags,
     group: s.group,
     fingerprint: s.fingerprint,
+    connectedAt: s.connectedAt,
+    platform: s.platform,
   };
 }

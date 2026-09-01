@@ -7,7 +7,7 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { ChannelInfo, ClientInfo } from './types.js';
+import type { ChannelInfo, ClientInfo, GroupDef } from './types.js';
 import { ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
 
 export type ClientMessage =
@@ -18,6 +18,7 @@ export type ClientMessage =
       password: string;
       /** Chave publica SPKI. Vazia = sessao anonima, sempre convidado. */
       publicKey: Uint8Array;
+      platform: string;
     }
   | { t: Op.Auth; signature: Uint8Array }
   | { t: Op.Ping; stamp: number }
@@ -30,7 +31,8 @@ export type ClientMessage =
   | { t: Op.KickClient; clientId: number; reason: string }
   | { t: Op.BanClient; clientId: number; reason: string; minutes: number }
   | { t: Op.MoveClient; clientId: number; channelId: number }
-  | { t: Op.SetClientGroup; clientId: number; group: Group };
+  | { t: Op.SetClientGroup; clientId: number; group: Group }
+  | { t: Op.SetGroupDef; group: Group; name: string; icon: string; color: string };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -71,7 +73,8 @@ export type ServerMessage =
       senderName: string;
       text: string;
       stamp: number;
-    };
+    }
+  | { t: Op.GroupDefs; groups: GroupDef[] };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
 export const MAX_NICKNAME = 32;
@@ -97,6 +100,7 @@ function readChannel(r: Reader): ChannelInfo {
 
 function writeClient(w: Writer, c: ClientInfo): void {
   w.u16(c.id).u16(c.channelId).str(c.nickname).u8(c.flags).u8(c.group).str(c.fingerprint);
+  w.u32(Math.floor((c.connectedAt || 0) / 1000)).str(c.platform || '');
 }
 
 function readClient(r: Reader): ClientInfo {
@@ -107,7 +111,19 @@ function readClient(r: Reader): ClientInfo {
     flags: r.u8(),
     group: r.u8() as Group,
     fingerprint: r.str(),
+    connectedAt: r.u32() * 1000,
+    platform: r.str(),
   };
+}
+
+// ----------------------------------------------------------------- groups --
+
+function writeGroupDef(w: Writer, g: GroupDef): void {
+  w.u8(g.id).str(g.name).str(g.icon).str(g.color);
+}
+
+function readGroupDef(r: Reader): GroupDef {
+  return { id: r.u8() as Group, name: r.str(), icon: r.str(), color: r.str() };
 }
 
 // ------------------------------------------------------- cliente -> servidor --
@@ -116,7 +132,7 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
   const w = new Writer(128).u8(FrameKind.Control).u8(m.t);
   switch (m.t) {
     case Op.Hello:
-      w.u16(m.version).str(m.nickname).str(m.password).bytes(m.publicKey);
+      w.u16(m.version).str(m.nickname).str(m.password).bytes(m.publicKey).str(m.platform);
       break;
     case Op.Auth:
       w.bytes(m.signature);
@@ -155,6 +171,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.SetClientGroup:
       w.u16(m.clientId).u8(m.group);
       break;
+    case Op.SetGroupDef:
+      w.u8(m.group).str(m.name).str(m.icon).str(m.color);
+      break;
   }
   return w.finish();
 }
@@ -172,6 +191,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         nickname: r.str(),
         password: r.str(),
         publicKey: r.bytes(),
+        platform: r.str(),
       };
     case Op.Auth:
       return { t, signature: r.bytes() };
@@ -200,6 +220,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, clientId: r.u16(), channelId: r.u16() };
     case Op.SetClientGroup:
       return { t, clientId: r.u16(), group: r.u8() as Group };
+    case Op.SetGroupDef:
+      return { t, group: r.u8() as Group, name: r.str(), icon: r.str(), color: r.str() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -255,6 +277,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.ChatDeliver:
       w.u8(m.scope).u16(m.senderId).str(m.senderName).str(m.text).f64(m.stamp);
       break;
+    case Op.GroupDefs:
+      w.list(m.groups, writeGroupDef);
+      break;
   }
   return w.finish();
 }
@@ -306,6 +331,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         text: r.str(),
         stamp: r.f64(),
       };
+    case Op.GroupDefs:
+      return { t, groups: r.list(readGroupDef) };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }
