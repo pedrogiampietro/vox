@@ -38,6 +38,7 @@ export enum Op {
   MoveClient = 0x52,
   SetClientGroup = 0x53,
   SetGroupDef = 0x54,
+  BotCommand = 0x60,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -53,7 +54,8 @@ export enum Op {
   ClientMove = 0xa2,
   ClientState = 0xa3,
   ChatDeliver = 0xb0,
-  GroupDefs = 0xc0,
+  GroupDefs = 0xb1,
+  BotCommandResult = 0xc0,
 }
 
 /** Bits de estado do cliente (auto-declarado, o servidor apenas replica). */
@@ -67,6 +69,8 @@ export const ClientFlags = {
   Away: 1 << 2,
   /** Sem dispositivo de captura disponivel. */
   NoInput: 1 << 3,
+  /** Permissao de voz em canal moderado, concedida por moderador. */
+  HasVoice: 1 << 4,
 } as const;
 
 export const ChannelFlags = {
@@ -77,6 +81,8 @@ export const ChannelFlags = {
   Permanent: 1 << 1,
   /** Canal de entrada padrao do servidor. */
   Default: 1 << 2,
+  /** Canal moderado: so Moderator+ e quem tem HasVoice podem falar. */
+  Moderated: 1 << 3,
 } as const;
 
 /** Bits do cabecalho de voz. */

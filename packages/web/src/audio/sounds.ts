@@ -19,6 +19,7 @@ const BLIPS = {
   join: { tones: [523.25, 783.99], duration: 0.11, gain: 0.18 },
   leave: { tones: [523.25, 349.23], duration: 0.13, gain: 0.16 },
   message: { tones: [880, 880], duration: 0.05, gain: 0.12 },
+  poke: { tones: [880, 1174.66, 880, 1174.66], duration: 0.35, gain: 0.3 },
   connected: { tones: [392, 587.33, 784], duration: 0.16, gain: 0.2 },
   lost: { tones: [587.33, 392, 261.63], duration: 0.22, gain: 0.2 },
 } as const satisfies Record<string, Blip>;

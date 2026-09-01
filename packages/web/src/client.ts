@@ -4,18 +4,21 @@
  * daqui - nao conhece protocolo nem Web Audio.
  */
 
-import { ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, Group, NO_CHANNEL, Op } from '@vox/protocol';
+import { ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, FailureCode, Group, NO_CHANNEL, Op } from '@vox/protocol';
 import type { ChannelInfo, ClientInfo, GroupDef, ServerMessage } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer } from './audio/mixer.js';
 import { Sounds, type SoundName } from './audio/sounds.js';
 import { loadIdentity, type Identity } from './identity.js';
+import { loadAudioPrefs, saveAudioPrefs, type AudioPrefs } from './audio-prefs.js';
 import { touchFavorite, type Favorite } from './favorites.js';
+import { notifications } from './notifications.js';
 
 export interface ChatLine {
   scope: ChatScope;
   senderId: number;
+  targetId: number;
   senderName: string;
   text: string;
   stamp: number;
@@ -36,6 +39,12 @@ interface PeerPrefs {
   muted: boolean;
 }
 
+export interface DmTab {
+  clientId: number;
+  name: string;
+  unread: number;
+}
+
 export class VoxClient {
   readonly channels = new Map<number, ChannelInfo>();
   readonly clients = new Map<number, ClientInfo>();
@@ -43,6 +52,11 @@ export class VoxClient {
   notice: Notice | null = null;
   /** Mensagens que chegaram com o chat fora de foco. */
   unread = 0;
+
+  /** Abas de conversa privada abertas, por clientId do outro usuario. */
+  readonly dmTabs = new Map<number, DmTab>();
+  /** Aba ativa: null = canal, numero = DM com esse clientId. */
+  activeDmTab: number | null = null;
 
   link: LinkState = 'offline';
   detail = '';
@@ -59,6 +73,12 @@ export class VoxClient {
   mic: MicSettings = { ...DEFAULT_MIC };
   outputVolume = 1;
   soundsEnabled = true;
+  preamp = 1;
+  notificationsEnabled = true;
+  onPoke: ((from: string, text: string) => void) | null = null;
+  onBotResult: ((message: string) => void) | null = null;
+
+  private audioPrefs: AudioPrefs | null = null;
 
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
@@ -103,8 +123,19 @@ export class VoxClient {
     return this.microphone.level;
   }
 
+  isVoiceSilenced(c: ClientInfo): boolean {
+    const ch = this.channels.get(c.channelId);
+    if (!ch || !(ch.flags & ChannelFlags.Moderated)) return false;
+    return c.group < Group.Moderator && !(c.flags & ClientFlags.HasVoice);
+  }
+
   isTalking(clientId: number): boolean {
-    if (clientId === this.selfId) return this.microphone.transmitting;
+    if (clientId === this.selfId) {
+      if (!this.microphone.transmitting) return false;
+      const me = this.self;
+      if (me && this.isVoiceSilenced(me)) return false;
+      return true;
+    }
     return this.mixer?.isTalking(clientId) ?? false;
   }
 
@@ -141,6 +172,8 @@ export class VoxClient {
   async connect(favorite: Favorite): Promise<void> {
     this.identity ??= await loadIdentity();
     this.favorite = favorite;
+    this.audioPrefs = loadAudioPrefs(favorite.serverId);
+    this.applyAudioPrefs(this.audioPrefs);
     await this.ensureAudio();
 
     const target: Target = {
@@ -153,6 +186,16 @@ export class VoxClient {
     this.connection.connect(target);
   }
 
+  private applyAudioPrefs(prefs: AudioPrefs): void {
+    this.mic = { ...prefs.mic };
+    this.outputVolume = prefs.outputVolume;
+    this.soundsEnabled = prefs.soundsEnabled;
+    this.preamp = prefs.preamp;
+    this.microphone.reconfigure(this.mic);
+    if (this.mixer) this.mixer.volume = this.outputVolume;
+    if (this.sounds) this.sounds.enabled = this.soundsEnabled;
+  }
+
   disconnect(): void {
     this.connection.close();
   }
@@ -160,6 +203,8 @@ export class VoxClient {
   private reset(): void {
     this.channels.clear();
     this.clients.clear();
+    this.dmTabs.clear();
+    this.activeDmTab = null;
     this.selfId = 0;
     this.myGroup = Group.Guest;
     this.groupDefs = [...DEFAULT_GROUP_DEFS];
@@ -212,12 +257,14 @@ export class VoxClient {
     this.mic = { ...this.mic, ...patch };
     this.microphone.reconfigure(patch);
     if (restart && this.link === 'online') await this.startMic();
+    this.saveAudioPrefs();
     this.onChange();
   }
 
   setOutputVolume(v: number): void {
     this.outputVolume = v;
     if (this.mixer && !(this.flags & ClientFlags.MutedSpeakers)) this.mixer.volume = v;
+    this.saveAudioPrefs();
     this.onChange();
   }
 
@@ -230,7 +277,30 @@ export class VoxClient {
   setSoundsEnabled(on: boolean): void {
     this.soundsEnabled = on;
     if (this.sounds) this.sounds.enabled = on;
+    this.saveAudioPrefs();
     this.onChange();
+  }
+
+  setPreamp(v: number): void {
+    this.preamp = v;
+    this.saveAudioPrefs();
+    this.onChange();
+  }
+
+  setNotificationsEnabled(on: boolean): void {
+    this.notificationsEnabled = on;
+    this.onChange();
+  }
+
+  private saveAudioPrefs(): void {
+    if (!this.favorite) return;
+    const prefs: AudioPrefs = {
+      mic: this.mic,
+      outputVolume: this.outputVolume,
+      soundsEnabled: this.soundsEnabled,
+      preamp: this.preamp,
+    };
+    saveAudioPrefs(this.favorite.serverId, prefs);
   }
 
   private play(name: SoundName): void {
@@ -298,9 +368,23 @@ export class VoxClient {
     this.connection.send({ t: Op.EditChannel, channelId, name, topic, maxClients });
   }
 
-  say(text: string, scope: ChatScope = ChatScope.Channel, targetId = 0): void {
+  botCommand(command: string, ...args: string[]): void {
+    this.connection.send({ t: Op.BotCommand, command, args });
+  }
+
+  say(text: string, scope?: ChatScope, targetId?: number): void {
     const body = text.trim();
-    if (body) this.connection.send({ t: Op.ChatSend, scope, targetId, text: body });
+    if (!body) return;
+    if (body.startsWith('/')) {
+      const parts = body.slice(1).split(/\s+/);
+      const command = parts[0] ?? '';
+      const args = parts.slice(1);
+      this.connection.send({ t: Op.BotCommand, command, args });
+      return;
+    }
+    const s = scope ?? (this.activeDmTab !== null ? ChatScope.Private : ChatScope.Channel);
+    const t = targetId ?? (this.activeDmTab !== null ? this.activeDmTab : 0);
+    this.connection.send({ t: Op.ChatSend, scope: s, targetId: t, text: body });
   }
 
   kick(clientId: number, reason: string): void {
@@ -341,12 +425,18 @@ export class VoxClient {
 
   private setFlags(flags: number): void {
     this.connection.send({ t: Op.SetSelfState, flags });
-    // Aplica localmente na hora: o servidor confirma no broadcast.
-    this.microphone.muted = (flags & ClientFlags.MutedMic) !== 0;
     if (this.mixer) this.mixer.volume = flags & ClientFlags.MutedSpeakers ? 0 : this.outputVolume;
     const me = this.self;
     if (me) me.flags = flags;
+    this.syncMicMute();
     this.onChange();
+  }
+
+  private syncMicMute(): void {
+    const me = this.self;
+    const userMuted = (me?.flags ?? 0) & ClientFlags.MutedMic;
+    const silenced = me ? this.isVoiceSilenced(me) : false;
+    this.microphone.muted = !!(userMuted || silenced);
   }
 
   setPtt(down: boolean): void {
@@ -361,6 +451,37 @@ export class VoxClient {
     if (this.unread === 0) return;
     this.unread = 0;
     this.onChange();
+  }
+
+  // --------------------------------------------------------- DM / privado --
+
+  openDm(clientId: number): void {
+    if (clientId === this.selfId) return;
+    if (!this.dmTabs.has(clientId)) {
+      const c = this.clients.get(clientId);
+      this.dmTabs.set(clientId, { clientId, name: c?.nickname ?? `#${clientId}`, unread: 0 });
+    }
+    this.activeDmTab = clientId;
+    this.onChange();
+  }
+
+  closeDm(clientId: number): void {
+    this.dmTabs.delete(clientId);
+    if (this.activeDmTab === clientId) this.activeDmTab = null;
+    this.onChange();
+  }
+
+  channelMessages(): ChatLine[] {
+    return this.chat.filter((m) => m.scope !== ChatScope.Private);
+  }
+
+  dmMessages(otherId: number): ChatLine[] {
+    return this.chat.filter((m) =>
+      m.scope === ChatScope.Private &&
+      ((m.senderId === otherId && m.targetId === this.selfId) ||
+       (m.senderId === this.selfId && m.targetId === otherId) ||
+       (m.senderId === 0 && m.targetId === otherId)),
+    );
   }
 
   // ----------------------------------------------------------- recebidos --
@@ -386,11 +507,13 @@ export class VoxClient {
           this.applyPeerPrefs(c);
         }
         void this.startMic();
+        this.syncMicMute();
         break;
 
       case Op.ChannelAdd:
       case Op.ChannelUpdate:
         this.channels.set(m.channel.id, m.channel);
+        this.syncMicMute();
         break;
 
       case Op.ChannelRemove:
@@ -403,7 +526,10 @@ export class VoxClient {
         const isNew = !this.clients.has(m.client.id);
         this.clients.set(m.client.id, m.client);
         this.applyPeerPrefs(m.client);
-        if (m.client.id === this.selfId) this.myGroup = m.client.group;
+        if (m.client.id === this.selfId) {
+          this.myGroup = m.client.group;
+          this.syncMicMute();
+        }
         if (isNew && this.link === 'online') this.play('join');
         break;
       }
@@ -417,21 +543,76 @@ export class VoxClient {
       case Op.ClientMove: {
         const c = this.clients.get(m.clientId);
         if (c) c.channelId = m.channelId;
+        if (m.clientId === this.selfId) this.syncMicMute();
         break;
       }
 
       case Op.ClientState: {
         const c = this.clients.get(m.clientId);
         if (c) c.flags = m.flags;
+        if (m.clientId === this.selfId) this.syncMicMute();
         break;
       }
 
-      case Op.ChatDeliver:
-        this.chat.push(m);
+      case Op.ChatDeliver: {
+        const line: ChatLine = {
+          scope: m.scope,
+          senderId: m.senderId,
+          targetId: m.targetId,
+          senderName: m.senderName,
+          text: m.text,
+          stamp: m.stamp,
+        };
+        this.chat.push(line);
         if (this.chat.length > MAX_CHAT_LINES) this.chat.shift();
-        if (m.senderId !== this.selfId) {
-          this.unread++;
-          this.play('message');
+        const isPoke = m.senderId === 0 && m.text.includes('cutucou');
+        if (isPoke) {
+          this.play('poke');
+          const pokeMatch = m.text.match(/👉\s*(.+?)\s+(?:te cutucou|cutucou todo[^:]*?)(?::\s*(.+))?$/);
+          const from = pokeMatch?.[1] ?? 'Alguém';
+          const customMsg = pokeMatch?.[2] ?? '';
+          this.onPoke?.(from, customMsg);
+          if (this.notificationsEnabled) notifications.poke(from);
+        } else if (m.senderId !== this.selfId) {
+          if (m.scope === ChatScope.Private) {
+            const otherId = m.senderId;
+            if (!this.dmTabs.has(otherId)) {
+              this.dmTabs.set(otherId, { clientId: otherId, name: m.senderName, unread: 0 });
+            }
+            if (this.activeDmTab !== otherId) {
+              const tab = this.dmTabs.get(otherId)!;
+              tab.unread++;
+            }
+            this.play('message');
+            if (this.notificationsEnabled) notifications.privateMessage(m.senderName, m.text);
+          } else {
+            this.unread++;
+            this.play('message');
+            if (this.notificationsEnabled && m.scope === ChatScope.Channel) {
+              const myNick = this.self?.nickname?.toLowerCase();
+              if (myNick && m.text.toLowerCase().includes(`@${myNick}`)) {
+                notifications.mention(m.senderName, this.channels.get(m.targetId)?.name || 'canal', m.text);
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case Op.BotCommandResult:
+        this.chat.push({
+          scope: ChatScope.Server,
+          senderId: 0,
+          targetId: 0,
+          senderName: 'bot',
+          text: m.message,
+          stamp: Date.now(),
+        });
+        if (this.chat.length > MAX_CHAT_LINES) this.chat.shift();
+        if (this.onBotResult) {
+          const cb = this.onBotResult;
+          this.onBotResult = null;
+          cb(m.message);
         }
         break;
 
@@ -440,6 +621,14 @@ export class VoxClient {
         break;
 
       case Op.Failure:
+        // Notificacao para kick/ban
+        if (this.notificationsEnabled) {
+          if (m.code === FailureCode.Banned) {
+            notifications.moderation('ban', m.message);
+          } else if (m.code === FailureCode.NotPermitted && m.message.toLowerCase().includes('expulso')) {
+            notifications.moderation('kick', m.message);
+          }
+        }
         this.warn(m.message);
         break;
     }

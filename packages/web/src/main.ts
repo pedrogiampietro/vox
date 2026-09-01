@@ -10,6 +10,7 @@
  * criar e destruir nos no ciclo principal.
  */
 
+import { initNotifications } from './notifications.js';
 import { VoxClient } from './client.js';
 import type { MicSettings } from './audio/microphone.js';
 import {
@@ -48,6 +49,7 @@ let dragClientId = 0;
 let dragGhost: HTMLElement | null = null;
 let dragStartY = 0;
 let dragActive = false;
+let dragPointerId = 0;
 let inputDevices: MediaDeviceInfo[] = [];
 let outputDevices: MediaDeviceInfo[] = [];
 
@@ -106,10 +108,22 @@ function timeHHMM(stamp: number): string {
 
 function render(): void {
   const app = document.getElementById('app')!;
+  const chatInput = app.querySelector('.composer input') as HTMLInputElement | null;
+  const hadFocus = chatInput && document.activeElement === chatInput;
+  const savedValue = chatInput?.value ?? '';
+
   if (view === 'browser') {
     app.replaceChildren(renderBrowser());
   } else {
     app.replaceChildren(renderShell());
+  }
+
+  if (hadFocus && view === 'shell') {
+    const newInput = app.querySelector('.composer input') as HTMLInputElement | null;
+    if (newInput) {
+      newInput.value = savedValue;
+      newInput.focus();
+    }
   }
 }
 
@@ -524,9 +538,15 @@ function renderChannelTree(parent: HTMLElement, parentId: number, depth: number)
     if (ch.id === selectedChannelId) row.classList.add('selected');
     row.style.paddingLeft = `${8 + depth * 14}px`;
 
-    const idx = text('span', 'idx', locked ? '🔒' : '#');
+    const moderated = (ch.flags & ChannelFlags.Moderated) !== 0;
+    const idx = text('span', 'idx', locked ? '🔒' : moderated ? '🎙' : '#');
     const info = $('div', 'room-info');
     info.append(text('span', 'name', ch.name));
+    if (moderated) {
+      const modLabel = text('span', 'topic', 'moderado');
+      modLabel.style.color = 'var(--amber)';
+      info.append(modLabel);
+    }
     if (ch.topic) info.append(text('span', 'topic', ch.topic));
     const cap =
       ch.maxClients > 0 ? text('span', 'cap', `${members.length}/${ch.maxClients}`) : text('span', 'cap', String(members.length));
@@ -599,6 +619,12 @@ function renderPeer(c: ClientInfo): HTMLElement {
       input.focus();
       input.select();
     });
+  } else {
+    row.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      client.openDm(c.id);
+      render();
+    });
   }
   const gdef = client.groupDef(c.group);
   if (gdef.color) nick.style.color = gdef.color;
@@ -624,11 +650,30 @@ function renderPeer(c: ClientInfo): HTMLElement {
   }
 
   // flags
+  const peerChannel = client.channels.get(c.channelId);
+  const channelModerated = peerChannel ? (peerChannel.flags & ChannelFlags.Moderated) !== 0 : false;
+  const hasVoice = (c.flags & ClientFlags.HasVoice) !== 0;
+  const silencedByMod = channelModerated && c.group < Group.Moderator && !hasVoice;
+
+  if (hasVoice) {
+    const vf = text('span', 'flag', '🎤');
+    vf.title = 'voice';
+    vf.style.color = 'var(--signal)';
+    row.append(vf);
+  }
+  if (silencedByMod) {
+    const sf = text('span', 'flag', '🚫');
+    sf.title = 'silenciado pela moderação';
+    sf.style.opacity = '0.7';
+    row.append(sf);
+  }
   if (muted) row.append(text('span', 'flag', '🔇'));
   if (away) row.append(text('span', 'flag', 'Away'));
   if (noInput) row.append(text('span', 'flag', '⚠'));
 
-  row.addEventListener('click', () => {
+  row.addEventListener('click', (e) => {
+    if (c.id === client.selfId && (e.target as HTMLElement).closest('.nick')) return;
+    if (selectedClientId === c.id && selectedChannelId === 0) return;
     selectedClientId = c.id;
     selectedChannelId = 0;
     render();
@@ -646,17 +691,17 @@ function renderPeer(c: ClientInfo): HTMLElement {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
       if (c.id === client.selfId && (target.classList.contains('nick') || target.closest('.nick'))) return;
-      e.preventDefault();
       dragClientId = c.id;
       dragStartY = e.clientY;
       dragActive = false;
-      row.setPointerCapture(e.pointerId);
+      dragPointerId = e.pointerId;
     });
     row.addEventListener('pointermove', (e) => {
       if (!dragClientId || dragClientId !== c.id) return;
       if (!dragActive && Math.abs(e.clientY - dragStartY) < 6) return;
       if (!dragActive) {
         dragActive = true;
+        row.setPointerCapture(dragPointerId);
         row.classList.add('dragging');
         dragGhost = $('div', 'drag-ghost');
         dragGhost.textContent = c.nickname;
@@ -668,9 +713,9 @@ function renderPeer(c: ClientInfo): HTMLElement {
     });
     row.addEventListener('pointerup', (e) => {
       if (!dragClientId || dragClientId !== c.id) return;
-      row.releasePointerCapture(e.pointerId);
       row.classList.remove('dragging');
       if (dragActive) {
+        try { row.releasePointerCapture(e.pointerId); } catch {}
         if (dragGhost) { dragGhost.style.display = 'none'; }
         const target = getDropChannel(e.clientX, e.clientY);
         if (target !== null) {
@@ -678,10 +723,6 @@ function renderPeer(c: ClientInfo): HTMLElement {
           else client.moveUser(c.id, target);
         }
         clearDropHighlight();
-      } else {
-        selectedClientId = c.id;
-        selectedChannelId = 0;
-        render();
       }
       if (dragGhost) { dragGhost.remove(); dragGhost = null; }
       dragClientId = 0;
@@ -732,11 +773,49 @@ function renderTalk(): HTMLElement {
     pane.append(renderClientInfoPanel(selCl));
   }
 
+  // chat tabs
+  const tabs = $('div', 'chat-tabs');
+  const channelTab = $('button', 'chat-tab');
+  channelTab.textContent = '# canal';
+  if (client.activeDmTab === null) channelTab.classList.add('active');
+  if (client.unread > 0 && client.activeDmTab !== null) {
+    const badge = text('span', 'tab-badge', String(client.unread));
+    channelTab.append(badge);
+  }
+  channelTab.addEventListener('click', () => {
+    client.activeDmTab = null;
+    client.clearUnread();
+    render();
+  });
+  tabs.append(channelTab);
+
+  for (const [dmId, dm] of client.dmTabs) {
+    const tab = $('button', 'chat-tab');
+    if (client.activeDmTab === dmId) tab.classList.add('active');
+    const label = text('span', '', dm.name);
+    tab.append(label);
+    if (dm.unread > 0 && client.activeDmTab !== dmId) {
+      const badge = text('span', 'tab-badge', String(dm.unread));
+      tab.append(badge);
+    }
+    const close = text('span', 'tab-close', '×');
+    close.addEventListener('click', (e) => { e.stopPropagation(); client.closeDm(dmId); render(); });
+    tab.append(close);
+    tab.addEventListener('click', () => { client.activeDmTab = dmId; dm.unread = 0; render(); });
+    tabs.append(tab);
+  }
+  pane.append(tabs);
+
   // chat log
+  const messages = client.activeDmTab !== null
+    ? client.dmMessages(client.activeDmTab)
+    : client.channelMessages();
+
   const log = $('div', 'log');
-  for (const line of client.chat) {
+  for (const line of messages) {
     const row = $('div', 'line');
     if (line.senderId === 0) row.classList.add('system');
+    if (line.scope === ChatScope.Private) row.classList.add('dm');
     row.append(
       text('time', '', timeHHMM(line.stamp)),
       (() => {
@@ -750,14 +829,18 @@ function renderTalk(): HTMLElement {
     );
     log.append(row);
   }
-  // auto scroll
+  if (client.activeDmTab !== null && messages.length === 0) {
+    const empty = text('div', 'empty-dm', 'nenhuma mensagem ainda');
+    log.append(empty);
+  }
   requestAnimationFrame(() => (log.scrollTop = log.scrollHeight));
   pane.append(log);
 
   // composer
   const composer = $('div', 'composer');
   const input = $('input') as HTMLInputElement;
-  input.placeholder = 'mensagem…';
+  const dmTarget = client.activeDmTab !== null ? client.dmTabs.get(client.activeDmTab) : null;
+  input.placeholder = dmTarget ? `mensagem para ${dmTarget.name}…` : 'mensagem…';
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && input.value.trim()) {
       client.say(input.value.trim());
@@ -1149,6 +1232,7 @@ function renderSettings(): HTMLElement {
   const sections = [
     { id: 'capture', icon: '🎙', label: 'Capturar' },
     { id: 'playback', icon: '🔊', label: 'Reprodução' },
+    { id: 'notifications', icon: '🔔', label: 'Notificações' },
     ...(client.myGroup >= Group.Owner ? [{ id: 'groups', icon: '👥', label: 'Grupos' }] : []),
   ];
   let activeSection = 'capture';
@@ -1175,6 +1259,7 @@ function renderSettings(): HTMLElement {
     body.replaceChildren();
     if (activeSection === 'capture') buildCaptureSection(body, buildBody);
     else if (activeSection === 'playback') buildPlaybackSection(body);
+    else if (activeSection === 'notifications') buildNotificationsSection(body);
     else if (activeSection === 'groups') buildGroupsSection(body, buildBody);
   }
 
@@ -1429,18 +1514,65 @@ function buildPlaybackSection(body: HTMLElement): void {
   preRange.min = '0.5';
   preRange.max = '2';
   preRange.step = '0.05';
-  preRange.value = '1';
+  preRange.value = String(client.preamp);
   const preVal = text('span', 'val', '+0 dB');
   preRange.addEventListener('input', () => {
     const v = Number(preRange.value);
     const db = v === 1 ? 0 : Math.round(20 * Math.log10(v));
     preVal.textContent = db >= 0 ? `+${db} dB` : `${db} dB`;
-    client.setOutputVolumeDirect(v);
+    client.setPreamp(v);
   });
   preSlider.append(preRange, preVal);
   preLabel.append(preSlider);
   preRow.append(preLabel);
   body.append(preRow);
+}
+
+function buildNotificationsSection(body: HTMLElement): void {
+  body.append(text('h3', '', 'NOTIFICAÇÕES'));
+  body.append(text('span', '', 'Configure notificações nativas do sistema'));
+
+  // Enable/disable
+  const enableRow = $('div', 'settings-toggle');
+  const enableCheck = $('input') as HTMLInputElement;
+  enableCheck.type = 'checkbox';
+  enableCheck.checked = client.notificationsEnabled ?? true;
+  enableCheck.addEventListener('change', () => {
+    client.setNotificationsEnabled(enableCheck.checked);
+  });
+  enableRow.append(enableCheck, text('span', '', 'Ativar notificações nativas (menções, mensagens privadas, pokes, kick/ban)'));
+  body.append(enableRow);
+
+  // Request permission button (if not granted)
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+    const permRow = $('div', 'settings-row');
+    const permBtn = $('button', 'ghost');
+    permBtn.textContent = '🔒 Permitir notificações';
+    permBtn.addEventListener('click', async () => {
+      const granted = await (await import('./notifications.js')).requestNotificationPermission();
+      if (granted) {
+        permBtn.textContent = '✅ Permitido';
+        permBtn.disabled = true;
+      } else {
+        permBtn.textContent = '❌ Negado';
+      }
+    });
+    permRow.append(permBtn);
+    body.append(permRow);
+  }
+
+  // Test notification
+  const testRow = $('div', 'settings-test');
+  const testBtn = $('button', 'ghost');
+  testBtn.textContent = '▶ testar notificação';
+  testBtn.addEventListener('click', () => {
+    (async () => {
+      const { notify } = await import('./notifications.js');
+      await notify({ title: 'Vox Test', body: 'Notificação de teste funcionando!', tag: 'test' });
+    })();
+  });
+  testRow.append(testBtn);
+  body.append(testRow);
 }
 
 function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
@@ -1722,6 +1854,29 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
     });
     items.push(muteBtn);
 
+    items.push($('hr'));
+
+    // poke
+    const pokeBtn = $('button');
+    pokeBtn.textContent = '👉 poke';
+    pokeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeMenu();
+      showPokeOverlay('poke', target.nickname);
+    });
+    items.push(pokeBtn);
+
+    // mensagem privada
+    const dmBtn = $('button');
+    dmBtn.textContent = '✉ mensagem privada';
+    dmBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      client.openDm(target.id);
+      closeMenu();
+      render();
+    });
+    items.push(dmBtn);
+
     // ---- move to channel ----
     if (client.canModerate(target, Group.Moderator)) {
       const channels = [...client.channels.values()].filter((c) => c.id !== target.channelId);
@@ -1746,6 +1901,30 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
     // ---- moderation ----
     if (client.canModerate(target, Group.Moderator)) {
       items.push($('hr'));
+
+      const srvMuteBtn = $('button');
+      const targetMuted = (target.flags & ClientFlags.MutedMic) !== 0;
+      srvMuteBtn.textContent = targetMuted ? '🔇 desmutar (servidor)' : '🔇 mutar (servidor)';
+      srvMuteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        client.botCommand(targetMuted ? 'unmute' : 'mute', target.nickname);
+        closeMenu();
+      });
+      items.push(srvMuteBtn);
+
+      // voice/devoice — only show if target's channel is moderated
+      const targetCh = client.channels.get(target.channelId);
+      if (targetCh && (targetCh.flags & ChannelFlags.Moderated)) {
+        const hasVoice = (target.flags & ClientFlags.HasVoice) !== 0;
+        const voiceBtn = $('button');
+        voiceBtn.textContent = hasVoice ? '🔕 remover voice' : '🎤 dar voice';
+        voiceBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          client.botCommand(hasVoice ? 'devoice' : 'voice', target.nickname);
+          closeMenu();
+        });
+        items.push(voiceBtn);
+      }
 
       const kickBtn = $('button', 'danger');
       kickBtn.textContent = 'expulsar';
@@ -1844,9 +2023,30 @@ function showChannelMenu(e: MouseEvent, ch: ChannelInfo): void {
     items.push(joinBtn);
   }
 
+  // masspoke
+  items.push($('hr'));
+  const massPokeBtn = $('button');
+  massPokeBtn.textContent = '👉 poke em massa';
+  massPokeBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    closeMenu();
+    showPokeOverlay('masspoke');
+  });
+  items.push(massPokeBtn);
+
   // moderator actions
   if (client.myGroup >= Group.Moderator) {
     items.push($('hr'));
+
+    // moderate channel
+    const modBtn = $('button');
+    modBtn.textContent = '🎙 moderação';
+    modBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeMenu();
+      showModerateOverlay(ch);
+    });
+    items.push(modBtn);
 
     // edit channel
     const editBtn = $('button');
@@ -1868,6 +2068,45 @@ function showChannelMenu(e: MouseEvent, ch: ChannelInfo): void {
     });
     items.push(subBtn);
 
+    // masspush — move users to/from this channel
+    const otherChannels = [...client.channels.values()].filter((c) => c.id !== ch.id);
+    if (otherChannels.length > 0) {
+      // move everyone FROM this channel to another
+      const { toggle: fromToggle, sub: fromSub } = collapsible('mover deste canal para');
+      items.push(fromToggle);
+      for (const dest of otherChannels) {
+        const destBtn = $('button');
+        destBtn.textContent = dest.name;
+        destBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          client.botCommand('masspush', dest.name, ch.name);
+          closeMenu();
+        });
+        fromSub.firstElementChild!.append(destBtn);
+      }
+      items.push(fromSub);
+    }
+
+    // move ALL users from the entire server to this channel
+    const pullAllBtn = $('button');
+    pullAllBtn.textContent = `mover todos do servidor para ${ch.name}`;
+    pullAllBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      client.botCommand('masspush', ch.name);
+      closeMenu();
+    });
+    items.push(pullAllBtn);
+
+    // mass kick — expulsa todos do servidor
+    const massKickBtn = $('button', 'danger');
+    massKickBtn.textContent = 'expulsar todos do servidor';
+    massKickBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      client.botCommand('masskick');
+      closeMenu();
+    });
+    items.push(massKickBtn);
+
     // delete
     if (!(ch.flags & ChannelFlags.Default)) {
       const delBtn = $('button', 'danger');
@@ -1883,6 +2122,297 @@ function showChannelMenu(e: MouseEvent, ch: ChannelInfo): void {
 
   const anchor = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;
   if (anchor) openMenu(anchor, items);
+}
+
+function showPokeOverlay(command: 'poke' | 'masspoke', targetNick?: string): void {
+  const overlay = $('div', 'settings-overlay');
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) overlay.remove();
+  });
+
+  const panel = $('div', 'settings');
+  panel.style.width = '380px';
+  panel.style.height = 'auto';
+  panel.style.gridTemplateColumns = '1fr';
+
+  const body = $('div', 'settings-body');
+  body.style.padding = '20px';
+
+  const titleText = command === 'poke'
+    ? `👉 POKE: ${targetNick}`
+    : '👉 POKE EM MASSA';
+  const title = text('h3', '', titleText);
+  title.style.cssText = 'margin:0 0 4px;font-size:13px;letter-spacing:0.1em;color:var(--amber);';
+  body.append(title);
+
+  if (command === 'masspoke') {
+    const hint = text('div', '', 'Todos os usuários do servidor serão cutucados.');
+    hint.style.cssText = 'font-size:12px;color:var(--text-dim);margin-bottom:12px;';
+    body.append(hint);
+  }
+
+  const msgLabel = text('label', 'label', 'MENSAGEM (OPCIONAL)');
+  msgLabel.style.cssText = 'display:block;margin-bottom:6px;margin-top:12px;';
+  body.append(msgLabel);
+
+  const msgInput = $('textarea') as HTMLTextAreaElement;
+  msgInput.placeholder = 'escreva uma mensagem…';
+  msgInput.rows = 3;
+  msgInput.style.cssText = 'resize:vertical;min-height:60px;';
+  body.append(msgInput);
+
+  const btnRow = $('div', '');
+  btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:16px;';
+
+  const cancelBtn = $('button', 'ghost');
+  cancelBtn.textContent = 'cancelar';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+
+  const sendBtn = $('button', 'primary');
+  sendBtn.textContent = 'enviar poke';
+  sendBtn.addEventListener('click', () => {
+    const msg = msgInput.value.trim();
+    if (command === 'poke' && targetNick) {
+      client.botCommand('poke', targetNick, ...(msg ? [msg] : []));
+    } else {
+      client.botCommand('masspoke', ...(msg ? [msg] : []));
+    }
+    overlay.remove();
+  });
+
+  btnRow.append(cancelBtn, sendBtn);
+  body.append(btnRow);
+
+  panel.append(body);
+  overlay.append(panel);
+  document.body.append(overlay);
+
+  msgInput.focus();
+}
+
+function showBanListOverlay(): void {
+  const overlay = $('div', 'settings-overlay');
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) {
+      client.onBotResult = null;
+      overlay.remove();
+    }
+  });
+
+  const panel = $('div', 'settings');
+  panel.style.width = '480px';
+  panel.style.height = 'auto';
+  panel.style.maxHeight = '80vh';
+  panel.style.gridTemplateColumns = '1fr';
+
+  const body = $('div', 'settings-body');
+  body.style.padding = '20px';
+  body.style.overflowY = 'auto';
+
+  const title = text('h3', '', 'GERENCIAR BANS');
+  title.style.cssText = 'margin:0 0 16px;font-size:13px;letter-spacing:0.1em;color:var(--amber);';
+  body.append(title);
+
+  const listContainer = $('div', '');
+  listContainer.style.cssText = 'display:flex;flex-direction:column;gap:4px;';
+
+  const loading = text('div', 'mono', 'carregando...');
+  loading.style.cssText = 'color:var(--text-dim);font-size:12px;padding:12px 0;';
+  listContainer.append(loading);
+  body.append(listContainer);
+
+  client.onBotResult = (msg) => {
+    listContainer.innerHTML = '';
+
+    if (msg === 'nenhum ban ativo') {
+      const empty = text('div', '', 'nenhum ban ativo');
+      empty.style.cssText = 'color:var(--text-dim);font-size:13px;padding:16px 0;text-align:center;';
+      listContainer.append(empty);
+      return;
+    }
+
+    const lines = msg.split('\n').slice(1);
+    for (const line of lines) {
+      const parts = line.trim().split(/\s{2,}/);
+      if (parts.length < 3) continue;
+      const [fp, until, ...reasonParts] = parts;
+      const reason = reasonParts.join(' ');
+
+      const row = $('div', '');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--r);background:var(--ink-700);';
+
+      const info = $('div', '');
+      info.style.cssText = 'flex:1;min-width:0;';
+
+      const fpEl = text('div', 'mono', fp!);
+      fpEl.style.cssText = 'font-size:12px;color:var(--amber);';
+      const detailEl = text('div', '', `${until} — ${reason}`);
+      detailEl.style.cssText = 'font-size:11px;color:var(--text-dim);margin-top:2px;';
+
+      info.append(fpEl, detailEl);
+
+      const removeBtn = $('button', 'ghost');
+      removeBtn.textContent = 'remover';
+      removeBtn.style.cssText = 'flex:none;font-size:11px;padding:4px 8px;color:var(--danger);';
+      removeBtn.addEventListener('click', () => {
+        const prefix = fp!.replace('…', '');
+        client.onBotResult = () => {
+          row.remove();
+          if (listContainer.children.length === 0) {
+            const empty = text('div', '', 'nenhum ban ativo');
+            empty.style.cssText = 'color:var(--text-dim);font-size:13px;padding:16px 0;text-align:center;';
+            listContainer.append(empty);
+          }
+        };
+        client.botCommand('unban', prefix);
+      });
+
+      row.append(info, removeBtn);
+      listContainer.append(row);
+    }
+
+    if (listContainer.children.length === 0) {
+      const empty = text('div', '', 'nenhum ban ativo');
+      empty.style.cssText = 'color:var(--text-dim);font-size:13px;padding:16px 0;text-align:center;';
+      listContainer.append(empty);
+    }
+  };
+
+  client.botCommand('banlist');
+
+  const btnRow = $('div', '');
+  btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:20px;';
+  const closeBtn = $('button', 'ghost');
+  closeBtn.textContent = 'fechar';
+  closeBtn.addEventListener('click', () => {
+    client.onBotResult = null;
+    overlay.remove();
+  });
+  btnRow.append(closeBtn);
+  body.append(btnRow);
+
+  panel.append(body);
+  overlay.append(panel);
+  document.body.append(overlay);
+}
+
+function showModerateOverlay(ch: ChannelInfo): void {
+  const overlay = $('div', 'settings-overlay');
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) overlay.remove();
+  });
+
+  const panel = $('div', 'settings');
+  panel.style.width = '400px';
+  panel.style.height = 'auto';
+  panel.style.maxHeight = '80vh';
+  panel.style.gridTemplateColumns = '1fr';
+
+  const body = $('div', 'settings-body');
+  body.style.padding = '20px';
+  body.style.overflowY = 'auto';
+
+  const title = text('h3', '', `🎙 MODERAÇÃO: ${ch.name}`);
+  title.style.cssText = 'margin:0 0 16px;font-size:13px;letter-spacing:0.1em;color:var(--amber);';
+  body.append(title);
+
+  const isModerated = (ch.flags & ChannelFlags.Moderated) !== 0;
+
+  // toggle moderation
+  const toggleRow = $('div', '');
+  toggleRow.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:16px;';
+  const toggleCheck = $('input') as HTMLInputElement;
+  toggleCheck.type = 'checkbox';
+  toggleCheck.checked = isModerated;
+  toggleCheck.style.cssText = 'width:auto;flex:none;accent-color:var(--amber);';
+  const toggleLabel = text('span', '', 'Canal moderado');
+  toggleLabel.style.cssText = 'font-weight:600;font-size:14px;';
+  toggleRow.append(toggleCheck, toggleLabel);
+  body.append(toggleRow);
+
+  const desc = text('div', '', 'Quando ativo, apenas Moderator+ e quem receber voice podem falar. Os outros ouvem mas não transmitem áudio.');
+  desc.style.cssText = 'font-size:12px;color:var(--text-dim);margin-bottom:16px;line-height:1.5;';
+  body.append(desc);
+
+  // user list with voice checkboxes
+  const listTitle = text('div', 'label', 'PERMISSÕES DE VOZ');
+  listTitle.style.cssText = 'margin-bottom:8px;';
+  body.append(listTitle);
+
+  const members = client.membersOf(ch.id);
+  const userList = $('div', '');
+  userList.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
+
+  const voiceChanges = new Map<string, boolean>();
+
+  for (const m of members) {
+    const isMod = m.group >= Group.Moderator;
+    const hasVoice = (m.flags & ClientFlags.HasVoice) !== 0;
+
+    const row = $('div', '');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--r);background:var(--ink-700);';
+
+    const check = $('input') as HTMLInputElement;
+    check.type = 'checkbox';
+    check.style.cssText = 'width:auto;flex:none;accent-color:var(--signal);';
+
+    if (isMod) {
+      check.checked = true;
+      check.disabled = true;
+    } else {
+      check.checked = hasVoice;
+      check.addEventListener('change', () => {
+        voiceChanges.set(m.nickname, check.checked);
+      });
+    }
+
+    const avatar = $('span', '');
+    avatar.textContent = m.nickname.charAt(0).toUpperCase();
+    avatar.style.cssText = 'width:22px;height:22px;border-radius:50%;background:var(--ink-500);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--amber);flex:none;';
+
+    const nick = text('span', '', m.nickname);
+    nick.style.cssText = 'flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+    const gdef = client.groupDef(m.group);
+    if (gdef.color) nick.style.color = gdef.color;
+    else if (m.group >= Group.Owner) nick.style.color = 'var(--amber)';
+
+    const groupLabel = text('span', 'mono', gdef.name);
+    groupLabel.style.cssText = 'color:var(--text-faint);flex:none;';
+
+    row.append(check, avatar, nick, groupLabel);
+    userList.append(row);
+  }
+
+  body.append(userList);
+
+  // buttons
+  const btnRow = $('div', '');
+  btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:20px;';
+
+  const cancelBtn = $('button', 'ghost');
+  cancelBtn.textContent = 'cancelar';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+
+  const saveBtn = $('button', 'primary');
+  saveBtn.textContent = 'aplicar';
+  saveBtn.addEventListener('click', () => {
+    const wantModerated = toggleCheck.checked;
+    if (wantModerated !== isModerated) {
+      client.botCommand('moderate');
+    }
+    for (const [nick, grant] of voiceChanges) {
+      client.botCommand(grant ? 'voice' : 'devoice', nick);
+    }
+    overlay.remove();
+  });
+
+  btnRow.append(cancelBtn, saveBtn);
+  body.append(btnRow);
+
+  panel.append(body);
+  overlay.append(panel);
+  document.body.append(overlay);
 }
 
 function showEditChannelOverlay(ch: ChannelInfo): void {
@@ -1998,6 +2528,18 @@ function showTreeMenu(e: MouseEvent): void {
     items.push(editBtn);
   }
 
+  // ban management (admin+)
+  if (client.myGroup >= Group.Admin) {
+    const bansBtn = $('button');
+    bansBtn.textContent = 'gerenciar bans';
+    bansBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeMenu();
+      showBanListOverlay();
+    });
+    items.push(bansBtn);
+  }
+
   // group management (owner)
   if (client.myGroup >= Group.Owner) {
     const groupsBtn = $('button');
@@ -2085,7 +2627,8 @@ let pttActive = false;
 
 document.addEventListener('keydown', (e) => {
   if (view !== 'shell') return;
-  if ((e.target as HTMLElement).tagName === 'INPUT') return;
+  const tag = (e.target as HTMLElement).tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
   // Push-to-talk: espaco (configuravel)
   if (e.code === 'Space' && !pttActive) {
@@ -2136,6 +2679,95 @@ client = new VoxClient(() => {
   if (view === 'shell') render();
 });
 
+const pokeQueue: { from: string; message: string; stamp: number }[] = [];
+
+function renderPokeModal(): void {
+  const existing = document.querySelector('.poke-overlay');
+  if (existing) existing.remove();
+  if (pokeQueue.length === 0) return;
+
+  const overlay = $('div', 'poke-overlay');
+  const modal = $('div', 'poke-modal');
+
+  // header
+  const header = $('div', 'poke-header');
+  const icon = $('span', 'poke-icon');
+  icon.textContent = '👉';
+  const title = $('span', 'poke-title');
+  title.textContent = 'Poke recebido';
+  header.append(icon, title);
+  if (pokeQueue.length > 1) {
+    const count = $('span', 'poke-count');
+    count.textContent = `${pokeQueue.length}`;
+    header.append(count);
+  }
+
+  // list
+  const list = $('div', 'poke-list');
+  for (let i = pokeQueue.length - 1; i >= 0; i--) {
+    const p = pokeQueue[i]!;
+    const entry = $('div', 'poke-entry');
+    if (i === pokeQueue.length - 1) entry.classList.add('poke-new');
+
+    const avatar = $('div', 'poke-avatar');
+    avatar.textContent = p.from.charAt(0).toUpperCase();
+
+    const info = $('div', 'poke-info');
+    const from = $('div', 'poke-from');
+    from.textContent = `${p.from} te cutucou!`;
+    info.append(from);
+    if (p.message) {
+      const msg = $('div', 'poke-msg');
+      msg.textContent = `"${p.message}"`;
+      msg.style.fontStyle = 'italic';
+      info.append(msg);
+    }
+
+    const time = $('span', 'poke-time');
+    time.textContent = timeHHMM(p.stamp);
+
+    entry.append(avatar, info, time);
+    list.append(entry);
+  }
+
+  // footer
+  const footer = $('div', 'poke-footer');
+  if (pokeQueue.length > 1) {
+    const clearBtn = $('button', 'ghost');
+    clearBtn.textContent = 'limpar tudo';
+    clearBtn.addEventListener('click', () => {
+      pokeQueue.length = 0;
+      overlay.remove();
+    });
+    footer.append(clearBtn);
+  }
+  const okBtn = $('button', 'primary');
+  okBtn.textContent = 'OK';
+  okBtn.addEventListener('click', () => {
+    pokeQueue.length = 0;
+    overlay.remove();
+  });
+  footer.append(okBtn);
+
+  modal.append(header, list, footer);
+  overlay.append(modal);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      pokeQueue.length = 0;
+      overlay.remove();
+    }
+  });
+  document.body.append(overlay);
+}
+
+client.onPoke = (from, message) => {
+  pokeQueue.push({ from, message, stamp: Date.now() });
+  renderPokeModal();
+};
+
+// Inicializa notificacoes (pede permissao se necessario)
+void initNotifications();
+
 // Initial render
 render();
 
@@ -2153,7 +2785,9 @@ function tick(): void {
   if (micMeter) {
     const fill = micMeter.querySelector('i');
     if (fill) {
-      const pct = Math.round(client.micLevel * 100);
+      const me = client.self;
+      const silenced = me ? client.isVoiceSilenced(me) : false;
+      const pct = silenced ? 0 : Math.round(client.micLevel * 100);
       fill.style.width = `${pct}%`;
       micMeter.classList.toggle('live', pct > 0);
     }

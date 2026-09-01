@@ -32,7 +32,8 @@ export type ClientMessage =
   | { t: Op.BanClient; clientId: number; reason: string; minutes: number }
   | { t: Op.MoveClient; clientId: number; channelId: number }
   | { t: Op.SetClientGroup; clientId: number; group: Group }
-  | { t: Op.SetGroupDef; group: Group; name: string; icon: string; color: string };
+  | { t: Op.SetGroupDef; group: Group; name: string; icon: string; color: string }
+  | { t: Op.BotCommand; command: string; args: string[] };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -73,8 +74,10 @@ export type ServerMessage =
       senderName: string;
       text: string;
       stamp: number;
+      targetId: number;
     }
-  | { t: Op.GroupDefs; groups: GroupDef[] };
+  | { t: Op.GroupDefs; groups: GroupDef[] }
+  | { t: Op.BotCommandResult; success: boolean; message: string; data?: unknown };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
 export const MAX_NICKNAME = 32;
@@ -174,6 +177,11 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.SetGroupDef:
       w.u8(m.group).str(m.name).str(m.icon).str(m.color);
       break;
+    case Op.BotCommand:
+      w.str(m.command);
+      w.u16(m.args.length);
+      for (const arg of m.args) w.str(arg);
+      break;
   }
   return w.finish();
 }
@@ -222,6 +230,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, clientId: r.u16(), group: r.u8() as Group };
     case Op.SetGroupDef:
       return { t, group: r.u8() as Group, name: r.str(), icon: r.str(), color: r.str() };
+    case Op.BotCommand:
+      return { t, command: r.str(), args: Array.from({ length: r.u16() }, () => r.str()) };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -275,10 +285,14 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
       w.u16(m.clientId).u8(m.flags);
       break;
     case Op.ChatDeliver:
-      w.u8(m.scope).u16(m.senderId).str(m.senderName).str(m.text).f64(m.stamp);
+      w.u8(m.scope).u16(m.senderId).u16(m.targetId).str(m.senderName).str(m.text).f64(m.stamp);
       break;
     case Op.GroupDefs:
       w.list(m.groups, writeGroupDef);
+      break;
+    case Op.BotCommandResult:
+      w.u8(m.success ? 1 : 0).str(m.message);
+      // data omitted for simplicity - could be extended
       break;
   }
   return w.finish();
@@ -327,12 +341,15 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         t,
         scope: r.u8() as ChatScope,
         senderId: r.u16(),
+        targetId: r.u16(),
         senderName: r.str(),
         text: r.str(),
         stamp: r.f64(),
       };
     case Op.GroupDefs:
       return { t, groups: r.list(readGroupDef) };
+    case Op.BotCommandResult:
+      return { t, success: r.u8() === 1, message: r.str(), data: undefined };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }

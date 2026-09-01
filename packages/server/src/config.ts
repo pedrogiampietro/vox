@@ -65,6 +65,11 @@ export const config = {
   voicePacketsPerSecond: num('VOX_VOICE_RATE', 120),
   controlMessagesPerSecond: num('VOX_CONTROL_RATE', 40),
 
+  /** Move para canal AFK ao mutar mic + fone. */
+  afkEnabled: bool('VOX_AFK_ENABLED', true),
+  /** Nome do canal AFK (criado automaticamente se nao existir). */
+  afkChannelName: str('VOX_AFK_CHANNEL', 'AFK'),
+
   /** Onde os canais permanentes sao gravados. */
   dataDir: str('VOX_DATA_DIR', 'data'),
 

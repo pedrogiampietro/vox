@@ -18,6 +18,7 @@ import {
   DEFAULT_GROUP_DEFS,
   FailureCode,
   FrameKind,
+  GROUP_NAMES,
   Group,
   NO_CHANNEL,
   Op,
@@ -83,6 +84,8 @@ export class Hub {
   private readonly groups = new Map<string, Group>();
   private groupDefs: GroupDef[];
   private bans: StoredBan[] = [];
+
+  afkEnabled = config.afkEnabled;
 
   private nextClientId = 1;
   private nextChannelId = 1;
@@ -205,6 +208,37 @@ export class Hub {
     }
   }
 
+  private checkAfkOnMute(s: Session): void {
+    if (!this.afkEnabled) return;
+    const bothMuted = (s.flags & ClientFlags.MutedMic) !== 0
+      && (s.flags & ClientFlags.MutedSpeakers) !== 0;
+    if (!bothMuted) return;
+    const afkCh = this.findOrCreateAfkChannel();
+    if (!afkCh) return;
+    if (s.channelId === afkCh.info.id) return;
+    this.forceMove(s, afkCh.info.id);
+  }
+
+  private findOrCreateAfkChannel(): Channel | null {
+    const name = config.afkChannelName;
+    for (const ch of this.channels.values()) {
+      if (ch.info.name === name) return ch;
+    }
+    const info: ChannelInfo = {
+      id: this.allocChannelId(),
+      parentId: NO_CHANNEL,
+      order: this.channels.size,
+      name,
+      topic: 'Canal AFK',
+      maxClients: 0,
+      flags: ChannelFlags.Permanent,
+    };
+    this.channels.set(info.id, { info, password: '', members: new Set() });
+    this.broadcast({ t: Op.ChannelAdd, channel: info });
+    this.deps.onChanged();
+    return this.channels.get(info.id) ?? null;
+  }
+
   /** Fecha o servidor virtual inteiro; usado quando o painel o remove. */
   shutdown(reason: string): void {
     for (const s of [...this.pending, ...this.sessions.values()]) {
@@ -256,7 +290,10 @@ export class Hub {
     const channel = this.channels.get(s.channelId);
     if (!channel) return;
 
-    // Uma escrita de 2 bytes, e o mesmo buffer vai para todo mundo do canal.
+    if (channel.info.flags & ChannelFlags.Moderated) {
+      if (s.group < Group.Moderator && !(s.flags & ClientFlags.HasVoice)) return;
+    }
+
     stampSender(frame, s.id);
     for (const peer of channel.members) {
       if (peer === s) continue;
@@ -285,9 +322,12 @@ export class Hub {
         let flags = m.flags & 0xff;
         // Ouvido desligado implica microfone desligado, como no TS3.
         if (flags & ClientFlags.MutedSpeakers) flags |= ClientFlags.MutedMic;
+        // HasVoice e controlado pelo servidor (moderador), nao pelo cliente.
+        flags = (flags & ~ClientFlags.HasVoice) | (s.flags & ClientFlags.HasVoice);
         if (flags !== s.flags) {
           s.flags = flags;
           this.broadcast({ t: Op.ClientState, clientId: s.id, flags });
+          this.checkAfkOnMute(s);
         }
         if (m.nickname !== undefined) {
           const nick = clean(m.nickname, MAX_NICKNAME) || 'convidado';
@@ -369,6 +409,11 @@ export class Hub {
         else this.groupDefs.push(def);
         this.broadcast({ t: Op.GroupDefs, groups: this.groupDefs });
         this.deps.onChanged();
+        break;
+      }
+
+      case Op.BotCommand: {
+        this.handleBotCommand(s, m.command, m.args);
         break;
       }
     }
@@ -671,6 +716,10 @@ export class Hub {
     }
 
     this.leaveChannel(s);
+    if (s.flags & ClientFlags.HasVoice) {
+      s.flags &= ~ClientFlags.HasVoice;
+      this.broadcast({ t: Op.ClientState, clientId: s.id, flags: s.flags });
+    }
     target.members.add(s);
     s.channelId = channelId;
     this.broadcast({ t: Op.ClientMove, clientId: s.id, channelId });
@@ -744,15 +793,11 @@ export class Hub {
     const body = clean(text, MAX_CHAT_TEXT);
     if (!body) return;
 
-    if (body.startsWith('/')) {
-      this.handleCommand(s, body);
-      return;
-    }
-
     const frame = encodeServerMessage({
       t: Op.ChatDeliver,
       scope,
       senderId: s.id,
+      targetId,
       senderName: s.nickname,
       text: body,
       stamp: Date.now(),
@@ -774,35 +819,300 @@ export class Hub {
     for (const m of this.sessions.values()) m.send(frame);
   }
 
-  // ------------------------------------------------------------- comandos --
+  // -------------------------------------------------------- bot commands --
 
-  private handleCommand(s: Session, text: string): void {
-    const spaceIdx = text.indexOf(' ');
-    const cmd = (spaceIdx === -1 ? text : text.slice(0, spaceIdx)).toLowerCase();
-    const arg = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
+  private handleBotCommand(s: Session, command: string, args: string[]): void {
+    const cmd = command.toLowerCase();
+    const minGroup = this.getRequiredGroupForBotCommand(cmd);
+
+    if (s.group < minGroup) {
+      this.sendBotResult(s, false, `permite: ${GROUP_NAMES[minGroup]}+`);
+      return;
+    }
 
     switch (cmd) {
-      case '/owner': {
+      case 'poke': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: poke <nick> [mensagem]');
+        const nick = args[0];
+        if (!nick) return this.sendBotResult(s, false, 'uso: poke <nick> [mensagem]');
+        const target = this.findClientByNick(nick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        const pokeMsg = args.slice(1).join(' ') || '';
+        this.sendBotResult(s, true, `poke enviado para ${target.nickname}`);
+        target.send(encodeServerMessage({
+          t: Op.ChatDeliver,
+          scope: ChatScope.Private,
+          senderId: 0,
+          targetId: target.id,
+          senderName: 'bot',
+          text: pokeMsg
+            ? `👉 ${s.nickname} te cutucou: ${pokeMsg}`
+            : `👉 ${s.nickname} te cutucou!`,
+          stamp: Date.now(),
+        }));
+        break;
+      }
+      case 'masspoke': {
+        const massPokeMsg = args.join(' ') || '';
+        let pokeCount = 0;
+        for (const m of this.sessions.values()) {
+          if (m.id !== s.id) {
+            pokeCount++;
+            m.send(encodeServerMessage({
+              t: Op.ChatDeliver,
+              scope: ChatScope.Private,
+              senderId: 0,
+              targetId: m.id,
+              senderName: 'bot',
+              text: massPokeMsg
+                ? `👉 ${s.nickname} cutucou todo mundo: ${massPokeMsg}`
+                : `👉 ${s.nickname} cutucou todo mundo!`,
+              stamp: Date.now(),
+            }));
+          }
+        }
+        this.sendBotResult(s, true, `poke em massa enviado (${pokeCount} usuarios)`);
+        break;
+      }
+      case 'push': {
+        if (args.length < 2) return this.sendBotResult(s, false, 'uso: push <nick> <canal>');
+        const targetNick = args[0];
+        const channelName = args[1];
+        if (!targetNick || !channelName) return this.sendBotResult(s, false, 'uso: push <nick> <canal>');
+        const target = this.findClientByNick(targetNick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        const destChannel = this.findChannelByName(channelName);
+        if (!destChannel) return this.sendBotResult(s, false, 'canal nao encontrado');
+        if (!this.canEnter(target, destChannel)) return this.sendBotResult(s, false, 'usuario nao pode entrar neste canal');
+        this.joinChannel(target, destChannel.info.id, '');
+        this.sendBotResult(s, true, `${target.nickname} movido para ${destChannel.info.name}`);
+        break;
+      }
+      case 'masspush': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: masspush <destino> [origem]');
+        const destChannelName = args[0];
+        if (!destChannelName) return this.sendBotResult(s, false, 'uso: masspush <destino> [origem]');
+        const destChannel = this.findChannelByName(destChannelName);
+        if (!destChannel) return this.sendBotResult(s, false, 'canal destino nao encontrado');
+        let sources: Session[];
+        if (args[1]) {
+          const srcChannel = this.findChannelByName(args[1]);
+          if (!srcChannel) return this.sendBotResult(s, false, 'canal origem nao encontrado');
+          sources = [...srcChannel.members];
+        } else {
+          sources = [...this.sessions.values()];
+        }
+        let count = 0;
+        for (const m of sources) {
+          if (m.id !== s.id && m.channelId !== destChannel.info.id && this.canEnter(m, destChannel)) {
+            this.joinChannel(m, destChannel.info.id, '');
+            count++;
+          }
+        }
+        this.sendBotResult(s, true, `${count} usuarios movidos para ${destChannel.info.name}`);
+        break;
+      }
+      case 'kick': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: kick <nick> [motivo]');
+        const targetNick = args[0];
+        if (!targetNick) return this.sendBotResult(s, false, 'uso: kick <nick> [motivo]');
+        const target = this.findClientByNick(targetNick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        const reason = args.slice(1).join(' ') || 'expulso por bot';
+        this.expel(target, RemoveReason.Kicked, reason);
+        this.sendBotResult(s, true, `${target.nickname} expulso`);
+        break;
+      }
+      case 'masskick': {
+        const channel = this.channels.get(s.channelId);
+        if (!channel) return this.sendBotResult(s, false, 'voce nao esta em um canal');
+        const reason = args.join(' ') || 'expulso por bot';
+        let count = 0;
+        for (const m of channel.members) {
+          if (m.id !== s.id) {
+            this.expel(m, RemoveReason.Kicked, reason);
+            count++;
+          }
+        }
+        this.sendBotResult(s, true, `${count} usuarios expulsos`);
+        break;
+      }
+      case 'ban': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: ban <nick> [minutos] [motivo]');
+        const targetNick = args[0];
+        if (!targetNick) return this.sendBotResult(s, false, 'uso: ban <nick> [minutos] [motivo]');
+        const target = this.findClientByNick(targetNick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        const minutes = Number(args[1]) || 60;
+        const reason = args.slice(2).join(' ') || 'banido por bot';
+        this.banSession(target, minutes, reason);
+        this.sendBotResult(s, true, `${target.nickname} banido por ${minutes}min`);
+        break;
+      }
+      case 'mute': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: mute <nick>');
+        const targetNick = args[0];
+        if (!targetNick) return this.sendBotResult(s, false, 'uso: mute <nick>');
+        const target = this.findClientByNick(targetNick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        target.flags |= ClientFlags.MutedMic;
+        this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
+        this.sendBotResult(s, true, `${target.nickname} silenciado`);
+        break;
+      }
+      case 'unmute': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: unmute <nick>');
+        const targetNick = args[0];
+        if (!targetNick) return this.sendBotResult(s, false, 'uso: unmute <nick>');
+        const target = this.findClientByNick(targetNick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        target.flags &= ~ClientFlags.MutedMic;
+        this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
+        this.sendBotResult(s, true, `${target.nickname} desilenciado`);
+        break;
+      }
+      case 'moderate': {
+        const channel = this.channels.get(s.channelId);
+        if (!channel) return this.sendBotResult(s, false, 'voce nao esta em um canal');
+        const wasModerated = (channel.info.flags & ChannelFlags.Moderated) !== 0;
+        if (wasModerated) {
+          channel.info.flags &= ~ChannelFlags.Moderated;
+          // remove HasVoice de todos no canal
+          for (const m of channel.members) {
+            if (m.flags & ClientFlags.HasVoice) {
+              m.flags &= ~ClientFlags.HasVoice;
+              this.broadcast({ t: Op.ClientState, clientId: m.id, flags: m.flags });
+            }
+          }
+        } else {
+          channel.info.flags |= ChannelFlags.Moderated;
+        }
+        this.broadcast({ t: Op.ChannelUpdate, channel: channel.info });
+        this.sendBotResult(s, true, wasModerated
+          ? `canal ${channel.info.name} desmoderando`
+          : `canal ${channel.info.name} agora é moderado — só Moderator+ e quem tiver voice podem falar`);
+        break;
+      }
+      case 'voice': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: voice <nick>');
+        const targetNick = args[0];
+        if (!targetNick) return this.sendBotResult(s, false, 'uso: voice <nick>');
+        const target = this.findClientByNick(targetNick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        if (target.flags & ClientFlags.HasVoice) return this.sendBotResult(s, false, `${target.nickname} ja tem voice`);
+        target.flags |= ClientFlags.HasVoice;
+        this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
+        this.sendBotResult(s, true, `${target.nickname} agora pode falar`);
+        break;
+      }
+      case 'devoice': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: devoice <nick>');
+        const targetNick = args[0];
+        if (!targetNick) return this.sendBotResult(s, false, 'uso: devoice <nick>');
+        const target = this.findClientByNick(targetNick);
+        if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
+        if (!(target.flags & ClientFlags.HasVoice)) return this.sendBotResult(s, false, `${target.nickname} nao tem voice`);
+        target.flags &= ~ClientFlags.HasVoice;
+        this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
+        this.sendBotResult(s, true, `${target.nickname} perdeu a permissao de falar`);
+        break;
+      }
+      case 'afk': {
+        this.afkEnabled = !this.afkEnabled;
+        this.sendBotResult(s, true, this.afkEnabled ? 'afk automatico ligado' : 'afk automatico desligado');
+        break;
+      }
+      case 'banlist': {
+        this.pruneBans();
+        if (this.bans.length === 0) return this.sendBotResult(s, true, 'nenhum ban ativo');
+        const lines = this.bans.map((b) => {
+          const fp = b.fingerprint.slice(0, 12) + '…';
+          const until = b.until === 0 ? 'permanente' : new Date(b.until).toLocaleString('pt-BR');
+          return `${fp}  ${until}  ${b.reason}`;
+        });
+        this.sendBotResult(s, true, `bans ativos (${this.bans.length}):\n${lines.join('\n')}`);
+        break;
+      }
+      case 'unban': {
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: unban <fingerprint>');
+        const prefix = args[0]!.toLowerCase();
+        const match = this.bans.find((b) => b.fingerprint.toLowerCase().startsWith(prefix));
+        if (!match) return this.sendBotResult(s, false, 'ban nao encontrado');
+        this.removeBan(match.fingerprint);
+        this.sendBotResult(s, true, `ban removido: ${match.fingerprint.slice(0, 12)}… (${match.reason})`);
+        break;
+      }
+      case 'owner': {
         if (!this.settings.adminPassword) {
-          return this.whisper(s, 'senha de admin nao configurada no servidor.');
+          return this.sendBotResult(s, false, 'senha de admin nao configurada no servidor.');
         }
-        if (!arg) {
-          return this.whisper(s, 'uso: /owner <senha>');
-        }
-        if (arg !== this.settings.adminPassword) {
-          return this.whisper(s, 'senha incorreta.');
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: /owner <senha>');
+        if (args[0] !== this.settings.adminPassword) {
+          return this.sendBotResult(s, false, 'senha incorreta.');
         }
         if (s.group >= Group.Owner) {
-          return this.whisper(s, 'voce ja e dono.');
+          return this.sendBotResult(s, false, 'voce ja e dono.');
         }
         this.assignGroup(s, Group.Owner);
-        this.whisper(s, 'voce agora e dono do servidor.');
+        this.sendBotResult(s, true, 'voce agora e dono do servidor.');
         console.log(`[vox] servidor ${this.settings.id}: ${s.fingerprint.slice(0, 12)} virou dono via /owner`);
         break;
       }
       default:
-        this.whisper(s, `comando desconhecido: ${cmd}`);
+        this.sendBotResult(s, false, `comando desconhecido: ${command}`);
     }
+  }
+
+  private getRequiredGroupForBotCommand(cmd: string): Group {
+    switch (cmd) {
+      case 'owner': return Group.Guest;
+      case 'poke': return Group.Guest;
+      case 'masspoke': return Group.Moderator;
+      case 'push': return Group.Moderator;
+      case 'masspush': return Group.Admin;
+      case 'kick': return Group.Moderator;
+      case 'masskick': return Group.Admin;
+      case 'ban': return Group.Admin;
+      case 'banlist': return Group.Admin;
+      case 'unban': return Group.Admin;
+      case 'afk': return Group.Admin;
+      case 'mute': return Group.Moderator;
+      case 'unmute': return Group.Moderator;
+      case 'moderate': return Group.Moderator;
+      case 'voice': return Group.Moderator;
+      case 'devoice': return Group.Moderator;
+      default: return Group.Owner;
+    }
+  }
+
+  private findClientByNick(nick: string): Session | undefined {
+    const lower = nick.toLowerCase();
+    for (const s of this.sessions.values()) {
+      if (s.nickname.toLowerCase() === lower) return s;
+    }
+    return undefined;
+  }
+
+  private findChannelByName(name: string): Channel | undefined {
+    const lower = name.toLowerCase();
+    for (const ch of this.channels.values()) {
+      if (ch.info.name.toLowerCase() === lower) return ch;
+    }
+    return undefined;
+  }
+
+  private canEnter(target: Session, channel: Channel): boolean {
+    if (channel.info.maxClients > 0 && channel.members.size >= channel.info.maxClients) return false;
+    if (channel.password && !target.flags) return false; // simplified
+    return true;
+  }
+
+  private sendBotResult(s: Session, success: boolean, message: string): void {
+    s.send(encodeServerMessage({
+      t: Op.BotCommandResult,
+      success,
+      message,
+    }));
   }
 
   private whisper(s: Session, text: string): void {
@@ -810,6 +1120,7 @@ export class Hub {
       t: Op.ChatDeliver,
       scope: ChatScope.Private,
       senderId: 0,
+      targetId: s.id,
       senderName: 'servidor',
       text,
       stamp: Date.now(),
@@ -824,6 +1135,7 @@ export class Hub {
       t: Op.ChatDeliver,
       scope: ChatScope.Server,
       senderId: 0,
+      targetId: 0,
       senderName: 'servidor',
       text,
       stamp: Date.now(),
