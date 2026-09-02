@@ -42,6 +42,7 @@ export class Registry {
     const settings: ServerSettings = {
       id: stored.id,
       slug: stored.slug,
+      ownerId: stored.ownerId,
       name: stored.name,
       motd: stored.motd,
       password: stored.password,
@@ -101,6 +102,7 @@ export class Registry {
     const stored: StoredServer = {
       id,
       slug,
+      ownerId: input.ownerId ?? null,
       name: clean(input.name ?? '', 64) || `Servidor ${id}`,
       motd: clean(input.motd ?? '', 256),
       password: input.password ?? '',
@@ -203,6 +205,8 @@ export class Registry {
   /** Resumo para o painel e para o /health. */
   snapshot(): {
     id: number;
+    slug: string;
+    ownerId: number | null;
     name: string;
     motd: string;
     clients: number;
@@ -214,6 +218,7 @@ export class Registry {
     return this.list().map((hub) => ({
       id: hub.id,
       slug: hub.settings.slug,
+      ownerId: hub.settings.ownerId,
       name: hub.settings.name,
       motd: hub.settings.motd,
       clients: hub.clientCount,

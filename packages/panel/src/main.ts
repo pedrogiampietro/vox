@@ -15,6 +15,7 @@ type ServerSummary = {
 type Overview = {
   servers: ServerSummary[];
   totals: { clients: number; servers: number };
+  role: 'master' | 'owner';
   stamp: number;
 };
 
@@ -84,27 +85,29 @@ function renderLogin(): HTMLElement {
   const root = $('div', 'login');
   const panel = $('form', 'panel form');
   panel.append(text('h1', '', 'Vox Admin'));
-  panel.append(text('p', 'subtle', 'Entre com a senha administrativa deste processo.'));
+  panel.append(text('p', 'subtle', 'Entre com sua conta ou com a senha master.'));
+
+  const email = input('email do cliente (opcional)', '', 'email', 'cliente@exemplo.com');
 
   const label = $('label', 'form');
   label.append(text('span', 'label', 'senha'));
-  const input = $('input') as HTMLInputElement;
-  input.type = 'password';
-  input.autocomplete = 'current-password';
-  label.append(input);
+  const passwordInput = $('input') as HTMLInputElement;
+  passwordInput.type = 'password';
+  passwordInput.autocomplete = 'current-password';
+  label.append(passwordInput);
 
   const error = text('div', 'error', notice);
   const submit = $('button', 'primary');
   submit.textContent = 'entrar';
 
-  panel.append(label, error, submit);
+  panel.append(email.wrap, label, error, submit);
   panel.addEventListener('submit', (e) => {
     e.preventDefault();
-    void login(input.value);
+    void login(passwordInput.value, email.input.value.trim());
   });
 
   root.append(panel);
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(() => (email.input.value ? passwordInput : email.input).focus());
   return root;
 }
 
@@ -149,7 +152,8 @@ function renderSidebar(): HTMLElement {
     stream?.close();
     render();
   });
-  side.append(create, logout);
+  if (overview?.role === 'master') side.append(create);
+  side.append(logout);
   return side;
 }
 
@@ -326,12 +330,12 @@ function action(label: string, run: () => void, cls = 'ghost'): HTMLButtonElemen
   return btn;
 }
 
-async function login(password: string): Promise<void> {
+async function login(password: string, email = ''): Promise<void> {
   try {
-    const res = await fetch('/api/login', {
+    const res = await fetch(email ? '/api/account/login' : '/api/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify(email ? { email, password } : { password }),
     });
     const body = (await res.json()) as { token?: string; error?: string };
     if (!res.ok || !body.token) throw new Error(body.error || 'login recusado');
@@ -395,9 +399,19 @@ async function createServer(): Promise<void> {
   if (!name) return;
   const slug = prompt('Slug publico (ex: manowar)', name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
   if (!slug) return;
+  const ownerEmail = prompt('Email do dono (vazio = somente master)', '')?.trim() ?? '';
+  let ownerId: number | null = null;
+  if (ownerEmail) {
+    const ownerPassword = prompt('Senha inicial do dono (minimo 8 caracteres)', '') ?? '';
+    const account = await api<{ id: number }>('/api/accounts', {
+      method: 'POST',
+      body: JSON.stringify({ email: ownerEmail, password: ownerPassword }),
+    });
+    ownerId = account.id;
+  }
   const created = await api<{ id: number }>('/api/servers', {
     method: 'POST',
-    body: JSON.stringify({ name, slug, maxClients: 128 }),
+    body: JSON.stringify({ name, slug, ownerId, maxClients: 128 }),
   });
   selectedId = created.id;
   await refreshAll();

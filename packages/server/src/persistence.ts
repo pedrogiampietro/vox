@@ -27,6 +27,8 @@ export interface StoredServer {
   id: number;
   /** Identificador publico usado no subdominio, por exemplo "manowar". */
   slug: string;
+  /** Conta dona; null significa servidor administrado pelo master. */
+  ownerId: number | null;
   name: string;
   motd: string;
   password: string;
@@ -82,6 +84,7 @@ export function defaultServer(id = 1): StoredServer {
   return {
     id,
     slug: `server-${id}`,
+    ownerId: null,
     name: config.serverName,
     motd: config.motd,
     password: config.password,
@@ -126,6 +129,7 @@ function normalize(s: Partial<StoredServer>): StoredServer {
     ...s,
     id: s.id ?? base.id,
     slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`,
+    ownerId: typeof s.ownerId === 'number' ? s.ownerId : null,
     channels: s.channels?.length ? s.channels : base.channels,
     groups: s.groups ?? {},
     bans: s.bans ?? [],

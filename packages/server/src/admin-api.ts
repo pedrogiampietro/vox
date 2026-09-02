@@ -16,6 +16,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Group, RemoveReason } from '@vox/protocol';
 import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
+import { createAccount, findAccount, verifyPassword } from './accounts.js';
 
 /** Corpo maior que isto so pode ser abuso: o painel manda objetos minusculos. */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -30,10 +31,10 @@ interface Attempts {
 
 export class AdminApi {
   /** Token -> expiracao. Em memoria: reiniciar o servidor desloga o painel. */
-  private readonly tokens = new Map<string, number>();
+  private readonly tokens = new Map<string, { expires: number; ownerId: number | null }>();
   private readonly attempts = new Map<string, Attempts>();
   /** Conexoes SSE abertas, para empurrar o estado ao vivo. */
-  private readonly streams = new Set<ServerResponse>();
+  private readonly streams = new Map<ServerResponse, number | null>();
 
   constructor(private readonly registry: Registry) {}
 
@@ -41,7 +42,11 @@ export class AdminApi {
   broadcastState(): void {
     if (this.streams.size === 0) return;
     const payload = `data: ${JSON.stringify(this.overview())}\n\n`;
-    for (const res of this.streams) {
+    for (const [res, ownerId] of this.streams) {
+      const payloadData = ownerId === null
+        ? this.overview()
+        : this.overview({ ownerId });
+      const payload = `data: ${JSON.stringify(payloadData)}\n\n`;
       try {
         res.write(payload);
       } catch {
@@ -77,18 +82,31 @@ export class AdminApi {
     if (path === '/api/login' && method === 'POST') {
       return this.login(req, res, ip);
     }
+    if (path === '/api/account/login' && method === 'POST') {
+      return this.accountLogin(req, res, ip);
+    }
 
-    if (!this.authorized(req)) {
+    const session = this.authorized(req);
+    if (!session) {
       send(res, 401, { error: 'nao autenticado' });
       return;
     }
 
     if (path === '/api/overview' && method === 'GET') {
-      return send(res, 200, this.overview());
+      return send(res, 200, this.overview(session));
     }
 
     if (path === '/api/stream' && method === 'GET') {
-      return this.stream(req, res);
+      return this.stream(req, res, session);
+    }
+
+    if (path === '/api/accounts' && method === 'POST') {
+      if (session.ownerId !== null) return send(res, 403, { error: 'somente o master pode criar contas' });
+      const body = await readJson(req);
+      const account = createAccount(str(body.email), str(body.password));
+      return account
+        ? send(res, 201, { id: account.id, email: account.email })
+        : send(res, 409, { error: 'email existente ou senha muito curta (minimo 8 caracteres)' });
     }
 
     if (path === '/api/servers' && method === 'POST') {
@@ -96,6 +114,7 @@ export class AdminApi {
       const hub = this.registry.create({
         name: str(body.name),
         slug: str(body.slug),
+        ownerId: int(body.ownerId, 0) || null,
         motd: str(body.motd),
         password: str(body.password),
         maxClients: int(body.maxClients, 128),
@@ -109,6 +128,9 @@ export class AdminApi {
 
     const hub = this.registry.get(Number(match[1]));
     if (!hub) return send(res, 404, { error: 'servidor inexistente' });
+    if (session.ownerId !== null && hub.settings.ownerId !== session.ownerId) {
+      return send(res, 404, { error: 'servidor inexistente' });
+    }
     const action = match[2] ?? '';
     const rest = match[3] ?? '';
 
@@ -215,9 +237,22 @@ export class AdminApi {
       return send(res, 401, { error: 'senha incorreta' });
     }
     const token = randomBytes(32).toString('hex');
-    this.tokens.set(token, Date.now() + config.adminSessionMs);
+    this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: null });
     this.pruneTokens();
-    send(res, 200, { token, expiresIn: config.adminSessionMs });
+    send(res, 200, { token, role: 'master', expiresIn: config.adminSessionMs });
+  }
+
+  private async accountLogin(req: IncomingMessage, res: ServerResponse, ip: string): Promise<void> {
+    if (!this.allowAttempt(ip)) return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
+    const body = await readJson(req);
+    const account = findAccount(str(body.email));
+    if (!account || !verifyPassword(account, str(body.password))) {
+      return send(res, 401, { error: 'email ou senha incorretos' });
+    }
+    const token = randomBytes(32).toString('hex');
+    this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: account.id });
+    this.pruneTokens();
+    send(res, 200, { token, role: 'owner', expiresIn: config.adminSessionMs });
   }
 
   private allowAttempt(ip: string): boolean {
@@ -231,52 +266,57 @@ export class AdminApi {
     return entry.count <= LOGIN_ATTEMPTS;
   }
 
-  private authorized(req: IncomingMessage): boolean {
+  private authorized(req: IncomingMessage): { ownerId: number | null } | null {
     const header = req.headers.authorization ?? '';
     const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
     const url = new URL(req.url ?? '/', 'http://localhost');
     const query = url.pathname === '/api/stream' ? url.searchParams.get('token') ?? '' : '';
     const token = bearer || query;
-    if (!token) return false;
-    const expires = this.tokens.get(token);
-    if (expires === undefined) return false;
-    if (expires < Date.now()) {
+    if (!token) return null;
+    const session = this.tokens.get(token);
+    if (session === undefined) return null;
+    if (session.expires < Date.now()) {
       this.tokens.delete(token);
-      return false;
+      return null;
     }
-    return true;
+    return { ownerId: session.ownerId };
   }
 
   private pruneTokens(): void {
     const now = Date.now();
-    for (const [token, expires] of this.tokens) {
-      if (expires < now) this.tokens.delete(token);
+    for (const [token, session] of this.tokens) {
+      if (session.expires < now) this.tokens.delete(token);
     }
   }
 
   // ------------------------------------------------------------ leitura --
 
-  private overview(): unknown {
+  private overview(session: { ownerId: number | null } = { ownerId: null }): unknown {
+    const all = this.registry.snapshot();
+    const servers = session.ownerId === null
+      ? all
+      : all.filter((server) => server.ownerId === session.ownerId);
     return {
-      servers: this.registry.snapshot(),
+      servers,
       totals: {
-        clients: this.registry.totalClients,
-        servers: this.registry.list().length,
+        clients: servers.reduce((total, server) => total + server.clients, 0),
+        servers: servers.length,
       },
+      role: session.ownerId === null ? 'master' : 'owner',
       stamp: Date.now(),
     };
   }
 
   /** Server-Sent Events: presenca ao vivo sem inventar outro protocolo. */
-  private stream(req: IncomingMessage, res: ServerResponse): void {
+  private stream(req: IncomingMessage, res: ServerResponse, session: { ownerId: number | null }): void {
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     });
-    res.write(`data: ${JSON.stringify(this.overview())}\n\n`);
-    this.streams.add(res);
+    res.write(`data: ${JSON.stringify(this.overview(session))}\n\n`);
+    this.streams.set(res, session.ownerId);
     req.on('close', () => this.streams.delete(res));
   }
 }

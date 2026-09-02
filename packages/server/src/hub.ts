@@ -44,6 +44,7 @@ import { clean, clamp } from './util.js';
 export interface ServerSettings {
   id: number;
   slug: string;
+  ownerId: number | null;
   name: string;
   motd: string;
   password: string;
