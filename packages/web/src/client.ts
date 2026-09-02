@@ -191,6 +191,7 @@ export class VoxClient {
     this.outputVolume = prefs.outputVolume;
     this.soundsEnabled = prefs.soundsEnabled;
     this.preamp = prefs.preamp;
+    this.outputDeviceId = prefs.outputDeviceId ?? '';
     this.microphone.reconfigure(this.mic);
     if (this.mixer) this.mixer.volume = this.outputVolume;
     if (this.sounds) this.sounds.enabled = this.soundsEnabled;
@@ -226,6 +227,9 @@ export class VoxClient {
   private async ensureAudio(): Promise<void> {
     if (!this.ctx) {
       this.ctx = new AudioContext({ sampleRate: 48_000, latencyHint: 'interactive' });
+      if (this.outputDeviceId && 'setSinkId' in this.ctx) {
+        (this.ctx as unknown as { setSinkId(id: string): Promise<void> }).setSinkId(this.outputDeviceId).catch(() => {});
+      }
       const base = import.meta.env.BASE_URL;
       this.workletsReady = Promise.all([
         this.ctx.audioWorklet.addModule(`${base}worklets/capture.js`),
@@ -274,6 +278,16 @@ export class VoxClient {
     if (this.mixer && !(this.flags & ClientFlags.MutedSpeakers)) this.mixer.volume = v;
   }
 
+  outputDeviceId = '';
+
+  async setOutputDevice(deviceId: string): Promise<void> {
+    this.outputDeviceId = deviceId;
+    if (this.ctx && 'setSinkId' in this.ctx) {
+      await (this.ctx as unknown as { setSinkId(id: string): Promise<void> }).setSinkId(deviceId);
+    }
+    this.saveAudioPrefs();
+  }
+
   setSoundsEnabled(on: boolean): void {
     this.soundsEnabled = on;
     if (this.sounds) this.sounds.enabled = on;
@@ -299,6 +313,7 @@ export class VoxClient {
       outputVolume: this.outputVolume,
       soundsEnabled: this.soundsEnabled,
       preamp: this.preamp,
+      outputDeviceId: this.outputDeviceId,
     };
     saveAudioPrefs(this.favorite.serverId, prefs);
   }
@@ -419,8 +434,17 @@ export class VoxClient {
     this.setFlags(next);
   }
 
+  awayMessage = '';
+
+  setAway(away: boolean, message = ''): void {
+    this.awayMessage = message;
+    if (away) this.setFlags(this.flags | ClientFlags.Away);
+    else this.setFlags(this.flags & ~ClientFlags.Away);
+  }
+
   toggleAway(): void {
     this.setFlags(this.flags ^ ClientFlags.Away);
+    if (!(this.flags & ClientFlags.Away)) this.awayMessage = '';
   }
 
   private setFlags(flags: number): void {

@@ -15,6 +15,8 @@ export interface AudioPrefs {
   soundsEnabled: boolean;
   /** Preamp global de voz (ganho aplicado no mixer) */
   preamp: number;
+  /** Dispositivo de saida ('' = padrao do sistema) */
+  outputDeviceId: string;
 }
 
 const DEFAULT_PREFS: AudioPrefs = {
@@ -22,6 +24,7 @@ const DEFAULT_PREFS: AudioPrefs = {
   outputVolume: 1,
   soundsEnabled: true,
   preamp: 1,
+  outputDeviceId: '',
 };
 
 function storageKey(serverId: number): string {

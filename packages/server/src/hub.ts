@@ -43,6 +43,7 @@ import { clean, clamp } from './util.js';
 
 export interface ServerSettings {
   id: number;
+  slug: string;
   name: string;
   motd: string;
   password: string;

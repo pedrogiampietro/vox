@@ -4,8 +4,11 @@ Voz em canais, no estilo do TeamSpeak 3: web, desktop e — depois — celular,
 com servidor e protocolo próprios.
 
 O objetivo é ser tão leve quanto o original. Hoje o cliente web inteiro
-(protocolo + engine de áudio + interface) sai em **~23 kB de JS, 8 kB gzipado**,
-e o servidor é **um arquivo de 150 kB** rodando em Node sem dependência nativa.
+(protocolo + engine de áudio + interface) sai em **~88 kB de JS, 27 kB gzipado**,
+e o servidor é **um arquivo de ~207 kB** rodando em Node sem dependência nativa.
+Mesmo com identidade, moderação, favoritos, notificações e múltiplos servidores
+virtuais, a meta continua a mesma: um cliente que abre rápido e um servidor que
+gasta quase nada por pessoa conectada.
 
 ## A ideia em uma frase
 
@@ -72,6 +75,7 @@ então não há nada além do segredo que a identifique.
 | `packages/protocol` | protocolo binário, fonte única compartilhada por cliente e servidor |
 | `packages/server` | servidor: canais, clientes, chat e roteamento de voz |
 | `packages/web` | cliente web (também é o frontend do desktop e do mobile) |
+| `packages/panel` | painel web de administração servido em `/admin` |
 | `packages/desktop` | casca Tauri v2 — mesma base gera Android e iOS |
 
 ## Rodando
@@ -92,6 +96,20 @@ npm run dev:web
 
 Abra <http://localhost:5173>. O Vite repassa `/vox` para o servidor, então o
 cliente fala com a mesma origem — igual ao que acontece em produção.
+
+Painel administrativo em desenvolvimento:
+
+```bash
+VOX_ADMIN_PASSWORD=admin npm run dev:server
+```
+
+```bash
+npm run dev:panel
+```
+
+Abra <http://localhost:5174/admin/> e entre com a senha definida em
+`VOX_ADMIN_PASSWORD`. Em produção local, `npm run build && npm start` serve o
+cliente em `/` e o painel em `/admin`.
 
 Isso sobe sem WebTransport, e a voz vai por WebSocket. Para desenvolver com
 QUIC ligado é preciso um certificado — o navegador aceita um autoassinado, mas
@@ -270,12 +288,20 @@ quer de um protocolo binário.
 ## O que já funciona
 
 - Handshake com versão, senha e apelido único
+- Identidade por chave pública com desafio assinado
+- Grupos de servidor: convidado, moderador, administrador e dono
 - Árvore de canais, entrar/criar/editar/remover, canais temporários e permanentes
 - Chat de canal, de servidor e privado
 - Mudo de microfone e de som, com estado replicado para todos
 - Voz Opus 48 kHz mono, ativação por voz (com hangover) ou push-to-talk
 - Voz em datagramas QUIC quando disponível, com queda automática para WebSocket
 - Indicador de quem está falando, medidor de entrada, volume de saída
+- Volume por usuário e mudo local
+- Canais moderados, concessão de voz, kick, ban, move e promoção de grupos
+- Pokes, mensagens privadas em abas e notificações nativas/web
+- Lista de servidores favoritos e preferências de áudio por servidor
+- Múltiplos servidores virtuais no mesmo processo
+- API de administração com login, overview e stream SSE
 - Limite de taxa por conexão, teto por IP e limpeza de conexões mortas
 - TLS direto ou atrás de proxy, com HTTPS automático via Caddy no compose
 - Reconexão automática com backoff, sem perder a tela de vista
@@ -284,20 +310,31 @@ quer de um protocolo binário.
 
 Em ordem de impacto:
 
-1. **Identidade e permissões.** Hoje qualquer um cria e apaga canal, e o apelido
-   é só um texto. O caminho natural é o do TS3: par de chaves gerado no cliente,
-   servidor guarda a pública, e grupos de servidor/canal por cima disso. É o que
-   falta para abrir um servidor a desconhecidos.
-2. **PLC de verdade.** Quando um pacote se perde hoje entra silêncio. Isso passa
+1. **Evoluir o painel de administração.** O `packages/panel` já cobre login,
+   overview, edição de servidor, usuários online, bans, canais e anúncios.
+   Faltam telas mais ricas para auditoria, permissões granulares, grupos
+   visuais, criação/edição de canais e métricas.
+2. **Modularização do cliente web.** A interface cresceu dentro de
+   `packages/web/src/main.ts`. Antes de empilhar mais produto, vale separar
+   browser de servidores, shell de voz, árvore de canais, chat, settings,
+   overlays e menus.
+3. **UX de identidade e permissões.** A base criptográfica e os grupos existem,
+   mas o usuário ainda precisa entender melhor fingerprint, backup/importação de
+   identidade, dono do servidor, senha admin e mudanças de grupo.
+4. **Métricas de qualidade de voz e rede.** O cliente já mede RTT e descartes por
+   congestionamento. Falta mostrar transporte atual, perda percebida, jitter,
+   backpressure e saúde do microfone de forma útil.
+5. **PLC de verdade.** Quando um pacote se perde hoje entra silêncio. Isso passa
    a importar mais agora que a voz anda em datagramas, que é justamente onde
    perda existe. O Opus tem ocultação de perda embutida, mas o `AudioDecoder` do
    WebCodecs não expõe a chamada — vai precisar de um decodificador libopus em
    WASM só para esse caso, ou esperar a API crescer.
-3. **Buffer de jitter adaptativo.** O atual é de tamanho fixo e dirigido por
+6. **Buffer de jitter adaptativo.** O atual é de tamanho fixo e dirigido por
    chegada. Medir a variação real e ajustar o atraso sozinho é o que separa "dá
    para conversar" de "não se percebe a rede".
-4. **Volume por usuário e mudo local.** O mixer já tem um `GainNode` por
-   remetente; falta a interface.
-5. **Acabamento de cliente.** Sons de entrada e saída, atalho global de
-   push-to-talk no desktop (o navegador só enxerga tecla com a janela em foco) e
-   lista de servidores favoritos.
+7. **Acabamento desktop.** Atalho global de push-to-talk, tray icon,
+   auto-start, reconnect em background e atualização automática.
+8. **Bots e extensões.** Os comandos internos já apontam o caminho. O próximo
+   salto é uma API de eventos/comandos para bots, webhooks e integrações.
+
+Um roadmap mais detalhado fica em [`docs/ROADMAP.md`](docs/ROADMAP.md).

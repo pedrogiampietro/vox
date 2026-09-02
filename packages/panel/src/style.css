@@ -1,0 +1,171 @@
+@import '@vox/ui/tokens.css';
+
+#app {
+  min-height: 100%;
+}
+
+body {
+  overflow: auto;
+}
+
+.admin {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+}
+
+.sidebar {
+  border-right: 1px solid var(--line);
+  background: var(--ink-800);
+  padding: 18px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.server-list {
+  display: grid;
+  gap: 8px;
+}
+
+.server-button {
+  text-align: left;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.server-button.active {
+  border-color: var(--amber-dim);
+  background: var(--ink-600);
+}
+
+.main {
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.topline,
+.toolbar,
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.topline {
+  justify-content: space-between;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 12px;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  background: var(--ink-800);
+  border-radius: var(--r-lg);
+  padding: 14px;
+}
+
+.span-3 { grid-column: span 3; }
+.span-4 { grid-column: span 4; }
+.span-5 { grid-column: span 5; }
+.span-6 { grid-column: span 6; }
+.span-7 { grid-column: span 7; }
+.span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
+
+.stat {
+  display: grid;
+  gap: 4px;
+}
+
+.stat strong {
+  font-size: 24px;
+}
+
+.form {
+  display: grid;
+  gap: 10px;
+}
+
+.form.two {
+  grid-template-columns: 1fr 1fr;
+}
+
+.table {
+  display: grid;
+  gap: 4px;
+}
+
+.rowline {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--ink-700);
+}
+
+.subtle {
+  color: var(--text-faint);
+}
+
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.login .panel {
+  width: min(380px, 100%);
+}
+
+.error {
+  color: var(--alert);
+}
+
+@media (max-width: 880px) {
+  .admin {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .span-3,
+  .span-4,
+  .span-5,
+  .span-6,
+  .span-7,
+  .span-8 {
+    grid-column: span 12;
+  }
+
+  .form.two {
+    grid-template-columns: 1fr;
+  }
+}

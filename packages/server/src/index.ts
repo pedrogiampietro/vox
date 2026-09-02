@@ -73,11 +73,12 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://localhost').pathname;
 
   if (path === '/health') {
+    const hostHub = registry.getByHost(String(req.headers.host ?? ''));
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(
       JSON.stringify({
-        servers: registry.snapshot(),
-        clients: registry.totalClients,
+        servers: hostHub ? registry.snapshot().filter((server) => server.id === hostHub.id) : registry.snapshot(),
+        clients: hostHub ? hostHub.clientCount : registry.totalClients,
         panel: adminEnabled,
       }),
     );

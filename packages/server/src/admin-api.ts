@@ -95,6 +95,7 @@ export class AdminApi {
       const body = await readJson(req);
       const hub = this.registry.create({
         name: str(body.name),
+        slug: str(body.slug),
         motd: str(body.motd),
         password: str(body.password),
         maxClients: int(body.maxClients, 128),
@@ -126,12 +127,14 @@ export class AdminApi {
 
     if (action === '' && method === 'PATCH') {
       const body = await readJson(req);
-      this.registry.update(hub.id, {
+      const updated = this.registry.update(hub.id, {
+        ...(body.slug !== undefined ? { slug: str(body.slug) } : {}),
         ...(body.name !== undefined ? { name: str(body.name) } : {}),
         ...(body.motd !== undefined ? { motd: str(body.motd) } : {}),
         ...(body.password !== undefined ? { password: str(body.password) } : {}),
         ...(body.maxClients !== undefined ? { maxClients: int(body.maxClients, 128) } : {}),
       });
+      if (!updated) return send(res, 409, { error: 'slug invalido ou ja utilizado' });
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
@@ -230,7 +233,10 @@ export class AdminApi {
 
   private authorized(req: IncomingMessage): boolean {
     const header = req.headers.authorization ?? '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    const bearer = header.startsWith('Bearer ') ? header.slice(7) : '';
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const query = url.pathname === '/api/stream' ? url.searchParams.get('token') ?? '' : '';
+    const token = bearer || query;
     if (!token) return false;
     const expires = this.tokens.get(token);
     if (expires === undefined) return false;

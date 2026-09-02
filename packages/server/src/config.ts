@@ -10,19 +10,21 @@ import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-try {
-  const base = join(__dirname, '..', '..', '..', '.env');
-  const env = readFileSync(base, 'utf8');
-  for (const line of env.split('\n')) {
-    const eq = line.indexOf('=');
-    if (eq > 0) {
-      const key = line.slice(0, eq);
-      if (/^[A-Z_][A-Z0-9_]*$/.test(key) && !(key in process.env)) {
-        process.env[key] = line.slice(eq + 1).trim();
+for (const base of [join(process.cwd(), '.env'), join(__dirname, '..', '..', '..', '.env')]) {
+  try {
+    const env = readFileSync(base, 'utf8');
+    for (const line of env.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq > 0) {
+        const key = line.slice(0, eq);
+        if (/^[A-Z_][A-Z0-9_]*$/.test(key) && !(key in process.env)) {
+          process.env[key] = line.slice(eq + 1).trim();
+        }
       }
     }
-  }
-} catch { /* sem .env, tudo bem */ }
+    break;
+  } catch { /* tenta o proximo caminho */ }
+}
 
 function num(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -46,6 +48,8 @@ export const config = {
   port: num('VOX_PORT', 9987),
 
   serverName: str('VOX_NAME', 'Servidor Vox'),
+  /** Dominio base usado para resolver subdominios de servidores. */
+  baseDomain: str('VOX_BASE_DOMAIN', 'v0x.online'),
   motd: str('VOX_MOTD', 'Bem-vindo.'),
   /** Vazio = servidor aberto. */
   password: str('VOX_PASSWORD', ''),

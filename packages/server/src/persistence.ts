@@ -25,6 +25,8 @@ export interface StoredBan {
 
 export interface StoredServer {
   id: number;
+  /** Identificador publico usado no subdominio, por exemplo "manowar". */
+  slug: string;
   name: string;
   motd: string;
   password: string;
@@ -79,6 +81,7 @@ export function defaultChannels(): StoredChannel[] {
 export function defaultServer(id = 1): StoredServer {
   return {
     id,
+    slug: `server-${id}`,
     name: config.serverName,
     motd: config.motd,
     password: config.password,
@@ -122,11 +125,18 @@ function normalize(s: Partial<StoredServer>): StoredServer {
     ...base,
     ...s,
     id: s.id ?? base.id,
+    slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`,
     channels: s.channels?.length ? s.channels : base.channels,
     groups: s.groups ?? {},
     bans: s.bans ?? [],
     groupDefs: s.groupDefs?.length ? s.groupDefs : [...DEFAULT_GROUP_DEFS],
   };
+}
+
+function normalizeSlug(value: unknown): string {
+  return typeof value === 'string' && /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(value)
+    ? value
+    : '';
 }
 
 /**

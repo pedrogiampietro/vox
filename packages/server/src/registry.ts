@@ -41,6 +41,7 @@ export class Registry {
   private attach(stored: StoredServer): Hub {
     const settings: ServerSettings = {
       id: stored.id,
+      slug: stored.slug,
       name: stored.name,
       motd: stored.motd,
       password: stored.password,
@@ -68,6 +69,18 @@ export class Registry {
     return this.hubs.get(id);
   }
 
+  getBySlug(slug: string): Hub | undefined {
+    return this.list().find((hub) => hub.settings.slug === slug);
+  }
+
+  getByHost(host: string): Hub | undefined {
+    const hostname = host.split(':')[0]?.toLowerCase() ?? '';
+    const suffix = `.${config.baseDomain.toLowerCase()}`;
+    if (!hostname.endsWith(suffix)) return undefined;
+    const slug = hostname.slice(0, -suffix.length);
+    return slug && !slug.includes('.') ? this.getBySlug(slug) : undefined;
+  }
+
   /** Servidor usado quando o cliente conecta em `/vox` sem indicar qual. */
   primary(): Hub | undefined {
     return this.list()[0];
@@ -83,8 +96,11 @@ export class Registry {
 
   create(input: Partial<ServerSettings>): Hub {
     const id = input.id && !this.hubs.has(input.id) ? input.id : this.nextServerId++;
+    const requestedSlug = clean(input.slug ?? '', 32).toLowerCase();
+    const slug = this.uniqueSlug(requestedSlug || slugify(input.name ?? `server-${id}`), id);
     const stored: StoredServer = {
       id,
+      slug,
       name: clean(input.name ?? '', 64) || `Servidor ${id}`,
       motd: clean(input.motd ?? '', 256),
       password: input.password ?? '',
@@ -102,6 +118,11 @@ export class Registry {
   update(id: number, input: Partial<ServerSettings>): Hub | null {
     const hub = this.hubs.get(id);
     if (!hub) return null;
+    if (input.slug !== undefined && input.slug !== hub.settings.slug) {
+      const slug = clean(input.slug, 32).toLowerCase();
+      if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(slug) || this.getBySlug(slug)) return null;
+      hub.settings.slug = slug;
+    }
     if (input.name !== undefined) hub.settings.name = clean(input.name, 64) || hub.settings.name;
     if (input.motd !== undefined) hub.settings.motd = clean(input.motd, 256);
     if (input.password !== undefined) hub.settings.password = input.password;
@@ -110,6 +131,16 @@ export class Registry {
     }
     this.scheduleSave();
     return hub;
+  }
+
+  private uniqueSlug(requested: string, id: number): string {
+    const base = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(requested) ? requested : `server-${id}`;
+    if (!this.getBySlug(base)) return base;
+    for (let n = 2; n < 10_000; n++) {
+      const candidate = `${base.slice(0, 26)}-${n}`;
+      if (!this.getBySlug(candidate)) return candidate;
+    }
+    return `server-${id}`;
   }
 
   remove(id: number): boolean {
@@ -182,6 +213,7 @@ export class Registry {
   }[] {
     return this.list().map((hub) => ({
       id: hub.id,
+      slug: hub.settings.slug,
       name: hub.settings.name,
       motd: hub.settings.motd,
       clients: hub.clientCount,
@@ -191,4 +223,10 @@ export class Registry {
       admins: Object.values(hub.groupList()).filter((g) => g >= Group.Admin).length,
     }));
   }
+}
+
+function slugify(value: string): string {
+  const slug = value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  return slug || 'server';
 }

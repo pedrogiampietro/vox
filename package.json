@@ -9,12 +9,14 @@
   "scripts": {
     "dev:server": "npm run dev --workspace=@vox/server",
     "dev:web": "npm run dev --workspace=@vox/web",
+    "dev:panel": "npm run dev --workspace=@vox/panel",
     "dev:desktop": "npm run dev --workspace=@vox/desktop",
     "build:web": "npm run build --workspace=@vox/web",
+    "build:panel": "npm run build --workspace=@vox/panel",
     "build:server": "esbuild packages/server/src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs --external:@fails-components/* --external:bufferutil --external:utf-8-validate --banner:js=\"import{createRequire}from'node:module';const require=createRequire(import.meta.url);\"",
-    "build": "npm run build:web && npm run build:server",
+    "build": "npm run build:web && npm run build:panel && npm run build:server",
     "start": "node dist/server.mjs",
-    "typecheck": "tsc -p packages/protocol && tsc -p packages/server && tsc -p packages/web",
+    "typecheck": "tsc -p packages/protocol && tsc -p packages/server && tsc -p packages/web && tsc -p packages/panel",
     "smoke": "tsx packages/server/scripts/smoke.ts"
   },
   "devDependencies": {

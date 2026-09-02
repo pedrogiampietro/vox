@@ -10,9 +10,12 @@
  * criar e destruir nos no ciclo principal.
  */
 
-import { initNotifications } from './notifications.js';
+import { initNotifications, notify, requestNotificationPermission } from './notifications.js';
 import { VoxClient } from './client.js';
 import type { MicSettings } from './audio/microphone.js';
+import { isMicTestRunning, startMicTest, stopMicTest } from './audio/mic-test.js';
+import { renderBrowserView } from './browser.js';
+import { exportIdentity, importIdentity, loadIdentity, resetIdentity } from './identity.js';
 import {
   ChannelFlags,
   ClientFlags,
@@ -24,20 +27,18 @@ import {
 import type { ChannelInfo, ClientInfo, GroupDef } from '@vox/protocol';
 import {
   listFavorites,
-  saveFavorite,
-  removeFavorite,
-  newFavoriteId,
   probe,
   type Favorite,
   type ServerStatus,
 } from './favorites.js';
+import { $, text, timeHHMM } from './ui/dom.js';
+import { closeMenu, openMenu } from './ui/menu.js';
+import { keyLabel, loadPttKey, savePttKey } from './ui/ptt.js';
 
 // ------------------------------------------------------------------- state --
 
 let client: VoxClient;
 let view: 'browser' | 'shell' = 'browser';
-let contextMenu: HTMLElement | null = null;
-let contextMenuCleanup: (() => void) | null = null;
 let serverList: ServerStatus[] = [];
 let settingsOpen = false;
 
@@ -53,56 +54,7 @@ let dragPointerId = 0;
 let inputDevices: MediaDeviceInfo[] = [];
 let outputDevices: MediaDeviceInfo[] = [];
 
-// ---- mic test (module-level state, sobrevive rebuilds do DOM) --
-let micTestStream: MediaStream | null = null;
-let micTestCtx: AudioContext | null = null;
-
-function stopMicTest(): void {
-  if (micTestStream) {
-    for (const t of micTestStream.getTracks()) t.stop();
-    micTestStream = null;
-  }
-  if (micTestCtx) {
-    micTestCtx.close().catch(() => {});
-    micTestCtx = null;
-  }
-}
-
-async function startMicTest(): Promise<boolean> {
-  stopMicTest();
-  try {
-    micTestCtx = new AudioContext({ sampleRate: 48_000 });
-    micTestStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const src = micTestCtx.createMediaStreamSource(micTestStream);
-    const gain = micTestCtx.createGain();
-    gain.gain.value = 1;
-    src.connect(gain);
-    gain.connect(micTestCtx.destination);
-    return true;
-  } catch {
-    stopMicTest();
-    return false;
-  }
-}
-
 // ---------------------------------------------------------------- helpers --
-
-const $ = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
-  const el = document.createElement(tag);
-  if (cls) el.className = cls;
-  return el;
-};
-
-function text(tag: string, cls: string, content: string): HTMLElement {
-  const el = $(tag as any, cls);
-  el.textContent = content;
-  return el;
-}
-
-function timeHHMM(stamp: number): string {
-  const d = new Date(stamp);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
 
 // ---------------------------------------------------------------- render --
 
@@ -113,7 +65,7 @@ function render(): void {
   const savedValue = chatInput?.value ?? '';
 
   if (view === 'browser') {
-    app.replaceChildren(renderBrowser());
+    app.replaceChildren(renderBrowserView({ client, serverList, connectTo, rerender: render }));
   } else {
     app.replaceChildren(renderShell());
   }
@@ -143,295 +95,6 @@ function closeSettings(): void {
   const existing = document.querySelector('.settings-overlay');
   if (existing) existing.remove();
   stopMicTest();
-}
-
-// ================================================================ browser ==
-
-function renderBrowser(): HTMLElement {
-  const root = $('div', 'browser');
-
-  // brand
-  const brand = $('div', 'brand');
-  brand.append(text('h1', '', 'vox'), text('span', 'rule', ''), text('span', 'label', 'servidores'));
-  root.append(brand);
-
-  const body = $('div', 'browser-body');
-
-  // favorites
-  const favs = listFavorites();
-  if (favs.length > 0) {
-    const stack = $('div', 'stack');
-    for (const fav of favs) {
-      stack.append(renderServerCard(fav));
-    }
-    body.append(stack);
-  }
-
-  // add server form
-  body.append(renderAddForm());
-
-  // identity row
-  const ident = $('div', 'identity-row');
-  const fp = client.identity?.fingerprint?.slice(0, 16) ?? '...';
-  ident.append(text('span', 'label', 'identidade'), text('span', 'mono', `${fp}…`));
-  body.append(ident);
-
-  // live server list
-  if (serverList.length > 0) {
-    const label = text('span', 'label', 'online agora');
-    label.style.marginTop = '8px';
-    body.append(label);
-    const stack = $('div', 'stack');
-    for (const s of serverList) {
-      stack.append(renderLiveCard(s));
-    }
-    body.append(stack);
-  }
-
-  root.append(body);
-  return root;
-}
-
-function renderServerCard(fav: Favorite): HTMLElement {
-  const card = $('div', 'server-card');
-  card.style.cursor = 'pointer';
-
-  const slot = text('span', 'slot', fav.serverId ? String(fav.serverId) : '–');
-  const info = $('div', '');
-  const displayName = fav.label || fav.address || 'local';
-  info.append(text('div', 'name', displayName));
-  const details: string[] = [];
-  if (fav.address) details.push(fav.address);
-  if (fav.nickname) details.push(fav.nickname);
-  if (fav.serverId) details.push(`vsrv #${fav.serverId}`);
-  info.append(text('div', 'where', details.join(' · ') || 'servidor local'));
-  const occ = $('div', 'occupancy');
-
-  const editBtn = $('button', 'ghost');
-  editBtn.textContent = '✎';
-  editBtn.title = 'editar';
-  editBtn.style.cssText = 'padding:4px 8px;font-size:14px;min-width:unset;';
-  editBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showEditFavoriteMenu(editBtn, fav);
-  });
-
-  card.append(slot, info, occ, editBtn);
-  card.addEventListener('click', () => connectTo(fav));
-  return card;
-}
-
-function renderLiveCard(s: ServerStatus): HTMLElement {
-  const card = $('button', 'server-card');
-  const slot = text('span', 'slot', String(s.id));
-  const info = $('div', '');
-  info.append(text('div', 'name', s.name), text('div', 'where', s.motd || '–'));
-  const occ = renderOccupancy(s.clients, s.maxClients);
-  card.append(slot, info, occ);
-
-  card.addEventListener('click', () => {
-    const fav: Favorite = {
-      id: newFavoriteId(),
-      label: s.name,
-      address: '',
-      serverId: s.id,
-      nickname: '',
-      password: '',
-      lastUsed: Date.now(),
-    };
-    connectTo(fav);
-  });
-  return card;
-}
-
-function renderOccupancy(current: number, max: number): HTMLElement {
-  const wrap = $('div', 'occupancy');
-  const slots = max > 0 ? Math.min(max, 20) : Math.max(current, 1);
-  for (let i = 0; i < slots; i++) {
-    const bar = $('i');
-    if (i < current) bar.classList.add('filled');
-    wrap.append(bar);
-  }
-  if (max > 0) {
-    wrap.append(text('span', 'count', `${current}/${max}`));
-  } else {
-    wrap.append(text('span', 'count', String(current)));
-  }
-  return wrap;
-}
-
-function renderAddForm(): HTMLElement {
-  const wrap = $('div', 'stack');
-  const btn = $('button', 'ghost');
-  btn.textContent = '+ adicionar servidor';
-  let open = false;
-  let form: HTMLElement | null = null;
-
-  btn.addEventListener('click', () => {
-    if (open && form) {
-      form.remove();
-      open = false;
-      return;
-    }
-    form = $('div', 'form-grid');
-
-    const lblName = $('label', 'field');
-    lblName.append(text('span', 'label', 'nome do servidor'));
-    const inpName = $('input') as HTMLInputElement;
-    inpName.placeholder = 'ex: servidor da galera';
-    lblName.append(inpName);
-
-    const lblAddr = $('label', 'field');
-    lblAddr.append(text('span', 'label', 'endereco (IP ou dominio)'));
-    const inpAddr = $('input') as HTMLInputElement;
-    inpAddr.placeholder = '127.0.0.1';
-    lblAddr.append(inpAddr);
-
-    const lblNick = $('label', 'field');
-    lblNick.append(text('span', 'label', 'seu apelido'));
-    const inpNick = $('input') as HTMLInputElement;
-    inpNick.placeholder = 'eu';
-    lblNick.append(inpNick);
-
-    const lblPass = $('label', 'field');
-    lblPass.append(text('span', 'label', 'senha (opcional)'));
-    const inpPass = $('input') as HTMLInputElement;
-    inpPass.type = 'password';
-    inpPass.placeholder = 'senha do servidor ou admin';
-    lblPass.append(inpPass);
-
-    const lblSid = $('label', 'field');
-    lblSid.append(text('span', 'label', 'servidor virtual (0 = primeiro)'));
-    const inpSid = $('input') as HTMLInputElement;
-    inpSid.type = 'number';
-    inpSid.value = '0';
-    lblSid.append(inpSid);
-
-    const submit = $('button', 'primary wide');
-    submit.textContent = 'salvar e conectar';
-    submit.addEventListener('click', () => {
-      const fav: Favorite = {
-        id: newFavoriteId(),
-        label: inpName.value.trim() || inpAddr.value || 'local',
-        address: inpAddr.value.trim(),
-        serverId: Number(inpSid.value) || 0,
-        nickname: inpNick.value.trim() || 'eu',
-        password: inpPass.value,
-        lastUsed: Date.now(),
-      };
-      saveFavorite(fav);
-      connectTo(fav);
-    });
-
-    form.append(lblName, lblAddr, lblNick, lblPass, lblSid, submit);
-    wrap.append(form);
-    open = true;
-  });
-
-  wrap.append(btn);
-  return wrap;
-}
-
-function showEditFavoriteMenu(anchor: HTMLElement, fav: Favorite): void {
-  closeMenu();
-  const menu = $('div', 'menu');
-  menu.style.minWidth = '280px';
-
-  const head = $('div', 'head');
-  head.append(text('div', 'nick', 'editar servidor'));
-  menu.append(head);
-
-  const form = $('div', '');
-  form.style.cssText = 'padding:6px 8px 8px;display:grid;gap:6px;';
-
-  function field(label: string, value: string, placeholder: string, type = 'text'): HTMLInputElement {
-    const lbl = $('label', 'field');
-    lbl.append(text('span', 'label', label));
-    const inp = $('input') as HTMLInputElement;
-    inp.value = value;
-    inp.placeholder = placeholder;
-    inp.type = type;
-    lbl.append(inp);
-    form.append(lbl);
-    return inp;
-  }
-
-  const inpLabel = field('apelido do servidor', fav.label, 'meu servidor');
-  const inpAddr = field('endereco (IP ou dominio)', fav.address, '127.0.0.1');
-  const inpNick = field('seu apelido', fav.nickname, 'eu');
-  const inpPass = field('senha', fav.password, '', 'password');
-  const inpSid = field('servidor virtual (0 = primeiro)', String(fav.serverId), '0', 'number');
-
-  const btnRow = $('div', '');
-  btnRow.style.cssText = 'display:grid;grid-template-columns:1fr auto auto;gap:8px;margin-top:8px;';
-
-  const saveBtn = $('button', 'primary');
-  saveBtn.textContent = 'salvar';
-  saveBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    fav.label = inpLabel.value.trim() || fav.address || 'local';
-    fav.address = inpAddr.value.trim();
-    fav.nickname = inpNick.value.trim() || 'eu';
-    fav.password = inpPass.value;
-    fav.serverId = Number(inpSid.value) || 0;
-    fav.lastUsed = Date.now();
-    saveFavorite(fav);
-    closeMenu();
-    render();
-  });
-
-  const delBtn = $('button', 'danger');
-  delBtn.textContent = 'remover';
-  delBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    removeFavorite(fav.id);
-    closeMenu();
-    render();
-  });
-
-  const cancelBtn = $('button', 'ghost');
-  cancelBtn.textContent = 'cancelar';
-  cancelBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    closeMenu();
-  });
-
-  btnRow.append(saveBtn, delBtn, cancelBtn);
-  form.append(btnRow);
-  menu.append(form);
-
-  menu.style.visibility = 'hidden';
-  document.body.append(menu);
-  contextMenu = menu;
-
-  const rect = anchor.getBoundingClientRect();
-  const mw = menu.offsetWidth;
-  const mh = menu.offsetHeight;
-  const pad = 8;
-  let top = rect.bottom + 4;
-  let left = rect.left;
-  if (left + mw + pad > window.innerWidth) left = window.innerWidth - mw - pad;
-  if (left < pad) left = pad;
-  if (top + mh + pad > window.innerHeight) top = rect.top - mh - 4;
-  if (top < pad) top = pad;
-  menu.style.top = `${top}px`;
-  menu.style.left = `${left}px`;
-  menu.style.visibility = '';
-
-  function onOutsideClick(e: Event): void {
-    if (menu.contains(e.target as Node)) return;
-    closeMenu();
-  }
-
-  contextMenuCleanup = () => {
-    document.removeEventListener('click', onOutsideClick);
-    document.removeEventListener('contextmenu', onOutsideClick);
-  };
-
-  requestAnimationFrame(() => {
-    document.addEventListener('click', onOutsideClick);
-    document.addEventListener('contextmenu', onOutsideClick);
-  });
 }
 
 // ================================================================ shell ==
@@ -668,7 +331,14 @@ function renderPeer(c: ClientInfo): HTMLElement {
     row.append(sf);
   }
   if (muted) row.append(text('span', 'flag', '🔇'));
-  if (away) row.append(text('span', 'flag', 'Away'));
+  if (away) {
+    const awayFlag = text('span', 'flag', 'Away');
+    if (c.id === client.selfId && client.awayMessage) {
+      awayFlag.textContent = `Away: ${client.awayMessage}`;
+      awayFlag.title = client.awayMessage;
+    }
+    row.append(awayFlag);
+  }
   if (noInput) row.append(text('span', 'flag', '⚠'));
 
   row.addEventListener('click', (e) => {
@@ -760,6 +430,9 @@ function renderTalk(): HTMLElement {
     text('b', '', `${client.connection.rtt}ms`),
     text('span', '', '·'),
     transport,
+    text('span', '', '·'),
+    text('span', '', 'drop'),
+    text('b', '', String(client.connection.droppedVoice)),
   );
   hdr.append(serverLabel, motd, stat);
   pane.append(hdr);
@@ -1041,7 +714,10 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
   const deaf = (c.flags & ClientFlags.MutedSpeakers) !== 0;
   const away = (c.flags & ClientFlags.Away) !== 0;
   const statusParts: string[] = [];
-  if (away) statusParts.push('Ausente');
+  if (away) {
+    const awayMsg = isSelf && client.awayMessage ? `Ausente: ${client.awayMessage}` : 'Ausente';
+    statusParts.push(awayMsg);
+  }
   if (deaf) statusParts.push('Fones de ouvido/alto-falantes silenciados');
   else if (muted) statusParts.push('Microfone silenciado');
   if (statusParts.length > 0) {
@@ -1230,12 +906,13 @@ function renderSettings(): HTMLElement {
   // --- nav ---
   const nav = $('div', 'settings-nav');
   const sections = [
+    { id: 'identity', icon: '◈', label: 'Identidade' },
     { id: 'capture', icon: '🎙', label: 'Capturar' },
     { id: 'playback', icon: '🔊', label: 'Reprodução' },
     { id: 'notifications', icon: '🔔', label: 'Notificações' },
     ...(client.myGroup >= Group.Owner ? [{ id: 'groups', icon: '👥', label: 'Grupos' }] : []),
   ];
-  let activeSection = 'capture';
+  let activeSection = 'identity';
 
   function buildNav(): void {
     nav.replaceChildren();
@@ -1257,7 +934,8 @@ function renderSettings(): HTMLElement {
 
   function buildBody(): void {
     body.replaceChildren();
-    if (activeSection === 'capture') buildCaptureSection(body, buildBody);
+    if (activeSection === 'identity') buildIdentitySection(body, buildBody);
+    else if (activeSection === 'capture') buildCaptureSection(body, buildBody);
     else if (activeSection === 'playback') buildPlaybackSection(body);
     else if (activeSection === 'notifications') buildNotificationsSection(body);
     else if (activeSection === 'groups') buildGroupsSection(body, buildBody);
@@ -1278,6 +956,93 @@ function renderSettings(): HTMLElement {
   panel.append(nav, body, footer);
   overlay.append(panel);
   return overlay;
+}
+
+function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {
+  body.append(text('h3', '', 'IDENTIDADE'));
+  body.append(text('span', '', 'Esta chave define quem você é para os servidores.'));
+
+  const current = client.identity;
+  const fpRow = $('div', 'settings-row');
+  const fpLabel = $('label');
+  fpLabel.append(text('span', '', 'Fingerprint'));
+  const fp = $('input') as HTMLInputElement;
+  fp.readOnly = true;
+  fp.value = current?.fingerprint ?? 'identidade ainda não carregada';
+  fpLabel.append(fp);
+  fpRow.append(fpLabel);
+  body.append(fpRow);
+
+  const copyRow = $('div', 'settings-test');
+  const copyBtn = $('button', 'ghost');
+  copyBtn.textContent = 'copiar fingerprint';
+  copyBtn.addEventListener('click', () => {
+    if (!current?.fingerprint) return;
+    navigator.clipboard?.writeText(current.fingerprint).catch(() => {});
+    copyBtn.textContent = 'copiado';
+  });
+  copyRow.append(copyBtn);
+  body.append(copyRow);
+
+  body.append($('hr'));
+
+  const exportRow = $('div', 'settings-row');
+  const exportLabel = $('label');
+  exportLabel.append(text('span', '', 'Backup da identidade'));
+  const backup = $('textarea') as HTMLTextAreaElement;
+  backup.rows = 5;
+  backup.readOnly = true;
+  backup.value = exportIdentity() ?? '';
+  exportLabel.append(backup);
+  exportRow.append(exportLabel);
+  body.append(exportRow);
+
+  const backupActions = $('div', 'settings-test');
+  const copyBackup = $('button', 'ghost');
+  copyBackup.textContent = 'copiar backup';
+  copyBackup.addEventListener('click', () => {
+    if (!backup.value) return;
+    navigator.clipboard?.writeText(backup.value).catch(() => {});
+    copyBackup.textContent = 'backup copiado';
+  });
+  backupActions.append(copyBackup);
+  body.append(backupActions);
+
+  body.append($('hr'));
+
+  const importRow = $('div', 'settings-row');
+  const importLabel = $('label');
+  importLabel.append(text('span', '', 'Importar identidade'));
+  const raw = $('textarea') as HTMLTextAreaElement;
+  raw.rows = 5;
+  raw.placeholder = 'cole aqui um backup de identidade';
+  importLabel.append(raw);
+  importRow.append(importLabel);
+  body.append(importRow);
+
+  const actions = $('div', 'settings-test');
+  const importBtn = $('button', 'ghost');
+  importBtn.textContent = 'importar';
+  importBtn.addEventListener('click', async () => {
+    const ok = await importIdentity(raw.value.trim());
+    if (!ok) {
+      importBtn.textContent = 'backup inválido';
+      return;
+    }
+    client.identity = await loadIdentity();
+    rebuild();
+  });
+
+  const resetBtn = $('button', 'danger');
+  resetBtn.textContent = 'gerar nova identidade';
+  resetBtn.addEventListener('click', async () => {
+    if (!confirm('Gerar outra identidade? Grupos e posse de servidores ficam ligados à identidade antiga.')) return;
+    client.identity = await resetIdentity();
+    rebuild();
+  });
+
+  actions.append(importBtn, resetBtn);
+  body.append(actions);
 }
 
 function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
@@ -1344,6 +1109,37 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
   }
   body.append(actGroup);
 
+  // PTT key binding
+  if (client.mic.activation === 'ptt') {
+    const pttRow = $('div', 'settings-row');
+    pttRow.style.marginTop = '8px';
+    const pttLabel = $('label');
+    pttLabel.append(text('span', '', 'Tecla Push-to-Talk'));
+    const pttBtn = $('button', 'ghost');
+    pttBtn.textContent = keyLabel(pttKey);
+    pttBtn.style.cssText = 'min-width:120px;text-align:center;';
+    let listening = false;
+    pttBtn.addEventListener('click', () => {
+      if (listening) return;
+      listening = true;
+      pttBtn.textContent = 'pressione uma tecla...';
+      pttBtn.style.color = 'var(--amber)';
+      const handler = (ev: KeyboardEvent) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        setPttKey(ev.code);
+        pttBtn.textContent = keyLabel(ev.code);
+        pttBtn.style.color = '';
+        listening = false;
+        document.removeEventListener('keydown', handler, true);
+      };
+      document.addEventListener('keydown', handler, true);
+    });
+    pttLabel.append(pttBtn);
+    pttRow.append(pttLabel);
+    body.append(pttRow);
+  }
+
   // Threshold (only for voice activation)
   if (client.mic.activation === 'voice') {
     const thrRow = $('div', 'settings-row');
@@ -1397,12 +1193,12 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
   body.append($('hr'));
   const testRow = $('div', 'settings-test');
   const testBtn = $('button', 'ghost');
-  testBtn.textContent = micTestStream ? '■ parar teste' : '▶ teste de microfone';
+  testBtn.textContent = isMicTestRunning() ? '■ parar teste' : '▶ teste de microfone';
   const testDot = $('div', 'dot');
   let testIv: ReturnType<typeof setInterval> | null = null;
 
   testBtn.addEventListener('click', async () => {
-    if (micTestStream) {
+    if (isMicTestRunning()) {
       stopMicTest();
       if (testIv) { clearInterval(testIv); testIv = null; }
       testBtn.textContent = '▶ teste de microfone';
@@ -1416,7 +1212,7 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
     }
     testBtn.textContent = '■ parar teste';
     testIv = setInterval(() => {
-      if (!micTestStream) { clearInterval(testIv!); testIv = null; return; }
+      if (!isMicTestRunning()) { clearInterval(testIv!); testIv = null; return; }
       testDot.classList.toggle('live', client.micLevel > 0.01);
     }, 60);
   });
@@ -1447,6 +1243,32 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
 function buildPlaybackSection(body: HTMLElement): void {
   body.append(text('h3', '', 'REPRODUÇÃO'));
   body.append(text('span', '', 'Configure o sistema de reprodução de áudio'));
+
+  // Output device
+  const devRow = $('div', 'settings-row');
+  const devLabel = $('label');
+  devLabel.append(text('span', '', 'Dispositivo de reprodução'));
+  const devSelect = $('select') as HTMLSelectElement;
+  for (const d of outputDevices) {
+    const opt = $('option') as HTMLOptionElement;
+    opt.value = d.deviceId;
+    opt.textContent = d.label || `saída ${d.deviceId.slice(0, 8)}`;
+    if (d.deviceId === client.outputDeviceId) opt.selected = true;
+    devSelect.append(opt);
+  }
+  if (outputDevices.length === 0) {
+    const opt = $('option') as HTMLOptionElement;
+    opt.value = '';
+    opt.textContent = 'padrão do sistema';
+    opt.selected = true;
+    devSelect.append(opt);
+  }
+  devSelect.addEventListener('change', () => {
+    client.setOutputDevice(devSelect.value);
+  });
+  devLabel.append(devSelect);
+  devRow.append(devLabel);
+  body.append(devRow);
 
   // Output volume
   const volRow = $('div', 'settings-row');
@@ -1549,7 +1371,7 @@ function buildNotificationsSection(body: HTMLElement): void {
     const permBtn = $('button', 'ghost');
     permBtn.textContent = '🔒 Permitir notificações';
     permBtn.addEventListener('click', async () => {
-      const granted = await (await import('./notifications.js')).requestNotificationPermission();
+      const granted = await requestNotificationPermission();
       if (granted) {
         permBtn.textContent = '✅ Permitido';
         permBtn.disabled = true;
@@ -1567,7 +1389,6 @@ function buildNotificationsSection(body: HTMLElement): void {
   testBtn.textContent = '▶ testar notificação';
   testBtn.addEventListener('click', () => {
     (async () => {
-      const { notify } = await import('./notifications.js');
       await notify({ title: 'Vox Test', body: 'Notificação de teste funcionando!', tag: 'test' });
     })();
   });
@@ -1692,56 +1513,6 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
 
 // ============================================================ context menus --
 
-function closeMenu(): void {
-  if (contextMenu) {
-    contextMenu.remove();
-    contextMenu = null;
-  }
-  if (contextMenuCleanup) {
-    contextMenuCleanup();
-    contextMenuCleanup = null;
-  }
-  document.removeEventListener('click', onGlobalClick);
-  document.removeEventListener('contextmenu', onGlobalContext);
-}
-
-function onGlobalClick(): void {
-  closeMenu();
-}
-
-function onGlobalContext(e: Event): void {
-  e.preventDefault();
-  closeMenu();
-}
-
-function openMenu(anchor: HTMLElement, items: HTMLElement[]): void {
-  closeMenu();
-  const menu = $('div', 'menu');
-  menu.append(...items);
-  menu.style.visibility = 'hidden';
-  document.body.append(menu);
-  contextMenu = menu;
-
-  const rect = anchor.getBoundingClientRect();
-  const mw = menu.offsetWidth;
-  const mh = menu.offsetHeight;
-  const pad = 8;
-
-  let top = rect.bottom + 4;
-  let left = rect.left;
-  if (left + mw + pad > window.innerWidth) left = window.innerWidth - mw - pad;
-  if (left < pad) left = pad;
-  if (top + mh + pad > window.innerHeight) top = rect.top - mh - 4;
-  if (top < pad) top = pad;
-
-  menu.style.top = `${top}px`;
-  menu.style.left = `${left}px`;
-  menu.style.visibility = '';
-
-  document.addEventListener('click', onGlobalClick);
-  document.addEventListener('contextmenu', onGlobalContext);
-}
-
 function collapsible(label: string, danger = false): { toggle: HTMLButtonElement; sub: HTMLDivElement } {
   const toggle = $('button', danger ? 'danger' : '') as HTMLButtonElement;
   const arrow = $('span', 'arrow');
@@ -1808,14 +1579,38 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
     // ---- self actions ----
     items.push($('hr'));
 
-    const awayBtn = $('button');
-    awayBtn.textContent = isAway ? 'voltar' : 'ausente';
-    awayBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      client.toggleAway();
-      closeMenu();
-    });
-    items.push(awayBtn);
+    if (isAway) {
+      const backBtn = $('button');
+      backBtn.textContent = 'voltar';
+      backBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        client.setAway(false);
+        closeMenu();
+      });
+      items.push(backBtn);
+    } else {
+      const awayWrap = $('div', '');
+      awayWrap.style.cssText = 'display:flex;flex-direction:column;gap:4px;padding:0 4px;';
+      const awayInput = $('input') as HTMLInputElement;
+      awayInput.placeholder = 'mensagem de ausência (opcional)';
+      awayInput.style.cssText = 'font-size:12px;padding:4px 8px;';
+      awayInput.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+          client.setAway(true, awayInput.value.trim());
+          closeMenu();
+        }
+        ev.stopPropagation();
+      });
+      const awayBtn = $('button');
+      awayBtn.textContent = 'ausente';
+      awayBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        client.setAway(true, awayInput.value.trim());
+        closeMenu();
+      });
+      awayWrap.append(awayInput, awayBtn);
+      items.push(awayWrap);
+    }
 
     const deafBtn = $('button');
     deafBtn.textContent = isDeaf ? 'ouvir novamente' : 'não ouvir nada (deafen)';
@@ -2624,14 +2419,19 @@ function promptCreateChannel(): void {
 // ============================================================ keyboard shortcuts =
 
 let pttActive = false;
+let pttKey = loadPttKey();
+
+function setPttKey(code: string): void {
+  pttKey = code;
+  savePttKey(code);
+}
 
 document.addEventListener('keydown', (e) => {
   if (view !== 'shell') return;
   const tag = (e.target as HTMLElement).tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
-  // Push-to-talk: espaco (configuravel)
-  if (e.code === 'Space' && !pttActive) {
+  if (e.code === pttKey && !pttActive) {
     e.preventDefault();
     pttActive = true;
     client.setPtt(true);
@@ -2639,7 +2439,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keyup', (e) => {
-  if (e.code === 'Space' && pttActive) {
+  if (e.code === pttKey && pttActive) {
     pttActive = false;
     client.setPtt(false);
   }
