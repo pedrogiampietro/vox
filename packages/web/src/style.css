@@ -742,6 +742,7 @@ label.field {
 .line.bot-death .bot-tag { background: rgba(214, 90, 90, 0.20); color: #ef8a8a; }
 .line.bot-kill .bot-tag { background: rgba(214, 145, 90, 0.20); color: #f0a866; }
 .line.bot-levelup .bot-tag { background: rgba(238, 195, 100, 0.20); color: #f0cd76; }
+.line.bot-presence .bot-tag { background: rgba(94, 194, 122, 0.14); color: #9edcad; }
 .line.bot-test .bot-tag { background: rgba(126, 169, 255, 0.18); color: #a9c4ff; }
 
 .line.bot-online .body { color: #cde8d3; }
@@ -749,6 +750,7 @@ label.field {
 .line.bot-death .body { color: #f2c0c0; }
 .line.bot-kill .body { color: #f2d1b0; }
 .line.bot-levelup .body { color: #f2e2b0; }
+.line.bot-presence .body { color: #d8e8dc; }
 .line.bot-test .body { color: #dbe6ff; }
 
 .empty-dm {

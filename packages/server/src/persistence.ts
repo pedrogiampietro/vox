@@ -14,6 +14,11 @@ export interface StoredBotConfig {
   intervalMs: number;
   channelName: string;
   enabled: boolean;
+  globalDeaths: boolean;
+  globalKills: boolean;
+  globalLevelMin: number;
+  summarizePresence: boolean;
+  presenceSummaryMs: number;
 }
 
 export interface StoredServer {
@@ -32,7 +37,17 @@ export function defaultChannels(): StoredChannel[] {
 }
 
 export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
-  world: '', guildName: '', huntedNames: [], intervalMs: 60_000, channelName: 'bot', enabled: false,
+  world: '',
+  guildName: '',
+  huntedNames: [],
+  intervalMs: 60_000,
+  channelName: 'bot',
+  enabled: false,
+  globalDeaths: true,
+  globalKills: true,
+  globalLevelMin: 800,
+  summarizePresence: true,
+  presenceSummaryMs: 5 * 60_000,
 };
 
 export function defaultServer(id = 1): StoredServer {
@@ -90,6 +105,13 @@ function normalizeBotConfig(raw: unknown): StoredBotConfig {
     intervalMs: typeof c.intervalMs === 'number' && c.intervalMs > 0 ? c.intervalMs : 60_000,
     channelName: typeof c.channelName === 'string' && c.channelName ? c.channelName : 'bot',
     enabled: typeof c.enabled === 'boolean' ? c.enabled : false,
+    globalDeaths: typeof c.globalDeaths === 'boolean' ? c.globalDeaths : true,
+    globalKills: typeof c.globalKills === 'boolean' ? c.globalKills : true,
+    globalLevelMin: typeof c.globalLevelMin === 'number' && c.globalLevelMin >= 0 ? c.globalLevelMin : 800,
+    summarizePresence: typeof c.summarizePresence === 'boolean' ? c.summarizePresence : true,
+    presenceSummaryMs: typeof c.presenceSummaryMs === 'number' && c.presenceSummaryMs > 0
+      ? c.presenceSummaryMs
+      : 5 * 60_000,
   };
 }
 
