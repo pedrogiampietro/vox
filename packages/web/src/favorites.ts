@@ -92,7 +92,9 @@ function healthUrl(address: string): string {
   const raw = address.trim();
   if (!raw) return '/health';
   const host = raw.replace(/^wss?:\/\//i, '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
-  const withPort = /:\d+$/.test(host) || host.endsWith(']') ? host : `${host}:9987`;
+  const withPort = /:\d+$/.test(host) || host.endsWith(']') || location.protocol === 'https:'
+    ? host
+    : `${host}:9987`;
   // Fora do navegador seguro nao da para adivinhar o esquema; segue o da pagina.
   const scheme = location.protocol === 'https:' ? 'https' : 'http';
   return `${scheme}://${withPort}/health`;

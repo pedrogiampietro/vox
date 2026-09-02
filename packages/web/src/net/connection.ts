@@ -438,5 +438,6 @@ function resolveUrl(address: string, serverId = 0): string {
   // Endereco escrito a mao herda o esquema da pagina: em https, ws:// seria
   // bloqueado como conteudo misto antes mesmo de sair do navegador.
   const scheme = !isDesktopShell && location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${hasPort ? host : `${host}:${DEFAULT_PORT}`}${path}`;
+  const port = hasPort ? '' : (!isDesktopShell && location.protocol === 'https:' ? '' : `:${DEFAULT_PORT}`);
+  return `${scheme}://${host}${port}${path}`;
 }
