@@ -3,9 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "music-bot": "tsx src/music-client.ts",
+    "music-jukebox": "tsx src/music-jukebox.ts"
+  },
   "dependencies": {
     "@vox/protocol": "*",
     "cycletls": "^1.0.26",
-    "form-data": "^4.0.0"
+    "form-data": "^4.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2"
   }
 }

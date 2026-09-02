@@ -1,0 +1,19 @@
+[Unit]
+Description=Vox music jukebox bot
+After=network-online.target vox.service
+Wants=network-online.target
+Requires=vox.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vox
+EnvironmentFile=/opt/vox/.env
+Environment=VOX_BOT_ADDRESS=ws://127.0.0.1:9987/vox
+Environment=VOX_BOT_CHANNEL=bot
+ExecStart=/usr/bin/npm run music-jukebox
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

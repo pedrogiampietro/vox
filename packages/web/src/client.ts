@@ -14,6 +14,7 @@ import { loadIdentity, type Identity } from './identity.js';
 import { loadAudioPrefs, saveAudioPrefs, type AudioPrefs } from './audio-prefs.js';
 import { touchFavorite, type Favorite } from './favorites.js';
 import { notifications } from './notifications.js';
+import { ScreenShare } from './screen-share.js';
 
 export interface ChatLine {
   scope: ChatScope;
@@ -94,6 +95,7 @@ export class VoxClient {
 
   readonly connection: Connection;
   readonly microphone: Microphone;
+  readonly screen: ScreenShare;
 
   constructor(private readonly onChange: () => void) {
     this.peers = loadPeerPrefs();
@@ -113,6 +115,15 @@ export class VoxClient {
       onVoice: (p) => this.mixer?.push(p),
     });
     this.microphone = new Microphone((frame) => this.connection.sendVoice(frame));
+    this.screen = new ScreenShare(
+      {
+        selfId: () => this.selfId,
+        selfChannelId: () => this.self?.channelId ?? 0,
+        membersOf: (channelId) => this.membersOf(channelId),
+      },
+      (m) => this.connection.send(m),
+      this.onChange,
+    );
   }
 
   // ------------------------------------------------------------ consultas --
@@ -226,6 +237,7 @@ export class VoxClient {
     this.myGroup = Group.Guest;
     this.groupDefs = [...DEFAULT_GROUP_DEFS];
     this.botState = null;
+    this.screen.close();
     this.suspend();
   }
 
@@ -646,6 +658,7 @@ export class VoxClient {
       case Op.ClientRemove:
         this.clients.delete(m.clientId);
         this.mixer?.remove(m.clientId);
+        this.screen.handleSignal(m.clientId, 0, 'stop', '').catch(() => {});
         this.play('leave');
         break;
 
@@ -749,6 +762,10 @@ export class VoxClient {
         if (m.upToStamp > prev) this.dmReadStamps.set(m.readerId, m.upToStamp);
         break;
       }
+
+      case Op.ScreenSignalDeliver:
+        void this.screen.handleSignal(m.senderId, m.targetId, m.kind, m.data);
+        break;
 
       case Op.GroupDefs:
         this.groupDefs = m.groups;

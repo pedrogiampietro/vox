@@ -59,7 +59,8 @@ export type ClientMessage =
       alertEnemyOffline: boolean;
     }
   | { t: Op.BotControl; action: BotControlAction; name: string }
-  | { t: Op.ChatRead; targetId: number; upToStamp: number };
+  | { t: Op.ChatRead; targetId: number; upToStamp: number }
+  | { t: Op.ScreenSignal; targetId: number; kind: string; data: string };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -106,11 +107,13 @@ export type ServerMessage =
   | { t: Op.BotCommandResult; success: boolean; message: string; data?: unknown }
   | { t: Op.RespClaims; claims: RespClaimInfo[] }
   | { t: Op.BotState; state: BotStateInfo }
-  | { t: Op.ChatReadDeliver; readerId: number; upToStamp: number };
+  | { t: Op.ChatReadDeliver; readerId: number; upToStamp: number }
+  | { t: Op.ScreenSignalDeliver; senderId: number; targetId: number; kind: string; data: string };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
 export const MAX_NICKNAME = 32;
 export const MAX_CHAT_TEXT = 1024;
+export const MAX_SCREEN_SIGNAL = 16 * 1024;
 
 // ---------------------------------------------------------------- channels --
 
@@ -334,6 +337,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.ChatRead:
       w.u16(m.targetId).f64(m.upToStamp);
       break;
+    case Op.ScreenSignal:
+      w.u16(m.targetId).str(m.kind).str(m.data);
+      break;
   }
   return w.finish();
 }
@@ -417,6 +423,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, action: r.u8() as BotControlAction, name: r.str() };
     case Op.ChatRead:
       return { t, targetId: r.u16(), upToStamp: r.f64() };
+    case Op.ScreenSignal:
+      return { t, targetId: r.u16(), kind: r.str(), data: r.str() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -488,6 +496,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.ChatReadDeliver:
       w.u16(m.readerId).f64(m.upToStamp);
       break;
+    case Op.ScreenSignalDeliver:
+      w.u16(m.senderId).u16(m.targetId).str(m.kind).str(m.data);
+      break;
   }
   return w.finish();
 }
@@ -550,6 +561,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, state: readBotState(r) };
     case Op.ChatReadDeliver:
       return { t, readerId: r.u16(), upToStamp: r.f64() };
+    case Op.ScreenSignalDeliver:
+      return { t, senderId: r.u16(), targetId: r.u16(), kind: r.str(), data: r.str() };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }

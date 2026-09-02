@@ -30,6 +30,7 @@ import {
   encodeServerMessage,
   stampSender,
   MAX_CHAT_TEXT,
+  MAX_SCREEN_SIGNAL,
   MAX_NICKNAME,
   MAX_VOICE_PACKET,
   VOICE_HEADER_SIZE,
@@ -534,6 +535,10 @@ export class Hub {
         }));
         break;
       }
+
+      case Op.ScreenSignal:
+        this.routeScreenSignal(s, m.targetId, m.kind, m.data);
+        break;
     }
   }
 
@@ -1180,6 +1185,32 @@ export class Hub {
       return;
     }
     for (const m of this.sessions.values()) m.send(frame);
+  }
+
+  private routeScreenSignal(s: Session, targetId: number, kind: string, data: string): void {
+    const signalKind = clean(kind, 24);
+    if (!signalKind || data.length > MAX_SCREEN_SIGNAL) return;
+
+    const frame = encodeServerMessage({
+      t: Op.ScreenSignalDeliver,
+      senderId: s.id,
+      targetId,
+      kind: signalKind,
+      data,
+    });
+
+    if (targetId > 0) {
+      const target = this.sessions.get(targetId);
+      if (!target || target.channelId !== s.channelId) return;
+      target.send(frame);
+      return;
+    }
+
+    const ch = this.channels.get(s.channelId);
+    if (!ch) return;
+    for (const member of ch.members) {
+      if (member !== s) member.send(frame);
+    }
   }
 
   // -------------------------------------------------------- bot commands --

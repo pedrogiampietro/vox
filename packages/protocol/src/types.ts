@@ -1,6 +1,7 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 9: sinalizacao WebRTC para compartilhamento de tela/janela.
  * 8: read receipts para mensagens privadas.
  * 7: guilds amigas/inimigas configuraveis (varias por lado).
  * 6: alertas do bot com toggles amigo/inimigo.
@@ -9,7 +10,7 @@
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -52,6 +53,7 @@ export enum Op {
   UpdateBotConfig = 0x75,
   BotControl = 0x76,
   ChatRead = 0x77,
+  ScreenSignal = 0x78,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -72,6 +74,7 @@ export enum Op {
   RespClaims = 0xc1,
   BotState = 0xc2,
   ChatReadDeliver = 0xc3,
+  ScreenSignalDeliver = 0xc4,
 }
 
 export enum BotControlAction {
