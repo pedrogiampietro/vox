@@ -46,6 +46,7 @@ const MAX_INFLIGHT_DATAGRAMS = 8;
 /** Espera entre tentativas: 1s, 2s, 4s... ate o teto. */
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
+const OPEN_TIMEOUT_MS = 8000;
 /**
  * Se nunca chegamos a entrar, o endereco provavelmente esta errado - insistir
  * so prende o usuario numa tela que nao vai a lugar nenhum. Depois de ja ter
@@ -64,6 +65,7 @@ export interface Target {
 
 export class Connection {
   private ws: WebSocket | null = null;
+  private openTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -129,7 +131,18 @@ export class Connection {
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
 
+    this.openTimer = setTimeout(() => {
+      if (this.ws !== ws || ws.readyState !== WebSocket.CONNECTING) return;
+      ws.close();
+      this.teardown();
+      this.scheduleRetry('tempo esgotado ao conectar');
+    }, OPEN_TIMEOUT_MS);
+
     ws.onopen = () => {
+      if (this.openTimer !== null) {
+        clearTimeout(this.openTimer);
+        this.openTimer = null;
+      }
       this.send({
         t: Op.Hello,
         version: PROTOCOL_VERSION,
@@ -386,6 +399,10 @@ export class Connection {
     if (this.pingTimer !== null) {
       clearInterval(this.pingTimer);
       this.pingTimer = null;
+    }
+    if (this.openTimer !== null) {
+      clearTimeout(this.openTimer);
+      this.openTimer = null;
     }
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);

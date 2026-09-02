@@ -405,10 +405,12 @@ async function main(): Promise<void> {
   const line = `ola ${RUN}`;
   bob.send({ t: Op.ChatSend, scope: ChatScope.Server, targetId: 0, text: line });
   const delivered = await until('chat de servidor circula', () =>
-    bob.chat.some((c) => c.senderId === bob.id && c.text === line),
+    bob.chat.some((c) => c.senderId === bob.id && c.text === line)
+    && alice.chat.some((c) => c.senderId === bob.id && c.text === line),
   );
   check('chat volta para o remetente com o texto intacto', delivered);
-  check('chat de servidor alcanca quem esta em outro canal', alice.chat.some((c) => c.text === line));
+  check('chat de servidor alcanca quem esta em outro canal',
+    alice.chat.some((c) => c.senderId === bob.id && c.text === line));
 
   // --- servidores virtuais e permissoes ------------------------------------
 
