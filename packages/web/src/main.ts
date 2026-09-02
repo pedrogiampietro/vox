@@ -121,6 +121,8 @@ function closeSettings(): void {
 function renderShell(): HTMLElement {
   const root = $('div', 'shell');
   root.append(renderRail(), renderRooms(), renderTalk(), renderConsole());
+  const dock = renderScreenDock();
+  if (dock) root.append(dock);
   return root;
 }
 
@@ -1618,6 +1620,15 @@ function renderConsole(): HTMLElement {
 
   bar.append($('div', 'spacer'));
 
+  const screenBtn = $('button', 'ghost');
+  screenBtn.textContent = client.screen.sharing ? '■ tela' : '▣ tela';
+  screenBtn.title = client.screen.sharing ? 'parar compartilhamento de tela' : 'compartilhar tela ou janela';
+  if (client.screen.sharing) screenBtn.classList.add('armed');
+  screenBtn.addEventListener('click', () => {
+    void client.screen.toggle().then(render);
+  });
+  bar.append(screenBtn);
+
   // sound toggle
   const sndBtn = $('button', 'ghost');
   sndBtn.append(client.soundsEnabled ? iconBell() : iconBellOff());
@@ -1639,6 +1650,51 @@ function renderConsole(): HTMLElement {
   }
 
   return bar;
+}
+
+function renderScreenDock(): HTMLElement | null {
+  const remotes = [...client.screen.remotes.values()];
+  if (!client.screen.sharing && remotes.length === 0 && !client.screen.error) return null;
+
+  const dock = $('div', 'screen-dock');
+  const head = $('div', 'screen-head');
+  head.append(text('span', 'screen-title', client.screen.sharing ? 'sua tela' : 'compartilhamento'));
+
+  if (client.screen.sharing) {
+    const stop = $('button', 'ghost');
+    stop.textContent = 'parar';
+    stop.addEventListener('click', () => client.screen.stop());
+    head.append(stop);
+  }
+  dock.append(head);
+
+  if (client.screen.error) {
+    const err = text('div', 'screen-error', client.screen.error);
+    dock.append(err);
+  }
+
+  if (client.screen.sharing && client.screen.localStream) {
+    dock.append(renderScreenVideo('Você', client.screen.localStream, true));
+  }
+
+  for (const remote of remotes) {
+    const name = client.clients.get(remote.clientId)?.nickname ?? `#${remote.clientId}`;
+    dock.append(renderScreenVideo(name, remote.stream, false));
+  }
+
+  return dock;
+}
+
+function renderScreenVideo(label: string, stream: MediaStream, muted: boolean): HTMLElement {
+  const tile = $('div', 'screen-tile');
+  const video = $('video') as HTMLVideoElement;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = muted;
+  video.srcObject = stream;
+  tile.append(video, text('span', 'screen-label', label));
+  queueMicrotask(() => video.play().catch(() => {}));
+  return tile;
 }
 
 // ============================================================== context menus --

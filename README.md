@@ -138,6 +138,74 @@ WebSocket nos dois sentidos, e a volta para TCP quando o QUIC cai):
 npm run smoke
 ```
 
+## Compartilhamento de tela
+
+O cliente tem um primeiro MVP de compartilhamento de tela/janela. O botao
+`tela` no console abre o seletor nativo do navegador/desktop e envia o video
+por WebRTC P2P para os outros usuarios do mesmo canal. O servidor Vox so
+encaminha a sinalizacao pelo WebSocket; o video nao passa pelo servidor.
+
+Como a captura de tela e uma API sensivel do navegador, ela exige contexto
+seguro: `https://`, `localhost` ou a casca desktop.
+
+## Bot de musica
+
+O bot de musica roda como um cliente separado que entra no canal e transmite
+pacotes Opus pelo mesmo caminho de voz dos usuarios. Ele usa `ffmpeg` para ler
+arquivo/URL/stream e converter para Opus 48 kHz mono em quadros de 20 ms.
+
+```bash
+npm run music-bot -- "https://exemplo.com/audio.mp3"
+```
+
+Variaveis uteis:
+
+```bash
+VOX_BOT_ADDRESS=ws://127.0.0.1:9987/vox
+VOX_BOT_PASSWORD=
+VOX_BOT_NICK=music
+VOX_BOT_CHANNEL=Lobby
+VOX_BOT_CHANNEL_ID=1
+VOX_BOT_BITRATE=96k
+VOX_FFMPEG=/caminho/para/ffmpeg
+```
+
+Se `VOX_BOT_CHANNEL` e `VOX_BOT_CHANNEL_ID` ficarem vazios, ele entra no canal
+padrao do servidor.
+
+Tambem existe o modo jukebox, pensado para um canal de pedidos:
+
+```bash
+npm run music-jukebox
+```
+
+Nesse modo, o bot `music` fica no canal `bot` lendo o chat. Quando alguem digita
+algo como `orochi - sereia`, ele procura a musica com `yt-dlp`, entra com um
+usuario `music player` no canal de voz de quem pediu e comeca a tocar. Se ja
+tiver algo tocando, o pedido entra na fila.
+
+Comandos no chat do canal `bot`:
+
+```text
+fila
+skip
+stop
+```
+
+Para busca por nome, instale `yt-dlp` alem do `ffmpeg`, ou defina
+`VOX_YTDLP=/caminho/para/yt-dlp`. Links diretos de audio continuam funcionando
+sem `yt-dlp`.
+
+Na VPS com systemd, depois do codigo estar em `/opt/vox`, instale o servico do
+jukebox:
+
+```bash
+sudo apt-get install -y ffmpeg yt-dlp
+sudo cp docs/vox-music-jukebox.service /etc/systemd/system/vox-music-jukebox.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now vox-music-jukebox.service
+```
+
 Produção local:
 
 ```bash
