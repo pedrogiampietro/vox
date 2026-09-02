@@ -228,6 +228,7 @@ Tudo por variável de ambiente:
 | `VOX_PORT` | `9987` | mesma porta do TS3, por carinho |
 | `VOX_NAME` | `Servidor Vox` | |
 | `VOX_MOTD` | `Bem-vindo.` | |
+| `VOX_BASE_DOMAIN` | `v0x.online` | domínio base dos subdomínios públicos |
 | `VOX_PASSWORD` | vazio | vazio = servidor aberto |
 | `VOX_MAX_CLIENTS` | `128` | |
 | `VOX_MAX_PER_IP` | `8` | conexões simultâneas por IP; `0` desliga |
@@ -244,8 +245,10 @@ Tudo por variável de ambiente:
 | `VOX_WT_KEY` | herda `VOX_TLS_KEY` | par do anterior |
 | `VOX_WT_PUBLISH_HASH` | `false` | só em desenvolvimento, com certificado próprio |
 
-Canais permanentes vivem em `data/channels.json`. Canais criados por usuários são
-temporários e somem quando esvaziam, como no TS3.
+Os dados permanentes vivem em `data/vox.db`, um SQLite transacional com tabelas de
+servidores e contas. Para facilitar inspeção e recuperação, o Vox mantém
+`data/servers.json` e `data/accounts.json` como exportações automáticas. Canais
+criados por usuários são temporários e somem quando esvaziam, como no TS3.
 
 ## O protocolo
 

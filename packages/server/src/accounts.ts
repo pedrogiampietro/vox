@@ -1,7 +1,7 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { join } from 'node:path';
 import { config } from './config.js';
+import { database, exportJson } from './sqlite.js';
 
 export interface Account {
   id: number;
@@ -10,26 +10,24 @@ export interface Account {
   createdAt: number;
 }
 
-const FILE = (): string => join(config.dataDir, 'accounts.json');
-
-let accounts: Account[] | null = null;
-let nextId = 1;
+let imported = false;
 
 export function findAccount(email: string): Account | undefined {
-  return load().find((account) => account.email === normalizeEmail(email));
+  importLegacy();
+  return database.prepare('SELECT id, email, password_hash AS passwordHash, created_at AS createdAt FROM accounts WHERE email = ?').get(normalizeEmail(email)) as Account | undefined;
 }
 
 export function createAccount(email: string, password: string): Account | null {
   const normalized = normalizeEmail(email);
   if (!normalized || password.length < 8 || findAccount(normalized)) return null;
   const account: Account = {
-    id: nextId++,
+    id: Number(database.prepare('SELECT COALESCE(MAX(id), 0) + 1 AS id FROM accounts').get()?.id ?? 1),
     email: normalized,
     passwordHash: hashPassword(password),
     createdAt: Date.now(),
   };
-  load().push(account);
-  save();
+  database.prepare('INSERT INTO accounts (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)').run(account.id, account.email, account.passwordHash, account.createdAt);
+  exportAccounts();
   return account;
 }
 
@@ -49,23 +47,25 @@ export function verifyPassword(account: Account, password: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function load(): Account[] {
-  if (accounts) return accounts;
-  try {
-    const parsed = JSON.parse(readFileSync(FILE(), 'utf8')) as Account[];
-    accounts = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    accounts = [];
+function importLegacy(): void {
+  if (imported) return;
+  imported = true;
+  const count = Number(database.prepare('SELECT COUNT(*) AS count FROM accounts').get()?.count ?? 0);
+  if (count === 0) {
+    try {
+      const parsed = JSON.parse(readFileSync(`${config.dataDir}/accounts.json`, 'utf8')) as Account[];
+      if (Array.isArray(parsed)) {
+        const insert = database.prepare('INSERT OR IGNORE INTO accounts (id, email, password_hash, created_at) VALUES (?, ?, ?, ?)');
+        for (const account of parsed) insert.run(account.id, account.email, account.passwordHash, account.createdAt);
+      }
+    } catch { /* arquivo ausente */ }
   }
-  nextId = Math.max(0, ...accounts.map((account) => account.id)) + 1;
-  return accounts;
+  exportAccounts();
 }
 
-function save(): void {
-  mkdirSync(config.dataDir, { recursive: true });
-  const tmp = `${FILE()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(load(), null, 2));
-  renameSync(tmp, FILE());
+function exportAccounts(): void {
+  const rows = database.prepare('SELECT id, email, password_hash AS passwordHash, created_at AS createdAt FROM accounts ORDER BY id').all();
+  exportJson('accounts.json', rows);
 }
 
 function hashPassword(password: string): string {
