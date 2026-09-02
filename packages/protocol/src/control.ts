@@ -58,7 +58,8 @@ export type ClientMessage =
       alertEnemyOnline: boolean;
       alertEnemyOffline: boolean;
     }
-  | { t: Op.BotControl; action: BotControlAction; name: string };
+  | { t: Op.BotControl; action: BotControlAction; name: string }
+  | { t: Op.ChatRead; targetId: number; upToStamp: number };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -104,7 +105,8 @@ export type ServerMessage =
   | { t: Op.GroupDefs; groups: GroupDef[] }
   | { t: Op.BotCommandResult; success: boolean; message: string; data?: unknown }
   | { t: Op.RespClaims; claims: RespClaimInfo[] }
-  | { t: Op.BotState; state: BotStateInfo };
+  | { t: Op.BotState; state: BotStateInfo }
+  | { t: Op.ChatReadDeliver; readerId: number; upToStamp: number };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
 export const MAX_NICKNAME = 32;
@@ -329,6 +331,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.BotControl:
       w.u8(m.action).str(m.name);
       break;
+    case Op.ChatRead:
+      w.u16(m.targetId).f64(m.upToStamp);
+      break;
   }
   return w.finish();
 }
@@ -410,6 +415,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       };
     case Op.BotControl:
       return { t, action: r.u8() as BotControlAction, name: r.str() };
+    case Op.ChatRead:
+      return { t, targetId: r.u16(), upToStamp: r.f64() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -478,6 +485,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.BotState:
       writeBotState(w, m.state);
       break;
+    case Op.ChatReadDeliver:
+      w.u16(m.readerId).f64(m.upToStamp);
+      break;
   }
   return w.finish();
 }
@@ -538,6 +548,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, claims: r.list(readRespClaim) };
     case Op.BotState:
       return { t, state: readBotState(r) };
+    case Op.ChatReadDeliver:
+      return { t, readerId: r.u16(), upToStamp: r.f64() };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }

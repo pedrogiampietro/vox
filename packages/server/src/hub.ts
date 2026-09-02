@@ -438,10 +438,14 @@ export class Hub {
       case Op.SetClientGroup: {
         const target = this.targetFor(s, m.clientId, REQUIRED.setGroup);
         if (!target) break;
-        // Ninguem promove alguem ao proprio nivel ou acima: seria escada
-        // para o topo em dois passos.
-        if (m.group >= s.group) {
+        // Nunca promove acima do proprio nivel.
+        if (m.group > s.group) {
           return this.fail(s, FailureCode.NotPermitted, 'grupo acima do seu');
+        }
+        // Promover para o proprio nivel so e permitido para Owner (co-donos).
+        // Admin nao pode criar outro Admin — evita cascata acidental.
+        if (m.group === s.group && s.group !== Group.Owner) {
+          return this.fail(s, FailureCode.NotPermitted, 'nao pode promover ao seu proprio nivel');
         }
         this.assignGroup(target, m.group);
         break;
@@ -514,6 +518,20 @@ export class Hub {
       case Op.BotControl: {
         if (!this.allow(s, Group.Owner)) break;
         this.applyBotControl(s, m.action, m.name);
+        break;
+      }
+
+      case Op.ChatRead: {
+        // Confirmacao de leitura de DM: encaminha ao remetente. Nao precisa
+        // persistir; se o remetente estiver offline, o read simplesmente se
+        // perde — o receptor confirma de novo ao reabrir a aba.
+        const target = this.sessions.get(m.targetId);
+        if (!target || target === s) break;
+        target.send(encodeServerMessage({
+          t: Op.ChatReadDeliver,
+          readerId: s.id,
+          upToStamp: m.upToStamp,
+        }));
         break;
       }
     }
@@ -1087,11 +1105,23 @@ export class Hub {
       case BotControlAction.AddEnemyGuild: {
         const trimmed = clean(name, 64);
         if (!trimmed) return this.fail(s, FailureCode.Malformed, 'nome vazio');
-        const list = action === BotControlAction.AddFriendGuild
-          ? this.botConfig.friendGuilds
-          : this.botConfig.enemyGuilds;
-        if (!list.some((g) => g.toLowerCase() === trimmed.toLowerCase())) {
+        const key = trimmed.toLowerCase();
+        const isFriend = action === BotControlAction.AddFriendGuild;
+        // Uma guild so pode estar em uma lista de cada vez: adicionar em uma
+        // remove da outra, para nao ficar sync ambigua com "amigo ganha".
+        const opposite = isFriend ? this.botConfig.enemyGuilds : this.botConfig.friendGuilds;
+        const oppositeBefore = opposite.length;
+        const filtered = opposite.filter((g) => g.toLowerCase() !== key);
+        if (isFriend) this.botConfig.enemyGuilds = filtered;
+        else this.botConfig.friendGuilds = filtered;
+
+        const list = isFriend ? this.botConfig.friendGuilds : this.botConfig.enemyGuilds;
+        let mutated = filtered.length !== oppositeBefore;
+        if (!list.some((g) => g.toLowerCase() === key)) {
           list.push(trimmed);
+          mutated = true;
+        }
+        if (mutated) {
           this.deps.onChanged();
           applyBotConfig(this);
         }
