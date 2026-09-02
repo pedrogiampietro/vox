@@ -76,3 +76,6 @@ function hashPassword(password: string): string {
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
+
+// Garante que a migracao do arquivo legado aconteca mesmo antes do primeiro login.
+importLegacy();
