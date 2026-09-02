@@ -1,10 +1,11 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 4: claims de respawn por servidor.
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -39,6 +40,8 @@ export enum Op {
   SetClientGroup = 0x53,
   SetGroupDef = 0x54,
   BotCommand = 0x60,
+  ClaimResp = 0x70,
+  ReleaseResp = 0x71,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -56,6 +59,7 @@ export enum Op {
   ChatDeliver = 0xb0,
   GroupDefs = 0xb1,
   BotCommandResult = 0xc0,
+  RespClaims = 0xc1,
 }
 
 /** Bits de estado do cliente (auto-declarado, o servidor apenas replica). */
@@ -174,6 +178,16 @@ export interface GroupDef {
   icon: string;
   /** Cor hex para o nome. Vazio = cor padrao. */
   color: string;
+}
+
+export interface RespClaimInfo {
+  id: number;
+  respawn: string;
+  note: string;
+  ownerId: number;
+  ownerName: string;
+  claimedAt: number;
+  expiresAt: number;
 }
 
 export const DEFAULT_GROUP_DEFS: GroupDef[] = [

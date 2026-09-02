@@ -27,6 +27,9 @@ database.exec(`
   if (!has.has('bot_config_json')) {
     database.exec("ALTER TABLE servers ADD COLUMN bot_config_json TEXT NOT NULL DEFAULT '{}'");
   }
+  if (!has.has('claims_json')) {
+    database.exec("ALTER TABLE servers ADD COLUMN claims_json TEXT NOT NULL DEFAULT '[]'");
+  }
 }
 
 export function exportJson(name: string, value: unknown): void {

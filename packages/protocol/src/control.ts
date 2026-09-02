@@ -7,7 +7,7 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { ChannelInfo, ClientInfo, GroupDef } from './types.js';
+import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo } from './types.js';
 import { ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
 
 export type ClientMessage =
@@ -33,7 +33,9 @@ export type ClientMessage =
   | { t: Op.MoveClient; clientId: number; channelId: number }
   | { t: Op.SetClientGroup; clientId: number; group: Group }
   | { t: Op.SetGroupDef; group: Group; name: string; icon: string; color: string }
-  | { t: Op.BotCommand; command: string; args: string[] };
+  | { t: Op.BotCommand; command: string; args: string[] }
+  | { t: Op.ClaimResp; respawn: string; note: string; durationMin: number }
+  | { t: Op.ReleaseResp; claimId: number };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -59,7 +61,7 @@ export type ServerMessage =
     }
   | { t: Op.Pong; stamp: number }
   | { t: Op.Failure; code: FailureCode; message: string }
-  | { t: Op.Snapshot; channels: ChannelInfo[]; clients: ClientInfo[] }
+  | { t: Op.Snapshot; channels: ChannelInfo[]; clients: ClientInfo[]; claims: RespClaimInfo[] }
   | { t: Op.ChannelAdd; channel: ChannelInfo }
   | { t: Op.ChannelRemove; channelId: number }
   | { t: Op.ChannelUpdate; channel: ChannelInfo }
@@ -77,7 +79,8 @@ export type ServerMessage =
       targetId: number;
     }
   | { t: Op.GroupDefs; groups: GroupDef[] }
-  | { t: Op.BotCommandResult; success: boolean; message: string; data?: unknown };
+  | { t: Op.BotCommandResult; success: boolean; message: string; data?: unknown }
+  | { t: Op.RespClaims; claims: RespClaimInfo[] };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
 export const MAX_NICKNAME = 32;
@@ -127,6 +130,29 @@ function writeGroupDef(w: Writer, g: GroupDef): void {
 
 function readGroupDef(r: Reader): GroupDef {
   return { id: r.u8() as Group, name: r.str(), icon: r.str(), color: r.str() };
+}
+
+function writeRespClaim(w: Writer, c: RespClaimInfo): void {
+  w
+    .u16(c.id)
+    .str(c.respawn)
+    .str(c.note)
+    .u16(c.ownerId)
+    .str(c.ownerName)
+    .f64(c.claimedAt)
+    .f64(c.expiresAt);
+}
+
+function readRespClaim(r: Reader): RespClaimInfo {
+  return {
+    id: r.u16(),
+    respawn: r.str(),
+    note: r.str(),
+    ownerId: r.u16(),
+    ownerName: r.str(),
+    claimedAt: r.f64(),
+    expiresAt: r.f64(),
+  };
 }
 
 // ------------------------------------------------------- cliente -> servidor --
@@ -182,6 +208,12 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
       w.u16(m.args.length);
       for (const arg of m.args) w.str(arg);
       break;
+    case Op.ClaimResp:
+      w.str(m.respawn).str(m.note).u16(m.durationMin);
+      break;
+    case Op.ReleaseResp:
+      w.u16(m.claimId);
+      break;
   }
   return w.finish();
 }
@@ -232,6 +264,10 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, group: r.u8() as Group, name: r.str(), icon: r.str(), color: r.str() };
     case Op.BotCommand:
       return { t, command: r.str(), args: Array.from({ length: r.u16() }, () => r.str()) };
+    case Op.ClaimResp:
+      return { t, respawn: r.str(), note: r.str(), durationMin: r.u16() };
+    case Op.ReleaseResp:
+      return { t, claimId: r.u16() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -263,7 +299,7 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
       w.u16(m.code).str(m.message);
       break;
     case Op.Snapshot:
-      w.list(m.channels, writeChannel).list(m.clients, writeClient);
+      w.list(m.channels, writeChannel).list(m.clients, writeClient).list(m.claims, writeRespClaim);
       break;
     case Op.ChannelAdd:
     case Op.ChannelUpdate:
@@ -294,6 +330,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
       w.u8(m.success ? 1 : 0).str(m.message);
       // data omitted for simplicity - could be extended
       break;
+    case Op.RespClaims:
+      w.list(m.claims, writeRespClaim);
+      break;
   }
   return w.finish();
 }
@@ -322,7 +361,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
     case Op.Failure:
       return { t, code: r.u16() as FailureCode, message: r.str() };
     case Op.Snapshot:
-      return { t, channels: r.list(readChannel), clients: r.list(readClient) };
+      return { t, channels: r.list(readChannel), clients: r.list(readClient), claims: r.list(readRespClaim) };
     case Op.ChannelAdd:
     case Op.ChannelUpdate:
       return { t, channel: readChannel(r) };
@@ -350,6 +389,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, groups: r.list(readGroupDef) };
     case Op.BotCommandResult:
       return { t, success: r.u8() === 1, message: r.str(), data: undefined };
+    case Op.RespClaims:
+      return { t, claims: r.list(readRespClaim) };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }

@@ -5,7 +5,7 @@
  */
 
 import { ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, FailureCode, Group, NO_CHANNEL, Op } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, GroupDef, ServerMessage } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer } from './audio/mixer.js';
@@ -48,6 +48,7 @@ export interface DmTab {
 export class VoxClient {
   readonly channels = new Map<number, ChannelInfo>();
   readonly clients = new Map<number, ClientInfo>();
+  readonly claims = new Map<number, RespClaimInfo>();
   readonly chat: ChatLine[] = [];
   notice: Notice | null = null;
   /** Mensagens que chegaram com o chat fora de foco. */
@@ -211,6 +212,7 @@ export class VoxClient {
   private reset(): void {
     this.channels.clear();
     this.clients.clear();
+    this.claims.clear();
     this.dmTabs.clear();
     this.activeDmTab = null;
     this.selfId = 0;
@@ -394,6 +396,14 @@ export class VoxClient {
     this.connection.send({ t: Op.BotCommand, command, args });
   }
 
+  claimResp(respawn: string, note: string, durationMin: number): void {
+    this.connection.send({ t: Op.ClaimResp, respawn, note, durationMin });
+  }
+
+  releaseResp(claimId: number): void {
+    this.connection.send({ t: Op.ReleaseResp, claimId });
+  }
+
   say(text: string, scope?: ChatScope, targetId?: number): void {
     const body = text.trim();
     if (!body) return;
@@ -532,11 +542,13 @@ export class VoxClient {
       case Op.Snapshot:
         this.channels.clear();
         this.clients.clear();
+        this.claims.clear();
         for (const c of m.channels) this.channels.set(c.id, c);
         for (const c of m.clients) {
           this.clients.set(c.id, c);
           this.applyPeerPrefs(c);
         }
+        for (const claim of m.claims) this.claims.set(claim.id, claim);
         void this.startMic();
         this.syncMicMute();
         break;
@@ -645,6 +657,11 @@ export class VoxClient {
           this.onBotResult = null;
           cb(m.message);
         }
+        break;
+
+      case Op.RespClaims:
+        this.claims.clear();
+        for (const claim of m.claims) this.claims.set(claim.id, claim);
         break;
 
       case Op.GroupDefs:
