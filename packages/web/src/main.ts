@@ -23,8 +23,10 @@ import {
   GROUP_NAMES,
   NO_CHANNEL,
   ChatScope,
+  RESPAWN_CATALOG,
+  canonicalRespawnName,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
 import {
   listFavorites,
   probe,
@@ -60,88 +62,6 @@ let dragPointerId = 0;
 let inputDevices: MediaDeviceInfo[] = [];
 let outputDevices: MediaDeviceInfo[] = [];
 
-const RESPAWN_SUGGESTIONS = [
-  'Abandoned Sewers (Demons)', 'Active Raid (300 votes)', 'Alchemist Bog Raiders',
-  'Alchemist Mutated Humans', 'Amazon Camp', 'Ancient Lion Knight',
-  'Apocalypse (Jugger Seal)', 'Apocalypse (Jugger Seal) After TP',
-  'Ashfalor (Undead Seal)', 'Ashfalor (Undead Seal) After TP', 'Asura Mirror',
-  'Asura Palace', 'Asura Vaults (True Asura -1)', 'Asura Vaults (True Asura -2)',
-  'Azzilon Castelo Lower (Térreo e +1)', 'Azzilon Castelo Upper (+2 e +3)',
-  'Azzilon Catacombs -1', 'Azzilon Catacombs -2', 'Azzilon Catacombs -3 e -4',
-  'Banuta -2', 'Banuta -3', 'Banuta -4', 'Banuta Main Floor', 'Bazir (Phantasm)',
-  'Behemoth Forbidden Land', 'Behemoths', 'Bloodfire Gorge', 'Bloody Tusks',
-  'Bonelord Dungeons', 'Book World -1', 'Book World -2', 'Book World -3',
-  'Boosted Creature', 'Bounacean Lion (Crypt Warrior)', 'Brain Grounds -1 e -2',
-  'Brain Grounds -3', 'Brimstone Bug Cave', 'Bulltaur Lair -1', 'Bulltaur Lair -2',
-  'Buried Cathedral (First floor)', 'Buried Cathedral (Last floor)', 'Burster Spectre Tomb',
-  'Calassa', 'Carnivora Rocks -1 e -2', 'Carnivora Rocks -3', 'Catacombs East',
-  'Catacombs Middle', 'Catacombs West', 'Cemetery Grim Reapers', 'Cemetery Nightmares',
-  'Chocolate Mines -1', 'Chocolate Mines -2', 'Claustrophobic Inferno', 'Cobra Bastion',
-  'Cobra Underground', 'Corrupted Gardens (Brimstone Surface)', 'Corruption Hole (Old)',
-  'Crumbling Caverns', 'Crystal Enigma', 'Crystal Enigma North', 'Crystal Enigma South',
-  'Cyclopolis', 'Darklight Core', 'Deathlings', 'Deep Desert (Skeleton Elite)', 'Deeplings',
-  'Demona Warlocks', 'Demons New (Demon Forge)', 'Desert Dungeons -1',
-  'Desert Dungeons -2', 'Diremaw (Growth Task area)', 'Dragon Lair', 'Dragon Lords (POI)',
-  'Draken Abominations (Scale)', 'Draken Walls North', 'Draken Walls South',
-  'Drakens & Undead Dragons', 'Ebb and Flow (North)', 'Ebb and Flow (South)',
-  'Edron Forgotten Tomb (Undeads east)', 'Edron Mages Tower (Servants)', 'Elder Wyrms',
-  'Energy Library', 'Exotic Cave -1', 'Exotic Cave -2', 'Falcon Bastion',
-  'Falcon Head (Oberon Area)', 'Falcon Underground (Before Oberon)', 'Fenrock Dragon Lord',
-  'Ferumbras Castle', 'Ferumbras Entrance', 'Fire Library', 'Foreigner Dragon',
-  'Foreigner Elfs', 'Foreigner Pirate', 'Forest Furies Camp',
-  'Forest of Life (Carnisylvans -1)', 'Forest of Life (Carnisylvans)', 'Fungi Sewers',
-  'Furious Crater', 'Gargoyle Sanctuary (Meriana)', 'Gazer Spectre Temple',
-  'Ghastly Dragon Lair', 'Ghastly Dragons Palace', 'Gloom Pillars',
-  'Gloom Wolves (Poacher Lair)', 'Glooth Bandits East', 'Glooth Bandits South',
-  'Glooth Bandits West', 'Glooth Factory (War Golem)', 'Glooth Tower',
-  'Goanna East (Urmahlullu)', 'Goanna West-North (Central Steppe)',
-  'Goanna West-South (Southern Steppe)', 'Great Pearl Fan Reef (Foam and Turtles) -1',
-  'Great Pearl Fan Reef (Foam and Turtles) -2', 'Grim Reaper Halls',
-  'Guzzlemaw Valley (East)', 'Guzzlemaw Valley (West)', 'Hell Hub (Ferumbras Entrance -1)',
-  'Hellgorge (Demons)', 'Hero Fortress -2', 'Hero Fortress -3', 'Hive Outpost',
-  'Hydras Forbidden Land', 'Ice Library', 'Ice Library (Alternative)', 'Ice Witch Temple',
-  'Iksupan (Pututu)', 'Iksupan Last Stand (Trap Area)', 'Iksupan Undercity (Atab Area)',
-  'Infernatil (Fire Seal)', 'Infernatil (Fire Seal) +1', 'Ingol -1', 'Ingol -2',
-  'Ingol -3', 'Ingol -4', 'Ingol Surface', 'Inner Crypt', 'Isle of Ada Mines',
-  'Isle of Ada Outskirts', 'Issavi Ogres', 'Issavi Sewers (Cultists)', 'Jaded Roots',
-  'Keepers Lair (Brimstone Bug)', 'Kilmaresh Catacombs (Sphinx)',
-  'Kilmaresh Puzzle (Cultists)', 'Krailos Brimstone Bug', 'Krailos Nightmare',
-  'Library Biting Books', 'Lions Rock', 'Lizard City', 'Lower Roshamuul',
-  'Lower Spike (80+)', 'Magician Cults', 'Magician Demons West', 'Medusa Cave',
-  'Medusa Tower', 'Middle Spike (lvl 50-79)', 'Minos Entrance', 'Minotaur Cults',
-  'Minotaur Cults -1', 'Mirrored Nightmare', 'Monster Graveyard - East',
-  'Monster Graveyard - West', 'MoTA Extension (Fury)', 'Mother of Scarab Lair',
-  'Mountain Hideout -1 (Undead Dragon)', 'Mountain Hideout (Furys)', 'Mountain Wyrms',
-  'Murky Caverns (Werecrocodile)', 'Nagas (-1 e -2)', 'Necromancer (Drefia)',
-  'Netherworld (Flimsy)', 'Nightmare Isles', 'Nimmersatts Breeding Ground (Mega Dragon)',
-  'Nimmersatts Breeding Ground +1', 'Norcferatu Dungeons', 'Norcferatu Dungeons (Center)',
-  'Norcferatu Dungeons (East)', 'Norcferatu Dungeons (West)', 'Norcferatu Fortress',
-  'Orc Fortress', 'Oskayaat Undercity (After Tp) -2',
-  'Oskayaat Undercity (Weretiger) -1', 'Otherworld (GT Ank)', 'Otherworld (GT Svargrond)',
-  'Otherworld (GT Zao)', 'Outer Crypt', 'Pirat Mines', 'Podzilla Bottom -3',
-  'Podzilla Bottom -4', 'Podzilla Stalk (-1 e -2)', 'Pumin -1 e -2', 'Pumin -3',
-  'Putrefactory', 'Quara Caves (Quara Scout)', 'Ravenous Lava Lurker',
-  'Ripper Spectre Cellar', 'Roshamuul (DP - North East)', 'Roshamuul (DP - South)',
-  'Roshamuul Prison -1', 'Roshamuul Prison -2', 'Roshamuul Prison -3',
-  'Rotten Wasteland (North)', 'Rotten Wasteland (South)', 'Ruins of Nuur (Girtablilu)',
-  'Salt Caves (Bashmu)', 'Sea Serpent New', 'Sea Serpent Old Cave (Parcels)',
-  'Seacrest Grounds', 'Sparkling Pools (East)', 'Sparkling Pools (West)',
-  'Spirittrails (Souleaters)', 'Stag bastion', 'Stampor Cave',
-  'Summer Courts (Crazed Summers)', 'Summer Courts (Labyrinth)', 'Sunken Quaras',
-  'Svargrond Mines (Yakchal Floor)', 'Swamp Troll Den', 'Tafariel (Dt Seal -1)',
-  'Tafariel (Dt Seal)', 'Tafariel + Infernatil (Dts)', 'Temple Complex (Mutated Tigers)',
-  'The Blood Halls (Dts)', 'The Hive Tower', 'The Hive Underground', 'The Vats (Defilers)',
-  'The Wreckoning (Pirat)', 'Unhallowed Crypt', 'Upper Roshamuul (North East)',
-  'Upper Roshamuul (South)', 'Vampires Crypt', 'Vengoth Castle', 'Verminor (Defilers)',
-  'Verminor (Plague Seal -1)', 'Verminor (Plague Seal)', 'War Golems (New East)',
-  'Warzone 1', 'Warzone 2', 'Warzone 3', 'Warzone 4', 'Warzone 5', 'Warzone 6',
-  'Warzone 7', 'Warzone 8', 'Warzone 9', 'Water Elemental Old', 'Weakened Cave -1',
-  'Weakened Cave -2', 'Weakened Mountain', 'Werehyaena Lairs North',
-  'Werehyaena Lairs South', 'Werelion Sanctum -1', 'Werelion Sanctum -2 West',
-  'Werewolf Cave', 'West Oramond (Quaras+)', 'Winter Court (Castle)',
-  'Winter Court (Dream Labyrinth)', 'Wyrm Lairs (Depot East)', 'Wyvern Hill',
-  'Yielothax', 'Zugurosh',
-];
 
 // ---------------------------------------------------------------- helpers --
 
@@ -974,16 +894,12 @@ function renderRespClaimsPanel(): HTMLElement {
   panel.append(head);
 
   const form = $('div', 'claim-form');
+  const searchWrap = $('div', 'resp-search');
   const respawn = $('input') as HTMLInputElement;
-  respawn.placeholder = 'respawn';
-  respawn.setAttribute('list', 'respawn-suggestions');
-  const list = $('datalist') as HTMLDataListElement;
-  list.id = 'respawn-suggestions';
-  for (const name of RESPAWN_SUGGESTIONS) {
-    const opt = document.createElement('option');
-    opt.value = name;
-    list.append(opt);
-  }
+  respawn.placeholder = 'buscar respawn';
+  const searchResults = $('div', 'resp-search-results');
+  const searchHint = text('span', 'claim-meta resp-search-hint', 'selecione um respawn da lista');
+  searchWrap.append(respawn, searchResults, searchHint);
 
   const note = $('input') as HTMLInputElement;
   note.placeholder = 'nota opcional';
@@ -1006,20 +922,52 @@ function renderRespClaimsPanel(): HTMLElement {
 
   const claimBtn = $('button', 'primary');
   claimBtn.textContent = 'claim';
+  claimBtn.disabled = true;
+  const updateSearch = () => {
+    const selected = canonicalRespawnName(respawn.value);
+    claimBtn.disabled = !selected;
+    searchHint.textContent = selected ? selected : 'selecione um respawn da lista';
+    searchResults.replaceChildren();
+    const query = respawn.value.trim().toLowerCase();
+    if (!query || selected) return;
+    const matches = RESPAWN_CATALOG.flatMap((group) => group.items
+      .filter((item) => `${item.code} ${item.name}`.toLowerCase().includes(query))
+      .map((item) => ({ group: group.title, item })))
+      .slice(0, 8);
+    if (matches.length === 0) {
+      searchResults.append(text('div', 'resp-search-empty', 'nenhum respawn encontrado'));
+      return;
+    }
+    for (const match of matches) {
+      const row = $('button', 'resp-search-option');
+      row.type = 'button';
+      row.append(text('span', 'resp-code', match.item.code), text('strong', '', match.item.name), text('small', '', match.group));
+      row.addEventListener('click', () => {
+        respawn.value = match.item.name;
+        updateSearch();
+        note.focus();
+      });
+      searchResults.append(row);
+    }
+  };
   claimBtn.addEventListener('click', () => {
-    const name = respawn.value.trim();
+    const name = canonicalRespawnName(respawn.value);
     if (!name) {
       respawn.focus();
+      updateSearch();
       return;
     }
     client.claimResp(name, note.value.trim(), Number(duration.value) || 120);
     respawn.value = '';
     note.value = '';
+    updateSearch();
   });
+  respawn.addEventListener('input', updateSearch);
   respawn.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') claimBtn.click();
   });
-  form.append(respawn, note, duration, claimBtn, list);
+  updateSearch();
+  form.append(searchWrap, note, duration, claimBtn);
   panel.append(form);
 
   const claims = [...client.claims.values()].sort((a, b) => a.expiresAt - b.expiresAt);
@@ -1037,7 +985,7 @@ function renderRespClaimsPanel(): HTMLElement {
   catalog.append(text('h3', '', 'todos os respawns'));
   const taken = new Map(claims.map((c) => [c.respawn.toLowerCase(), c]));
   const catalogRows = $('div', 'claims-list resp-list');
-  for (const name of RESPAWN_SUGGESTIONS) catalogRows.append(renderRespawnCatalogRow(name, taken.get(name.toLowerCase())));
+  for (const group of RESPAWN_CATALOG) catalogRows.append(renderRespawnCatalogGroup(group.title, group.items, taken));
   catalog.append(catalogRows);
   panel.append(catalog);
   return panel;
@@ -1078,10 +1026,26 @@ function renderRespClaim(claim: RespClaimInfo): HTMLElement {
   return row;
 }
 
-function renderRespawnCatalogRow(name: string, claim?: RespClaimInfo): HTMLElement {
+function renderRespawnCatalogGroup(
+  title: string,
+  items: RespawnCatalogItem[],
+  taken: Map<string, RespClaimInfo>,
+): HTMLElement {
+  const group = $('section', 'resp-group');
+  const head = $('div', 'resp-group-head');
+  head.append(text('strong', '', title), text('span', 'label', `${items.length}`));
+  group.append(head);
+  for (const item of items) group.append(renderRespawnCatalogRow(item, taken.get(item.name.toLowerCase())));
+  return group;
+}
+
+function renderRespawnCatalogRow(item: RespawnCatalogItem, claim?: RespClaimInfo): HTMLElement {
+  const name = item.name;
   const row = $('div', claim ? 'claim-row occupied' : 'claim-row free');
   const main = $('div', 'claim-main');
-  main.append(text('strong', '', name));
+  const title = $('div', 'resp-title');
+  title.append(text('span', 'resp-code', item.code), text('strong', '', name));
+  main.append(title);
   if (claim) {
     const next = claim.queue[0]?.name ?? 'sem fila';
     main.append(text('span', 'claim-meta', `${claim.ownerName} · next ${next} · ${formatRemaining(claim.expiresAt)}`));
