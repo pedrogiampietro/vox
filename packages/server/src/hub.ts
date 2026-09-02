@@ -11,6 +11,7 @@
  */
 
 import {
+  BotControlAction,
   CHALLENGE_BYTES,
   ChannelFlags,
   ChatScope,
@@ -34,7 +35,8 @@ import {
   VOICE_HEADER_SIZE,
   canonicalRespawnName,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, ClientMessage, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
 import { fingerprintOf, looksLikePublicKey, verifyChallenge } from './identity.js';
@@ -476,6 +478,36 @@ export class Hub {
       case Op.LeaveRespQueue:
         this.leaveRespQueue(s, m.claimId);
         break;
+
+      case Op.GetBotState:
+        if (!this.allow(s, Group.Owner)) break;
+        s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
+        break;
+
+      case Op.UpdateBotConfig: {
+        if (!this.allow(s, Group.Owner)) break;
+        const bc = this.botConfig;
+        bc.world = clean(m.world, 32);
+        bc.guildName = clean(m.guildName, 64);
+        bc.channelName = clean(m.channelName, 32) || 'bot';
+        bc.intervalMs = Math.max(m.intervalMs || 60_000, 10_000);
+        bc.enabled = m.enabled;
+        bc.globalDeaths = m.globalDeaths;
+        bc.globalKills = m.globalKills;
+        bc.globalLevelMin = clamp(m.globalLevelMin, 0, 4000);
+        bc.summarizePresence = m.summarizePresence;
+        bc.presenceSummaryMs = Math.max(m.presenceSummaryMs || 5 * 60_000, 60_000);
+        this.deps.onChanged();
+        applyBotConfig(this);
+        this.broadcastBotState();
+        break;
+      }
+
+      case Op.BotControl: {
+        if (!this.allow(s, Group.Owner)) break;
+        this.applyBotControl(s, m.action, m.name);
+        break;
+      }
     }
   }
 
@@ -588,6 +620,9 @@ export class Hub {
       }),
     );
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
+    if (s.group >= Group.Owner) {
+      s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
+    }
     this.broadcast({ t: Op.ClientAdd, client: describe(s) }, s);
   }
 
@@ -856,6 +891,13 @@ export class Hub {
     this.pruneClaims();
     const key = name.toLowerCase();
     for (const claim of this.claims.values()) {
+      if (claim.ownerFingerprint === s.fingerprint) {
+        return this.fail(
+          s,
+          FailureCode.NotPermitted,
+          `voce ja tem ${claim.respawn} claimado; libere antes de pegar outro`,
+        );
+      }
       if (claim.respawn.toLowerCase() === key) {
         return this.fail(s, FailureCode.NotPermitted, `${claim.respawn} ja esta claimado por ${claim.ownerName}`);
       }
@@ -958,6 +1000,76 @@ export class Hub {
 
   private broadcastClaims(): void {
     this.broadcast({ t: Op.RespClaims, claims: this.claimList() });
+  }
+
+  // --------------------------------------------------------------- bot state --
+
+  private botState(): BotStateInfo {
+    const c = this.botConfig;
+    return {
+      world: c.world,
+      guildName: c.guildName,
+      channelName: c.channelName,
+      intervalMs: c.intervalMs,
+      enabled: c.enabled,
+      globalDeaths: c.globalDeaths,
+      globalKills: c.globalKills,
+      globalLevelMin: c.globalLevelMin,
+      summarizePresence: c.summarizePresence,
+      presenceSummaryMs: c.presenceSummaryMs,
+      running: this.rubinot?.isRunning ?? false,
+      hunted: this.rubinot?.huntedList ?? [...c.huntedNames],
+    };
+  }
+
+  broadcastBotState(): void {
+    const frame = encodeServerMessage({ t: Op.BotState, state: this.botState() });
+    for (const s of this.sessions.values()) {
+      if (s.group >= Group.Owner) s.send(frame);
+    }
+  }
+
+  private applyBotControl(s: Session, action: BotControlAction, name: string): void {
+    switch (action) {
+      case BotControlAction.Start:
+        startBot(this);
+        this.deps.onChanged();
+        break;
+      case BotControlAction.Stop:
+        stopBot(this);
+        this.deps.onChanged();
+        break;
+      case BotControlAction.Test:
+        testBot(this);
+        break;
+      case BotControlAction.AddHunted: {
+        const trimmed = clean(name, 32);
+        if (!trimmed) return this.fail(s, FailureCode.Malformed, 'nome vazio');
+        if (this.rubinot) {
+          this.rubinot.addHunted(trimmed);
+        } else if (!this.botConfig.huntedNames.some((n) => n.toLowerCase() === trimmed.toLowerCase())) {
+          this.botConfig.huntedNames.push(trimmed);
+        }
+        this.deps.onChanged();
+        break;
+      }
+      case BotControlAction.RemoveHunted: {
+        const trimmed = clean(name, 32);
+        if (!trimmed) return this.fail(s, FailureCode.Malformed, 'nome vazio');
+        if (this.rubinot) {
+          this.rubinot.removeHunted(trimmed);
+        } else {
+          this.botConfig.huntedNames = this.botConfig.huntedNames.filter(
+            (n) => n.toLowerCase() !== trimmed.toLowerCase(),
+          );
+        }
+        this.deps.onChanged();
+        break;
+      }
+      default:
+        return this.fail(s, FailureCode.Malformed, 'acao desconhecida');
+    }
+    this.broadcastBotState();
   }
 
   // ----------------------------------------------------------------- chat --

@@ -17,8 +17,8 @@ import { Group, RemoveReason } from '@vox/protocol';
 import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
 import { ensureAccount, findAccount, verifyPassword } from './accounts.js';
-import { RubinotBot } from '../../bot/src/bot.js';
 import type { StoredBotConfig } from './persistence.js';
+import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 
 /** Corpo maior que isto so pode ser abuso: o painel manda objetos minusculos. */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -258,44 +258,30 @@ export class AdminApi {
       }
       hub.botConfig = bc;
       this.registry.scheduleSave();
-
-      if (hub.rubinot) {
-        const newCfg = { ...bc, huntedNames: hub.rubinot.huntedList };
-        void hub.rubinot.restart(newCfg);
-      } else if (bc.enabled && bc.world) {
-        const bot = new RubinotBot(hub, bc);
-        hub.rubinot = bot;
-        void bot.start().catch((err) => console.error('[bot] falha:', err));
-      }
+      applyBotConfig(hub);
+      hub.broadcastBotState();
 
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
 
     if (action === '/bot' && rest === 'start' && method === 'POST') {
-      hub.botConfig.enabled = true;
+      startBot(hub);
       this.registry.scheduleSave();
-      if (!hub.rubinot) {
-        const bot = new RubinotBot(hub, hub.botConfig);
-        hub.rubinot = bot;
-      }
-      if (!hub.rubinot.isRunning) {
-        void hub.rubinot.start().catch((err) => console.error('[bot] falha:', err));
-      }
+      hub.broadcastBotState();
       return send(res, 200, { ok: true });
     }
 
     if (action === '/bot' && rest === 'stop' && method === 'POST') {
-      hub.botConfig.enabled = false;
+      stopBot(hub);
       this.registry.scheduleSave();
-      hub.rubinot?.stop();
+      hub.broadcastBotState();
       return send(res, 200, { ok: true });
     }
 
     if (action === '/bot' && rest === 'test' && method === 'POST') {
-      const channelId = hub.ensureChannel(hub.botConfig.channelName || 'bot');
-      hub.channelAnnounce(channelId, 'rubinot', '[test] alerta de teste do Rubinot');
-      hub.serverChannelAnnounce(channelId, 'rubinot', '[test] alerta de teste do Rubinot');
+      testBot(hub);
+      hub.broadcastBotState();
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
@@ -312,6 +298,7 @@ export class AdminApi {
         }
       }
       this.registry.scheduleSave();
+      hub.broadcastBotState();
       return send(res, 200, { ok: true });
     }
 
@@ -326,6 +313,7 @@ export class AdminApi {
         );
       }
       this.registry.scheduleSave();
+      hub.broadcastBotState();
       return send(res, 200, { ok: true });
     }
 

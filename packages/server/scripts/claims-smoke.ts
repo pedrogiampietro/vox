@@ -109,6 +109,17 @@ async function main(): Promise<void> {
   if (!claim) throw new Error('claim nao encontrado');
   console.log(`ok claim: ${claim.respawn} por ${claim.ownerName}`);
 
+  const failuresBefore = alice.failures.length;
+  alice.send({ t: Op.ClaimResp, respawn: 'Boosted Creature', note: '', durationMin: 120 });
+  await until(
+    () => alice.failures.slice(failuresBefore).some((m) => m.includes('voce ja tem')),
+    'segundo claim do mesmo usuario recusado',
+  );
+  if (bob.claims.some((c) => c.respawn === 'Boosted Creature')) {
+    throw new Error('segundo claim foi aceito');
+  }
+  console.log('ok second claim rejected');
+
   bob.send({ t: Op.JoinRespQueue, claimId: claim.id });
   await until(
     () => alice.claims.some((c) => c.id === claim.id && c.queue.some((q) => q.name === 'bob-claim')),
