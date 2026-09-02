@@ -285,6 +285,13 @@ export class AdminApi {
       return send(res, 200, { ok: true });
     }
 
+    if (action === '/bot' && rest === 'test' && method === 'POST') {
+      const channelId = hub.ensureChannel(hub.botConfig.channelName || 'bot');
+      hub.channelAnnounce(channelId, 'rubinot', '[test] alerta de teste do Rubinot');
+      this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
     if (action === '/bot' && rest === 'hunted' && method === 'POST') {
       const body = await readJson(req);
       const name = str(body.name).trim();
