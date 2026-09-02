@@ -723,6 +723,57 @@ label.field {
   align-items: start;
 }
 
+.bot-page {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.bot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 12px;
+}
+
+.bot-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.bot-field-label {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+
+.bot-field input[type="text"],
+.bot-field input:not([type]),
+.bot-field input[type="number"] {
+  height: 32px;
+  padding: 0 8px;
+}
+
+.bot-field input[type="checkbox"] {
+  justify-self: start;
+  width: 16px;
+  height: 16px;
+}
+
+.bot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.bot-hunted-add {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
 .claim-form input,
 .claim-form select {
   min-width: 0;

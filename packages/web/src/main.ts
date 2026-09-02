@@ -17,6 +17,7 @@ import { isMicTestRunning, startMicTest, stopMicTest } from './audio/mic-test.js
 import { renderBrowserView } from './browser.js';
 import { exportIdentity, importIdentity, loadIdentity, resetIdentity } from './identity.js';
 import {
+  BotControlAction,
   ChannelFlags,
   ClientFlags,
   Group,
@@ -26,7 +27,7 @@ import {
   RESPAWN_CATALOG,
   canonicalRespawnName,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
 import {
   listFavorites,
   probe,
@@ -51,7 +52,7 @@ let settingsOpen = false;
 
 let selectedChannelId = 0;
 let selectedClientId = 0;
-let selectedTool: 'statistics' | 'claims' | null = null;
+let selectedTool: 'statistics' | 'claims' | 'bot' | null = null;
 
 // ---- drag-to-move state ----
 let dragClientId = 0;
@@ -302,12 +303,17 @@ function renderToolRows(parent: HTMLElement): void {
   const stats = renderToolRow('statistics', 'statistics', String(client.clients.size));
   const claims = renderToolRow('claims', 'claimed resp', String(client.claims.size));
   parent.append(stats, claims);
+  if (client.myGroup >= Group.Owner) {
+    const bot = renderToolRow('bot', 'bot', client.botState?.running ? 'on' : 'off');
+    parent.append(bot);
+  }
 }
 
-function renderToolRow(tool: 'statistics' | 'claims', label: string, count: string): HTMLElement {
+function renderToolRow(tool: 'statistics' | 'claims' | 'bot', label: string, count: string): HTMLElement {
   const row = $('div', 'room tool-channel');
   if (selectedTool === tool) row.classList.add('selected');
-  row.append(text('span', 'idx', tool === 'statistics' ? '≡' : '◇'));
+  const glyph = tool === 'statistics' ? '≡' : tool === 'claims' ? '◇' : '✦';
+  row.append(text('span', 'idx', glyph));
   const info = $('div', 'room-info');
   info.append(text('span', 'name', label));
   row.append(info, text('span', 'cap', count));
@@ -316,6 +322,7 @@ function renderToolRow(tool: 'statistics' | 'claims', label: string, count: stri
     selectedChannelId = 0;
     selectedClientId = 0;
     client.activeDmTab = null;
+    if (tool === 'bot' && client.botState === null) client.getBotState();
     render();
   });
   return row;
@@ -528,6 +535,14 @@ function renderTalk(): HTMLElement {
   if (selectedTool === 'claims') {
     pane.append(renderRespClaimsPanel());
     return pane;
+  }
+  if (selectedTool === 'bot') {
+    if (client.myGroup < Group.Owner) {
+      selectedTool = null;
+    } else {
+      pane.append(renderBotPanel());
+      return pane;
+    }
   }
 
   // info panel (channel or client)
@@ -1085,6 +1100,169 @@ function renderRespawnCatalogRow(
   });
   row.append(main, action);
   return row;
+}
+
+function renderBotPanel(): HTMLElement {
+  const panel = $('section', 'bot-page');
+  const head = $('div', 'claims-head');
+  head.append(text('h2', '', 'bot rubinot'));
+  const running = client.botState?.running ?? false;
+  head.append(text('span', 'label', running ? 'rodando' : 'parado'));
+  panel.append(head);
+
+  const state = client.botState;
+  if (!state) {
+    panel.append(text('div', 'claims-empty', 'carregando configuracao...'));
+    return panel;
+  }
+
+  const form = $('section', 'claims-panel bot-form');
+  form.append(text('h3', '', 'configuracao'));
+
+  const worldInput = $('input') as HTMLInputElement;
+  worldInput.placeholder = 'ex: Vesperia';
+  worldInput.value = state.world;
+
+  const guildInput = $('input') as HTMLInputElement;
+  guildInput.placeholder = 'opcional';
+  guildInput.value = state.guildName;
+
+  const channelInput = $('input') as HTMLInputElement;
+  channelInput.value = state.channelName || 'bot';
+
+  const intervalInput = $('input') as HTMLInputElement;
+  intervalInput.type = 'number';
+  intervalInput.min = '10';
+  intervalInput.step = '5';
+  intervalInput.value = String(Math.max(Math.round(state.intervalMs / 1000), 10));
+
+  const levelInput = $('input') as HTMLInputElement;
+  levelInput.type = 'number';
+  levelInput.min = '0';
+  levelInput.value = String(state.globalLevelMin);
+
+  const presenceInput = $('input') as HTMLInputElement;
+  presenceInput.type = 'number';
+  presenceInput.min = '1';
+  presenceInput.value = String(Math.max(Math.round(state.presenceSummaryMs / 60_000), 1));
+
+  const deathsCb = $('input') as HTMLInputElement;
+  deathsCb.type = 'checkbox';
+  deathsCb.checked = state.globalDeaths;
+
+  const killsCb = $('input') as HTMLInputElement;
+  killsCb.type = 'checkbox';
+  killsCb.checked = state.globalKills;
+
+  const summarizeCb = $('input') as HTMLInputElement;
+  summarizeCb.type = 'checkbox';
+  summarizeCb.checked = state.summarizePresence;
+
+  const enabledCb = $('input') as HTMLInputElement;
+  enabledCb.type = 'checkbox';
+  enabledCb.checked = state.enabled;
+
+  const grid = $('div', 'bot-grid');
+  grid.append(
+    botField('world', worldInput),
+    botField('guild (opcional)', guildInput),
+    botField('canal', channelInput),
+    botField('intervalo (s)', intervalInput),
+    botField('nivel minimo (global)', levelInput),
+    botField('resumo presenca (min)', presenceInput),
+    botField('mortes globais', deathsCb),
+    botField('kills globais', killsCb),
+    botField('resumir login/logout', summarizeCb),
+    botField('habilitar bot', enabledCb),
+  );
+  form.append(grid);
+
+  const actions = $('div', 'bot-actions');
+  const save = $('button', 'primary');
+  save.textContent = 'salvar';
+  save.addEventListener('click', () => {
+    const cfg: Omit<BotStateInfo, 'hunted' | 'running'> = {
+      world: worldInput.value.trim(),
+      guildName: guildInput.value.trim(),
+      channelName: channelInput.value.trim() || 'bot',
+      intervalMs: Math.max(Number(intervalInput.value) * 1000, 10_000),
+      globalLevelMin: Math.max(Number(levelInput.value) || 0, 0),
+      presenceSummaryMs: Math.max(Number(presenceInput.value) * 60_000, 60_000),
+      globalDeaths: deathsCb.checked,
+      globalKills: killsCb.checked,
+      summarizePresence: summarizeCb.checked,
+      enabled: enabledCb.checked,
+    };
+    client.updateBotConfig(cfg);
+  });
+  actions.append(save);
+
+  const startBtn = $('button', 'ghost');
+  startBtn.textContent = running ? 'reiniciar' : 'iniciar';
+  startBtn.addEventListener('click', () => client.botControl(BotControlAction.Start));
+  actions.append(startBtn);
+
+  if (running) {
+    const stopBtn = $('button', 'ghost danger');
+    stopBtn.textContent = 'parar';
+    stopBtn.addEventListener('click', () => client.botControl(BotControlAction.Stop));
+    actions.append(stopBtn);
+  }
+
+  const testBtn = $('button', 'ghost');
+  testBtn.textContent = 'enviar teste';
+  testBtn.addEventListener('click', () => client.botControl(BotControlAction.Test));
+  actions.append(testBtn);
+
+  form.append(actions);
+  panel.append(form);
+
+  // ---- hunted -----------------------------------------------------------
+  const hunted = $('section', 'claims-panel');
+  hunted.append(text('h3', '', `hunted list (${state.hunted.length})`));
+
+  const addRow = $('div', 'bot-hunted-add');
+  const addInput = $('input') as HTMLInputElement;
+  addInput.placeholder = 'nome do jogador';
+  const addBtn = $('button', 'primary');
+  addBtn.textContent = 'adicionar';
+  const addAction = () => {
+    const name = addInput.value.trim();
+    if (!name) return;
+    client.botControl(BotControlAction.AddHunted, name);
+    addInput.value = '';
+  };
+  addBtn.addEventListener('click', addAction);
+  addInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addAction();
+  });
+  addRow.append(addInput, addBtn);
+  hunted.append(addRow);
+
+  if (state.hunted.length === 0) {
+    hunted.append(text('div', 'claims-empty', 'nenhum jogador hunted'));
+  } else {
+    const list = $('div', 'claims-list');
+    for (const name of [...state.hunted].sort((a, b) => a.localeCompare(b))) {
+      const row = $('div', 'claim-row');
+      row.append(text('strong', 'claim-main', name));
+      const remove = $('button', 'ghost danger');
+      remove.textContent = 'remover';
+      remove.addEventListener('click', () => client.botControl(BotControlAction.RemoveHunted, name));
+      row.append(remove);
+      list.append(row);
+    }
+    hunted.append(list);
+  }
+  panel.append(hunted);
+
+  return panel;
+}
+
+function botField(label: string, control: HTMLElement): HTMLElement {
+  const wrap = $('label', 'bot-field');
+  wrap.append(text('span', 'bot-field-label', label), control);
+  return wrap;
 }
 
 function renderStatisticsPanel(): HTMLElement {

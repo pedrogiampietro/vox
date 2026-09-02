@@ -7,8 +7,8 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespQueueEntry } from './types.js';
-import { ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespQueueEntry } from './types.js';
+import { BotControlAction, ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
 
 export type ClientMessage =
   | {
@@ -37,7 +37,22 @@ export type ClientMessage =
   | { t: Op.ClaimResp; respawn: string; note: string; durationMin: number }
   | { t: Op.ReleaseResp; claimId: number }
   | { t: Op.JoinRespQueue; claimId: number }
-  | { t: Op.LeaveRespQueue; claimId: number };
+  | { t: Op.LeaveRespQueue; claimId: number }
+  | { t: Op.GetBotState }
+  | {
+      t: Op.UpdateBotConfig;
+      world: string;
+      guildName: string;
+      channelName: string;
+      intervalMs: number;
+      enabled: boolean;
+      globalDeaths: boolean;
+      globalKills: boolean;
+      globalLevelMin: number;
+      summarizePresence: boolean;
+      presenceSummaryMs: number;
+    }
+  | { t: Op.BotControl; action: BotControlAction; name: string };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -82,7 +97,8 @@ export type ServerMessage =
     }
   | { t: Op.GroupDefs; groups: GroupDef[] }
   | { t: Op.BotCommandResult; success: boolean; message: string; data?: unknown }
-  | { t: Op.RespClaims; claims: RespClaimInfo[] };
+  | { t: Op.RespClaims; claims: RespClaimInfo[] }
+  | { t: Op.BotState; state: BotStateInfo };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
 export const MAX_NICKNAME = 32;
@@ -167,6 +183,41 @@ function readRespClaim(r: Reader): RespClaimInfo {
   };
 }
 
+// ---------------------------------------------------------------- bot state --
+
+function writeBotState(w: Writer, s: BotStateInfo): void {
+  w
+    .str(s.world)
+    .str(s.guildName)
+    .str(s.channelName)
+    .u32(s.intervalMs)
+    .u8(s.enabled ? 1 : 0)
+    .u8(s.globalDeaths ? 1 : 0)
+    .u8(s.globalKills ? 1 : 0)
+    .u16(s.globalLevelMin)
+    .u8(s.summarizePresence ? 1 : 0)
+    .u32(s.presenceSummaryMs)
+    .u8(s.running ? 1 : 0)
+    .list(s.hunted, (ww, name) => ww.str(name));
+}
+
+function readBotState(r: Reader): BotStateInfo {
+  return {
+    world: r.str(),
+    guildName: r.str(),
+    channelName: r.str(),
+    intervalMs: r.u32(),
+    enabled: r.u8() === 1,
+    globalDeaths: r.u8() === 1,
+    globalKills: r.u8() === 1,
+    globalLevelMin: r.u16(),
+    summarizePresence: r.u8() === 1,
+    presenceSummaryMs: r.u32(),
+    running: r.u8() === 1,
+    hunted: r.list((rr) => rr.str()),
+  };
+}
+
 // ------------------------------------------------------- cliente -> servidor --
 
 export function encodeClientMessage(m: ClientMessage): Uint8Array {
@@ -230,6 +281,24 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.LeaveRespQueue:
       w.u16(m.claimId);
       break;
+    case Op.GetBotState:
+      break;
+    case Op.UpdateBotConfig:
+      w
+        .str(m.world)
+        .str(m.guildName)
+        .str(m.channelName)
+        .u32(m.intervalMs)
+        .u8(m.enabled ? 1 : 0)
+        .u8(m.globalDeaths ? 1 : 0)
+        .u8(m.globalKills ? 1 : 0)
+        .u16(m.globalLevelMin)
+        .u8(m.summarizePresence ? 1 : 0)
+        .u32(m.presenceSummaryMs);
+      break;
+    case Op.BotControl:
+      w.u8(m.action).str(m.name);
+      break;
   }
   return w.finish();
 }
@@ -287,6 +356,24 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
     case Op.JoinRespQueue:
     case Op.LeaveRespQueue:
       return { t, claimId: r.u16() };
+    case Op.GetBotState:
+      return { t };
+    case Op.UpdateBotConfig:
+      return {
+        t,
+        world: r.str(),
+        guildName: r.str(),
+        channelName: r.str(),
+        intervalMs: r.u32(),
+        enabled: r.u8() === 1,
+        globalDeaths: r.u8() === 1,
+        globalKills: r.u8() === 1,
+        globalLevelMin: r.u16(),
+        summarizePresence: r.u8() === 1,
+        presenceSummaryMs: r.u32(),
+      };
+    case Op.BotControl:
+      return { t, action: r.u8() as BotControlAction, name: r.str() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -352,6 +439,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.RespClaims:
       w.list(m.claims, writeRespClaim);
       break;
+    case Op.BotState:
+      writeBotState(w, m.state);
+      break;
   }
   return w.finish();
 }
@@ -410,6 +500,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, success: r.u8() === 1, message: r.str(), data: undefined };
     case Op.RespClaims:
       return { t, claims: r.list(readRespClaim) };
+    case Op.BotState:
+      return { t, state: readBotState(r) };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }

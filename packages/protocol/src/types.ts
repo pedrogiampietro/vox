@@ -1,11 +1,12 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 5: configuracao do bot Rubinot editavel a partir do cliente (owner).
  * 4: claims de respawn por servidor.
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -44,6 +45,9 @@ export enum Op {
   ReleaseResp = 0x71,
   JoinRespQueue = 0x72,
   LeaveRespQueue = 0x73,
+  GetBotState = 0x74,
+  UpdateBotConfig = 0x75,
+  BotControl = 0x76,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -62,6 +66,31 @@ export enum Op {
   GroupDefs = 0xb1,
   BotCommandResult = 0xc0,
   RespClaims = 0xc1,
+  BotState = 0xc2,
+}
+
+export enum BotControlAction {
+  Start = 0,
+  Stop = 1,
+  Test = 2,
+  AddHunted = 3,
+  RemoveHunted = 4,
+}
+
+/** Estado observavel do bot Rubinot, enviado ao owner que entra. */
+export interface BotStateInfo {
+  world: string;
+  guildName: string;
+  channelName: string;
+  intervalMs: number;
+  enabled: boolean;
+  globalDeaths: boolean;
+  globalKills: boolean;
+  globalLevelMin: number;
+  summarizePresence: boolean;
+  presenceSummaryMs: number;
+  hunted: string[];
+  running: boolean;
 }
 
 /** Bits de estado do cliente (auto-declarado, o servidor apenas replica). */

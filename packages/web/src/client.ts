@@ -4,8 +4,8 @@
  * daqui - nao conhece protocolo nem Web Audio.
  */
 
-import { ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, FailureCode, Group, NO_CHANNEL, Op } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, FailureCode, Group, NO_CHANNEL, Op } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer } from './audio/mixer.js';
@@ -49,6 +49,7 @@ export class VoxClient {
   readonly channels = new Map<number, ChannelInfo>();
   readonly clients = new Map<number, ClientInfo>();
   readonly claims = new Map<number, RespClaimInfo>();
+  botState: BotStateInfo | null = null;
   readonly chat: ChatLine[] = [];
   notice: Notice | null = null;
   /** Mensagens que chegaram com o chat fora de foco. */
@@ -218,6 +219,7 @@ export class VoxClient {
     this.selfId = 0;
     this.myGroup = Group.Guest;
     this.groupDefs = [...DEFAULT_GROUP_DEFS];
+    this.botState = null;
     this.suspend();
   }
 
@@ -410,6 +412,30 @@ export class VoxClient {
 
   leaveRespQueue(claimId: number): void {
     this.connection.send({ t: Op.LeaveRespQueue, claimId });
+  }
+
+  getBotState(): void {
+    this.connection.send({ t: Op.GetBotState });
+  }
+
+  updateBotConfig(cfg: Omit<BotStateInfo, 'hunted' | 'running'>): void {
+    this.connection.send({
+      t: Op.UpdateBotConfig,
+      world: cfg.world,
+      guildName: cfg.guildName,
+      channelName: cfg.channelName,
+      intervalMs: cfg.intervalMs,
+      enabled: cfg.enabled,
+      globalDeaths: cfg.globalDeaths,
+      globalKills: cfg.globalKills,
+      globalLevelMin: cfg.globalLevelMin,
+      summarizePresence: cfg.summarizePresence,
+      presenceSummaryMs: cfg.presenceSummaryMs,
+    });
+  }
+
+  botControl(action: BotControlAction, name = ''): void {
+    this.connection.send({ t: Op.BotControl, action, name });
   }
 
   say(text: string, scope?: ChatScope, targetId?: number): void {
@@ -670,6 +696,10 @@ export class VoxClient {
       case Op.RespClaims:
         this.claims.clear();
         for (const claim of m.claims) this.claims.set(claim.id, claim);
+        break;
+
+      case Op.BotState:
+        this.botState = m.state;
         break;
 
       case Op.GroupDefs:
