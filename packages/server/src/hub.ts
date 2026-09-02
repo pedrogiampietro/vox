@@ -1189,7 +1189,7 @@ export class Hub {
     for (const s of this.sessions.values()) s.send(frame);
   }
 
-  /** Envia mensagem de bot para um canal especifico. */
+  /** Envia mensagem de bot marcada para um canal, visivel para todo o servidor. */
   channelAnnounce(channelId: number, sender: string, text: string): void {
     const ch = this.channels.get(channelId);
     if (!ch) return;
@@ -1202,7 +1202,7 @@ export class Hub {
       text,
       stamp: Date.now(),
     });
-    for (const m of ch.members) m.send(frame);
+    for (const s of this.sessions.values()) s.send(frame);
   }
 
   /** Encontra canal pelo nome (primeiro match, case-insensitive). */

@@ -200,7 +200,12 @@ function renderChannelTree(parent: HTMLElement, parentId: number, depth: number)
   // padrao (Lobby), com um cabecalho "BOT" para dar destaque.
   const children = depth === 0 ? reorderTopLevel(rawChildren) : rawChildren;
   let botHeaderPending = depth === 0 && children.some((c) => isBotChannel(c));
+  let lastWasTopLevelBot = false;
   for (const ch of children) {
+    if (lastWasTopLevelBot && !isBotChannel(ch)) {
+      parent.append($('div', 'section-divider'));
+      lastWasTopLevelBot = false;
+    }
     if (botHeaderPending && isBotChannel(ch)) {
       parent.append(renderBotSectionHeader());
       botHeaderPending = false;
@@ -255,6 +260,7 @@ function renderChannelTree(parent: HTMLElement, parentId: number, depth: number)
 
     // sub-channels
     renderChannelTree(parent, ch.id, depth + 1);
+    lastWasTopLevelBot = depth === 0 && isBotChannel(ch);
   }
 }
 
