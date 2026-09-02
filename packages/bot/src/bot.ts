@@ -18,8 +18,11 @@ import { fetchGuild } from './scrapers/rubinot.js';
 
 export interface BotConfig {
   world: string;
+  /** Legado: mantido por compatibilidade, mas friendGuilds e a fonte. */
   guildName: string;
   huntedNames: string[];
+  friendGuilds: string[];
+  enemyGuilds: string[];
   intervalMs: number;
   channelName: string;
   enabled: boolean;
@@ -49,6 +52,11 @@ export function botConfigFromEnv(): BotConfig | null {
     intervalMs: (Number(process.env['BOT_INTERVAL']) || 60) * 1000,
     channelName: process.env['BOT_CHANNEL'] ?? 'bot',
     enabled: true,
+    friendGuilds: process.env['BOT_GUILD'] ? [process.env['BOT_GUILD']!] : [],
+    enemyGuilds: (process.env['BOT_ENEMY_GUILDS'] ?? '')
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean),
     globalDeaths: true,
     globalKills: true,
     globalLevelMin: 800,
@@ -65,13 +73,17 @@ export function botConfigFromEnv(): BotConfig | null {
 
 // ------------------------------------------------------------------- bot --
 
+interface PlayerTag {
+  kind: 'friend' | 'enemy';
+  /** Guild que classificou este jogador. Vazio para hunted manual. */
+  guild: string;
+}
+
 export class RubinotBot {
   private deaths = new DeathTracker();
   private online: OnlineTracker;
-  /** Adicionados manualmente pelo owner: sao os inimigos. */
-  private readonly enemies = new Set<string>();
-  /** Puxados do guildName: sao os amigos. */
-  private readonly friends = new Set<string>();
+  /** Nome (lower) -> guild + kind. Fonte unica pra decidir amigo/inimigo/tag. */
+  private readonly tags = new Map<string, PlayerTag>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ac = new AbortController();
   private running = false;
@@ -84,7 +96,14 @@ export class RubinotBot {
     private cfg: BotConfig,
   ) {
     this.online = new OnlineTracker(cfg.world);
-    for (const n of cfg.huntedNames) this.enemies.add(n.toLowerCase());
+    this.seedManualEnemies();
+  }
+
+  private seedManualEnemies(): void {
+    for (const n of this.cfg.huntedNames) {
+      const key = n.toLowerCase();
+      if (!this.tags.has(key)) this.tags.set(key, { kind: 'enemy', guild: '' });
+    }
   }
 
   get isRunning(): boolean {
@@ -96,11 +115,11 @@ export class RubinotBot {
   }
 
   get friendsList(): string[] {
-    return [...this.friends];
+    return [...this.tags.entries()].filter(([, t]) => t.kind === 'friend').map(([n]) => n);
   }
 
   get enemiesList(): string[] {
-    return [...this.enemies];
+    return [...this.tags.entries()].filter(([, t]) => t.kind === 'enemy').map(([n]) => n);
   }
 
   async start(): Promise<void> {
@@ -111,17 +130,17 @@ export class RubinotBot {
     // para os usuarios encontrarem a sala pronta.
     this.hub.ensureChannel(this.cfg.channelName);
 
-    if (this.cfg.guildName) {
-      await this.syncGuildMembers();
-    }
+    await this.syncAllGuilds();
 
     await this.deaths.poll(this.ac.signal);
     await this.online.poll(this.ac.signal);
     this.running = true;
+    const enemies = this.enemiesList.length;
+    const friends = this.friendsList.length;
     console.log(
-      `[bot] ativo: world=${this.cfg.world}, inimigos=${this.enemies.size}, ` +
-        `amigos=${this.friends.size}, canal="${this.cfg.channelName}", ` +
-        `intervalo=${this.cfg.intervalMs / 1000}s`,
+      `[bot] ativo: world=${this.cfg.world}, inimigos=${enemies}, amigos=${friends}, ` +
+        `guilds amigas=${this.cfg.friendGuilds.length}, inimigas=${this.cfg.enemyGuilds.length}, ` +
+        `canal="${this.cfg.channelName}", intervalo=${this.cfg.intervalMs / 1000}s`,
     );
 
     this.timer = setInterval(() => void this.tick(), this.cfg.intervalMs);
@@ -144,9 +163,8 @@ export class RubinotBot {
     this.cfg = newCfg;
     this.deaths = new DeathTracker();
     this.online = new OnlineTracker(newCfg.world);
-    this.enemies.clear();
-    this.friends.clear();
-    for (const n of newCfg.huntedNames) this.enemies.add(n.toLowerCase());
+    this.tags.clear();
+    this.seedManualEnemies();
     this.pendingLogins.length = 0;
     this.pendingLogouts.length = 0;
     this.nextPresenceSummaryAt = 0;
@@ -156,16 +174,24 @@ export class RubinotBot {
   }
 
   addHunted(name: string): void {
-    this.enemies.add(name.toLowerCase());
+    const key = name.toLowerCase();
+    const existing = this.tags.get(key);
+    // Nao rebaixa quem ja e amigo (via guild) para inimigo manual.
+    if (existing?.kind === 'friend') return;
+    this.tags.set(key, { kind: 'enemy', guild: '' });
   }
 
   removeHunted(name: string): void {
-    this.enemies.delete(name.toLowerCase());
+    const key = name.toLowerCase();
+    const existing = this.tags.get(key);
+    // Nome vindo de guild nao e removido pela lista manual.
+    if (!existing || existing.guild) return;
+    this.tags.delete(key);
   }
 
   /** Lista combinada, para clientes antigos e persistencia. */
   get huntedList(): string[] {
-    return [...new Set([...this.enemies, ...this.friends])];
+    return this.enemiesList;
   }
 
   // ---------------------------------------------------------------- poll --
@@ -188,74 +214,76 @@ export class RubinotBot {
 
   // -------------------------------------------------------------- events --
 
-  private isFriend(name: string): boolean {
-    return this.friends.has(name.toLowerCase());
+  private tagOf(name: string): PlayerTag | null {
+    return this.tags.get(name.toLowerCase()) ?? null;
   }
 
-  private isEnemy(name: string): boolean {
-    const key = name.toLowerCase();
-    // Se o mesmo nome aparece nas duas listas, tratamos como amigo:
-    // guildmates promovem, inimigos afiliados nao existem.
-    return this.enemies.has(key) && !this.friends.has(key);
+  /** `[GUILDNAME]` (upper) quando o jogador veio de uma guild rastreada. */
+  private guildFlag(tag: PlayerTag | null): string {
+    return tag?.guild ? `[${tag.guild.toUpperCase()}]` : '';
   }
 
   private onDeath(ev: DeathEvent): void {
     if (ev.world !== this.cfg.world) return;
 
-    const victimFriend = this.isFriend(ev.victim);
-    const victimEnemy = this.isEnemy(ev.victim);
-    const killerFriend = ev.killerIsPlayer && this.isFriend(ev.killedBy);
-    const killerEnemy = ev.killerIsPlayer && this.isEnemy(ev.killedBy);
+    const victim = this.tagOf(ev.victim);
+    const killer = ev.killerIsPlayer ? this.tagOf(ev.killedBy) : null;
 
-    if (!victimFriend && !victimEnemy && !killerFriend && !killerEnemy) return;
+    if (!victim && !killer) return;
 
     // Cada linha pode ser sobre a morte da vitima ou sobre o kill do outro:
     // enviamos ate as duas mensagens quando ambos os lados estao rastreados,
     // respeitando o toggle de cada uma.
-    if (victimFriend || victimEnemy) {
-      const allow = victimFriend ? this.cfg.alertFriendDeath : this.cfg.alertEnemyDeath;
+    if (victim) {
+      const allow = victim.kind === 'friend' ? this.cfg.alertFriendDeath : this.cfg.alertEnemyDeath;
       if (allow) {
         const cause = ev.killerIsPlayer ? ev.killedBy : `${ev.killedBy} (mob)`;
-        const tag = victimFriend ? 'death/amigo' : 'death/inimigo';
-        this.post(`[${tag}] ${ev.victim} (lvl ${ev.level}) morreu para ${cause}`, this.cfg.globalDeaths);
+        const label = victim.kind === 'friend' ? 'death/amigo' : 'death/inimigo';
+        this.post(
+          `[${label}]${this.guildFlag(victim)} ${ev.victim} (lvl ${ev.level}) morreu para ${cause}`,
+          this.cfg.globalDeaths,
+        );
       }
     }
-    if (killerFriend || killerEnemy) {
-      // Se a vitima ja gerou o post e ela tambem estava rastreada, evitar
-      // ruido dobrado — a linha de death ja cita o killer.
-      if (victimFriend || victimEnemy) return;
-      const allow = killerFriend ? this.cfg.alertFriendDeath : this.cfg.alertEnemyDeath;
+    if (killer && !victim) {
+      // Se a vitima ja gerou o post, evitar ruido dobrado: a linha ja cita o killer.
+      const allow = killer.kind === 'friend' ? this.cfg.alertFriendDeath : this.cfg.alertEnemyDeath;
       if (allow) {
-        const tag = killerFriend ? 'kill/amigo' : 'kill/inimigo';
-        this.post(`[${tag}] ${ev.killedBy} matou ${ev.victim} (lvl ${ev.level})`, this.cfg.globalKills);
+        const label = killer.kind === 'friend' ? 'kill/amigo' : 'kill/inimigo';
+        this.post(
+          `[${label}]${this.guildFlag(killer)} ${ev.killedBy} matou ${ev.victim} (lvl ${ev.level})`,
+          this.cfg.globalKills,
+        );
       }
     }
   }
 
   private onOnline(ev: OnlineEvent): void {
-    const friend = this.isFriend(ev.player);
-    const enemy = this.isEnemy(ev.player);
-    if (!friend && !enemy) return;
+    const tag = this.tagOf(ev.player);
+    if (!tag) return;
+    const enemy = tag.kind === 'enemy';
+    const friend = tag.kind === 'friend';
+    const flag = this.guildFlag(tag);
 
     switch (ev.type) {
       case 'login':
         if (enemy && this.cfg.alertEnemyOnline) {
-          this.post(`[online/inimigo] ${ev.player} logou (lvl ${ev.level}, ${ev.vocation ?? '?'})`, false);
+          this.post(`[online/inimigo]${flag} ${ev.player} logou (lvl ${ev.level}, ${ev.vocation ?? '?'})`, false);
         }
         if (enemy) this.pendingLogins.push(ev);
         break;
       case 'logout':
         if (enemy && this.cfg.alertEnemyOffline) {
-          this.post(`[offline/inimigo] ${ev.player} deslogou (lvl ${ev.level})`, false);
+          this.post(`[offline/inimigo]${flag} ${ev.player} deslogou (lvl ${ev.level})`, false);
         }
         if (enemy) this.pendingLogouts.push(ev);
         break;
       case 'levelup': {
         const allow = friend ? this.cfg.alertFriendLevelUp : this.cfg.alertEnemyLevelUp;
         if (!allow) return;
-        const tag = friend ? 'levelup/amigo' : 'levelup/inimigo';
+        const label = friend ? 'levelup/amigo' : 'levelup/inimigo';
         this.post(
-          `[${tag}] ${ev.player} subiu de ${ev.previousLevel} para ${ev.level}`,
+          `[${label}]${flag} ${ev.player} subiu de ${ev.previousLevel} para ${ev.level}`,
           this.cfg.globalLevelMin > 0 && ev.level >= this.cfg.globalLevelMin,
         );
         break;
@@ -305,16 +333,34 @@ export class RubinotBot {
 
   // ------------------------------------------------------------ guild sync --
 
-  private async syncGuildMembers(): Promise<void> {
+  private async syncAllGuilds(): Promise<void> {
+    // Remove tags de guild antes de recarregar; jogadores adicionados
+    // manualmente (guild vazia) sobrevivem.
+    for (const [key, tag] of this.tags) {
+      if (tag.guild) this.tags.delete(key);
+    }
+
+    for (const g of this.cfg.friendGuilds) await this.syncGuild(g, 'friend');
+    for (const g of this.cfg.enemyGuilds) await this.syncGuild(g, 'enemy');
+  }
+
+  private async syncGuild(name: string, kind: 'friend' | 'enemy'): Promise<void> {
     try {
-      const guild = await fetchGuild(this.cfg.guildName, this.ac.signal);
-      this.friends.clear();
-      for (const m of guild.members) this.friends.add(m.name.toLowerCase());
+      const guild = await fetchGuild(name, this.ac.signal);
+      let added = 0;
+      for (const m of guild.members) {
+        const key = m.name.toLowerCase();
+        // Amigo tem prioridade — mesmo nome em guild amiga e inimiga vira amigo.
+        const existing = this.tags.get(key);
+        if (existing?.kind === 'friend' && kind === 'enemy') continue;
+        this.tags.set(key, { kind, guild: name });
+        added++;
+      }
       console.log(
-        `[bot] guild "${this.cfg.guildName}": ${guild.members.length} amigos carregados`,
+        `[bot] guild ${kind} "${name}": ${guild.members.length} membros, ${added} classificados`,
       );
     } catch (err) {
-      console.error(`[bot] falha ao carregar guild "${this.cfg.guildName}":`, err);
+      console.error(`[bot] falha ao carregar guild "${name}":`, err);
     }
   }
 }

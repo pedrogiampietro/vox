@@ -24,8 +24,11 @@ export interface StoredRespQueueEntry {
 }
 export interface StoredBotConfig {
   world: string;
+  /** Legado: uma unica guild amiga. Continua carregado, mas fundido em friendGuilds. */
   guildName: string;
   huntedNames: string[];
+  friendGuilds: string[];
+  enemyGuilds: string[];
   intervalMs: number;
   channelName: string;
   enabled: boolean;
@@ -62,6 +65,8 @@ export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
   world: '',
   guildName: '',
   huntedNames: [],
+  friendGuilds: [],
+  enemyGuilds: [],
   intervalMs: 60_000,
   channelName: 'bot',
   enabled: false,
@@ -127,10 +132,20 @@ function normalizeBotConfig(raw: unknown): StoredBotConfig {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_BOT_CONFIG };
   const c = raw as Record<string, unknown>;
   const boolOr = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d);
+  const strList = (v: unknown): string[] =>
+    Array.isArray(v) ? (v as unknown[]).filter((n): n is string => typeof n === 'string' && n.length > 0) : [];
+  const guildName = typeof c.guildName === 'string' ? c.guildName : '';
+  const friendGuilds = strList(c.friendGuilds);
+  // Se guildName antigo nao esta em friendGuilds, migrar como amiga.
+  if (guildName && !friendGuilds.some((g) => g.toLowerCase() === guildName.toLowerCase())) {
+    friendGuilds.push(guildName);
+  }
   return {
     world: typeof c.world === 'string' ? c.world : '',
-    guildName: typeof c.guildName === 'string' ? c.guildName : '',
-    huntedNames: Array.isArray(c.huntedNames) ? (c.huntedNames as unknown[]).filter((n): n is string => typeof n === 'string') : [],
+    guildName,
+    friendGuilds,
+    enemyGuilds: strList(c.enemyGuilds),
+    huntedNames: strList(c.huntedNames),
     intervalMs: typeof c.intervalMs === 'number' && c.intervalMs > 0 ? c.intervalMs : 60_000,
     channelName: typeof c.channelName === 'string' && c.channelName ? c.channelName : 'bot',
     enabled: boolOr(c.enabled, false),

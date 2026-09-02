@@ -1116,10 +1116,6 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   worldInput.placeholder = 'ex: Vesperia';
   worldInput.value = state.world;
 
-  const guildInput = $('input') as HTMLInputElement;
-  guildInput.placeholder = 'opcional — guildmates viram amigos';
-  guildInput.value = state.guildName;
-
   const channelInput = $('input') as HTMLInputElement;
   channelInput.value = state.channelName || 'bot';
 
@@ -1132,7 +1128,6 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   const grid = $('div', 'bot-grid');
   grid.append(
     botField('world', worldInput),
-    botField('guild (opcional)', guildInput),
     botField('canal', channelInput),
     botField('intervalo (s)', intervalInput),
   );
@@ -1199,9 +1194,9 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   const save = $('button', 'primary');
   save.textContent = 'salvar configuracao';
   save.addEventListener('click', () => {
-    const cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'running'> = {
+    const cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'friendGuilds' | 'enemyGuilds' | 'running'> = {
       world: worldInput.value.trim(),
-      guildName: guildInput.value.trim(),
+      guildName: state.guildName, // legado; guilds sao gerenciadas em listas separadas
       channelName: channelInput.value.trim() || 'bot',
       intervalMs: Math.max(Number(intervalInput.value) * 1000, 10_000),
       globalLevelMin: Math.max(Number(levelInput.value) || 0, 0),
@@ -1247,11 +1242,33 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
 
   body.append(actions);
 
-  // ---- inimigos (hunted) ---------------------------------------------
-  const enemiesHeader = text('h3', '', `INIMIGOS (${state.hunted.length})`);
+  // ---- guilds amigas -------------------------------------------------
+  buildGuildManager(
+    body,
+    `GUILDS AMIGAS (${state.friendGuilds.length})`,
+    'membros viram amigos; tag [GUILD] aparece nos alertas.',
+    state.friendGuilds,
+    BotControlAction.AddFriendGuild,
+    BotControlAction.RemoveFriendGuild,
+    rebuild,
+  );
+
+  // ---- guilds inimigas -----------------------------------------------
+  buildGuildManager(
+    body,
+    `GUILDS INIMIGAS (${state.enemyGuilds.length})`,
+    'todos os membros sao tratados como inimigos.',
+    state.enemyGuilds,
+    BotControlAction.AddEnemyGuild,
+    BotControlAction.RemoveEnemyGuild,
+    rebuild,
+  );
+
+  // ---- inimigos manuais (hunted) -------------------------------------
+  const enemiesHeader = text('h3', '', `INIMIGOS MANUAIS (${state.hunted.length})`);
   enemiesHeader.style.cssText = 'margin-top:14px;';
   body.append(enemiesHeader);
-  body.append(text('span', 'settings-hint', 'nomes adicionados manualmente.'));
+  body.append(text('span', 'settings-hint', 'nomes soltos, sem guild associada.'));
 
   const addRow = $('div', 'bot-hunted-add');
   const addInput = $('input') as HTMLInputElement;
@@ -1291,12 +1308,12 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
     body.append(list);
   }
 
-  // ---- amigos (guild) ------------------------------------------------
+  // ---- amigos sincronizados ------------------------------------------
   if (state.friends.length > 0) {
-    const fHeader = text('h3', '', `AMIGOS (${state.friends.length})`);
+    const fHeader = text('h3', '', `AMIGOS ONLINE-DB (${state.friends.length})`);
     fHeader.style.cssText = 'margin-top:14px;';
     body.append(fHeader);
-    body.append(text('span', 'settings-hint', `sincronizados da guild "${state.guildName || '?'}".`));
+    body.append(text('span', 'settings-hint', 'nomes carregados das guilds amigas.'));
     const list = $('div', 'bot-name-list');
     for (const name of [...state.friends].sort((a, b) => a.localeCompare(b))) {
       const row = $('div', 'bot-name-row');
@@ -1305,6 +1322,61 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
     }
     body.append(list);
   }
+}
+
+function buildGuildManager(
+  body: HTMLElement,
+  header: string,
+  hint: string,
+  guilds: string[],
+  addAction: BotControlAction,
+  removeAction: BotControlAction,
+  rebuild: () => void,
+): void {
+  const h = text('h3', '', header);
+  h.style.cssText = 'margin-top:14px;';
+  body.append(h, text('span', 'settings-hint', hint));
+
+  const row = $('div', 'bot-hunted-add');
+  const input = $('input') as HTMLInputElement;
+  input.placeholder = 'nome exato da guild';
+  const btn = $('button', 'primary');
+  btn.textContent = 'adicionar';
+  const submit = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    client.botControl(addAction, name);
+    input.value = '';
+    setTimeout(rebuild, 300);
+  };
+  btn.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit();
+  });
+  row.append(input, btn);
+  body.append(row);
+
+  if (guilds.length === 0) {
+    body.append(text('span', 'settings-hint', 'nenhuma guild cadastrada.'));
+    return;
+  }
+  const list = $('div', 'bot-name-list');
+  for (const name of [...guilds].sort((a, b) => a.localeCompare(b))) {
+    const rr = $('div', 'bot-name-row');
+    const label = $('span', 'bot-name');
+    label.append(text('span', 'bot-guild-tag', `[${name.toUpperCase()}]`));
+    label.append(text('span', '', ` ${name}`));
+    rr.append(label);
+    const remove = $('button', 'ghost danger');
+    remove.textContent = 'remover';
+    remove.addEventListener('click', () => {
+      client.botControl(removeAction, name);
+      setTimeout(rebuild, 200);
+    });
+    rr.append(remove);
+    list.append(rr);
+  }
+  body.append(list);
 }
 
 function boolCheckbox(checked: boolean): HTMLInputElement {

@@ -1,13 +1,14 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 7: guilds amigas/inimigas configuraveis (varias por lado).
  * 6: alertas do bot com toggles amigo/inimigo.
  * 5: configuracao do bot Rubinot editavel a partir do cliente (owner).
  * 4: claims de respawn por servidor.
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -76,6 +77,10 @@ export enum BotControlAction {
   Test = 2,
   AddHunted = 3,
   RemoveHunted = 4,
+  AddFriendGuild = 5,
+  RemoveFriendGuild = 6,
+  AddEnemyGuild = 7,
+  RemoveEnemyGuild = 8,
 }
 
 /** Estado observavel do bot Rubinot, enviado ao owner que entra. */
@@ -104,6 +109,8 @@ export interface BotStateInfo {
   alertEnemyOffline: boolean;
   hunted: string[];
   friends: string[];
+  friendGuilds: string[];
+  enemyGuilds: string[];
   running: boolean;
 }
 
