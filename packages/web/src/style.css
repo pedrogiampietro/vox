@@ -430,6 +430,12 @@ label.field {
   color: var(--amber-dim, #b8863d);
 }
 
+.section-divider {
+  height: 1px;
+  margin: 8px 12px 10px;
+  background: linear-gradient(to right, transparent, var(--line), transparent);
+}
+
 /* Canal do bot: destaque proprio, mais espacoso e com marca dagua amber. */
 .room.bot-channel {
   margin: 2px 0;
