@@ -595,11 +595,6 @@ function renderTalk(): HTMLElement {
     ? client.dmMessages(client.activeDmTab!)
     : client.channelMessages();
 
-  // Se a aba de DM esta em foco, mandamos read receipt para o pico atual das
-  // mensagens recebidas — cobre o caso de novas mensagens chegando enquanto a
-  // aba ja estava aberta.
-  if (isDmView && dmPeerId !== null) client.markDmRead(dmPeerId);
-
   const log = $('div', isDmView ? 'log dm-log' : 'log');
   const readStamp = dmPeerId !== null ? (client.dmReadStamps.get(dmPeerId) ?? 0) : 0;
   for (const line of messages) {

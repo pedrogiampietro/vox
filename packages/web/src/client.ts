@@ -52,6 +52,8 @@ export class VoxClient {
   botState: BotStateInfo | null = null;
   /** peerId -> maior stamp da minha DM outgoing que este peer confirmou ler. */
   readonly dmReadStamps = new Map<number, number>();
+  /** peerId -> maior stamp por qual ja mandei ChatRead, evita reenviar. */
+  private readonly dmReadSent = new Map<number, number>();
   readonly chat: ChatLine[] = [];
   notice: Notice | null = null;
   /** Mensagens que chegaram com o chat fora de foco. */
@@ -218,6 +220,7 @@ export class VoxClient {
     this.claims.clear();
     this.dmTabs.clear();
     this.dmReadStamps.clear();
+    this.dmReadSent.clear();
     this.activeDmTab = null;
     this.selfId = 0;
     this.myGroup = Group.Guest;
@@ -458,6 +461,12 @@ export class VoxClient {
       if (m.senderId === peerId && m.stamp > last) last = m.stamp;
     }
     if (last === 0) return;
+    // Nao reenviar o mesmo ack: o peer responde com ChatReadDeliver, que
+    // dispara re-render. Sem essa guarda, ficaria em loop com a re-render
+    // mandando outro ChatRead identico.
+    const already = this.dmReadSent.get(peerId) ?? 0;
+    if (last <= already) return;
+    this.dmReadSent.set(peerId, last);
     this.connection.send({ t: Op.ChatRead, targetId: peerId, upToStamp: last });
   }
 
@@ -688,6 +697,10 @@ export class VoxClient {
             } else if (this.activeDmTab !== otherId) {
               const tab = this.dmTabs.get(otherId)!;
               tab.unread++;
+            }
+            // Aba ja focada quando a DM chega: confirma leitura imediatamente.
+            if (this.activeDmTab === otherId) {
+              queueMicrotask(() => this.markDmRead(otherId));
             }
             this.play('message');
             if (this.notificationsEnabled) notifications.privateMessage(m.senderName, m.text);
