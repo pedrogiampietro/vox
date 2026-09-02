@@ -1066,6 +1066,83 @@ label.field {
 .line.bot-presence .body { color: #d8e8dc; }
 .line.bot-test .body { color: #dbe6ff; }
 
+/* Side (amigo/inimigo) — pill logo depois do tag principal. */
+.line.bot .bot-side {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 8px;
+  vertical-align: 1px;
+}
+
+.line.bot .bot-side-amigo-tag {
+  background: rgba(94, 194, 122, 0.16);
+  color: #86dda1;
+}
+.line.bot .bot-side-inimigo-tag {
+  background: rgba(214, 90, 90, 0.20);
+  color: #ef8a8a;
+}
+
+/* Guild flag: apoiada em marca, moderadamente destacada. */
+.line.bot .bot-guild-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 8px;
+  vertical-align: 1px;
+  background: rgba(232, 163, 61, 0.14);
+  color: #e8a33d;
+  border: 1px solid rgba(232, 163, 61, 0.25);
+}
+
+/* Nome do jogador em destaque. */
+.line.bot .bot-player {
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Level como badge menor. */
+.line.bot .bot-level {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Levelup: de → para. */
+.line.bot .bot-level-from {
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.03);
+}
+.line.bot .bot-level-to {
+  color: #f0cd76;
+  background: rgba(238, 195, 100, 0.12);
+  border-color: rgba(238, 195, 100, 0.24);
+  font-weight: 700;
+}
+
+/* Tinta o nome do jogador conforme o tipo. */
+.line.bot-death .bot-player,
+.line.bot-side-inimigo.bot-online .bot-player { color: #f2c0c0; }
+.line.bot-kill .bot-player { color: #f2d1b0; }
+.line.bot-levelup .bot-player { color: #f2e2b0; }
+.line.bot-side-amigo .bot-player { color: #cde8d3; }
+
 .empty-dm {
   color: var(--text-faint);
   font-style: italic;
