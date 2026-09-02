@@ -85,6 +85,15 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
 
+  // O Caddy consulta isto antes de emitir TLS sob demanda para um subdominio.
+  // So slugs existentes podem gerar certificados, evitando abuso do dominio.
+  if (path === '/internal/caddy-ask') {
+    const domain = new URL(req.url ?? '/', 'http://localhost').searchParams.get('domain') ?? '';
+    res.writeHead(registry.getByHost(domain) ? 200 : 403);
+    res.end();
+    return;
+  }
+
   if (admin.handle(req, res, path, clientIp(req))) return;
 
   if (path === '/admin' || path.startsWith('/admin/')) {
