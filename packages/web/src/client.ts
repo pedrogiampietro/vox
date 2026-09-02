@@ -404,6 +404,14 @@ export class VoxClient {
     this.connection.send({ t: Op.ReleaseResp, claimId });
   }
 
+  joinRespQueue(claimId: number): void {
+    this.connection.send({ t: Op.JoinRespQueue, claimId });
+  }
+
+  leaveRespQueue(claimId: number): void {
+    this.connection.send({ t: Op.LeaveRespQueue, claimId });
+  }
+
   say(text: string, scope?: ChatScope, targetId?: number): void {
     const body = text.trim();
     if (!body) return;

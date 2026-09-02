@@ -7,7 +7,7 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo } from './types.js';
+import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespQueueEntry } from './types.js';
 import { ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
 
 export type ClientMessage =
@@ -35,7 +35,9 @@ export type ClientMessage =
   | { t: Op.SetGroupDef; group: Group; name: string; icon: string; color: string }
   | { t: Op.BotCommand; command: string; args: string[] }
   | { t: Op.ClaimResp; respawn: string; note: string; durationMin: number }
-  | { t: Op.ReleaseResp; claimId: number };
+  | { t: Op.ReleaseResp; claimId: number }
+  | { t: Op.JoinRespQueue; claimId: number }
+  | { t: Op.LeaveRespQueue; claimId: number };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -132,6 +134,14 @@ function readGroupDef(r: Reader): GroupDef {
   return { id: r.u8() as Group, name: r.str(), icon: r.str(), color: r.str() };
 }
 
+function writeRespQueueEntry(w: Writer, e: RespQueueEntry): void {
+  w.u16(e.clientId).str(e.name);
+}
+
+function readRespQueueEntry(r: Reader): RespQueueEntry {
+  return { clientId: r.u16(), name: r.str() };
+}
+
 function writeRespClaim(w: Writer, c: RespClaimInfo): void {
   w
     .u16(c.id)
@@ -140,7 +150,8 @@ function writeRespClaim(w: Writer, c: RespClaimInfo): void {
     .u16(c.ownerId)
     .str(c.ownerName)
     .f64(c.claimedAt)
-    .f64(c.expiresAt);
+    .f64(c.expiresAt)
+    .list(c.queue, writeRespQueueEntry);
 }
 
 function readRespClaim(r: Reader): RespClaimInfo {
@@ -152,6 +163,7 @@ function readRespClaim(r: Reader): RespClaimInfo {
     ownerName: r.str(),
     claimedAt: r.f64(),
     expiresAt: r.f64(),
+    queue: r.list(readRespQueueEntry),
   };
 }
 
@@ -214,6 +226,10 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.ReleaseResp:
       w.u16(m.claimId);
       break;
+    case Op.JoinRespQueue:
+    case Op.LeaveRespQueue:
+      w.u16(m.claimId);
+      break;
   }
   return w.finish();
 }
@@ -267,6 +283,9 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
     case Op.ClaimResp:
       return { t, respawn: r.str(), note: r.str(), durationMin: r.u16() };
     case Op.ReleaseResp:
+      return { t, claimId: r.u16() };
+    case Op.JoinRespQueue:
+    case Op.LeaveRespQueue:
       return { t, claimId: r.u16() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);

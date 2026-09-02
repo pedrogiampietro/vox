@@ -101,8 +101,24 @@ async function main(): Promise<void> {
   if (!claim) throw new Error('claim nao encontrado');
   console.log(`ok claim: ${claim.respawn} por ${claim.ownerName}`);
 
+  bob.send({ t: Op.JoinRespQueue, claimId: claim.id });
+  await until(
+    () => alice.claims.some((c) => c.id === claim.id && c.queue.some((q) => q.name === 'bob-claim')),
+    'fila sincronizada',
+  );
+  console.log('ok queue');
+
   alice.send({ t: Op.ReleaseResp, claimId: claim.id });
-  await until(() => !bob.claims.some((c) => c.id === claim.id), 'claim liberado');
+  await until(
+    () => bob.claims.some((c) => c.id === claim.id && c.ownerName === 'bob-claim'),
+    'proximo promovido',
+  );
+  console.log('ok promote next');
+
+  const promoted = bob.claims.find((c) => c.id === claim.id);
+  if (!promoted) throw new Error('claim promovido nao encontrado');
+  bob.send({ t: Op.ReleaseResp, claimId: promoted.id });
+  await until(() => !alice.claims.some((c) => c.id === claim.id), 'claim liberado');
   console.log('ok release');
 
   await Promise.all([alice.close(), bob.close()]);

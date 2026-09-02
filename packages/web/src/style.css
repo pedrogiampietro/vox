@@ -475,6 +475,17 @@ label.field {
   border-color: rgba(232, 163, 61, 0.35);
 }
 
+.room.tool-channel {
+  margin: 2px 0;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.room.tool-channel .idx {
+  color: var(--amber);
+  font-size: 12px;
+}
+
 .peer {
   display: flex;
   align-items: center;
@@ -664,12 +675,32 @@ label.field {
   color: var(--amber);
 }
 
+.claims-page,
+.stats-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
 .claims-panel {
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.015);
-  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
   display: grid;
   gap: 8px;
+}
+
+.claims-panel h3 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
 }
 
 .claims-head {
@@ -700,8 +731,12 @@ label.field {
 .claims-list {
   display: grid;
   gap: 6px;
-  max-height: 156px;
+  max-height: 260px;
   overflow-y: auto;
+}
+
+.resp-list {
+  max-height: 420px;
 }
 
 .claim-row {
@@ -712,6 +747,14 @@ label.field {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.025);
+}
+
+.claim-row.occupied {
+  border-color: rgba(232, 163, 61, 0.18);
+}
+
+.claim-row.free strong {
+  color: var(--text-dim);
 }
 
 .claim-main {
@@ -739,6 +782,33 @@ label.field {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.claim-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat-card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  display: grid;
+  gap: 6px;
+}
+
+.stat-card strong {
+  font-family: var(--mono);
+  font-size: 24px;
 }
 
 .log {
