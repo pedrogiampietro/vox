@@ -33,11 +33,11 @@ import {
   MAX_VOICE_PACKET,
   VOICE_HEADER_SIZE,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, ClientMessage, GroupDef, ServerMessage } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, ClientMessage, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
 import { fingerprintOf, looksLikePublicKey, verifyChallenge } from './identity.js';
-import type { StoredBan, StoredBotConfig, StoredChannel, StoredServer } from './persistence.js';
+import type { StoredBan, StoredBotConfig, StoredChannel, StoredRespClaim, StoredServer } from './persistence.js';
 import { DEFAULT_BOT_CONFIG } from './persistence.js';
 import type { BotConfig } from '../../bot/src/bot.js';
 import { Session, type PeerSocket, type VoiceSink } from './session.js';
@@ -86,6 +86,7 @@ export class Hub {
   private readonly pending = new Set<Session>();
   private readonly nicknames = new Set<string>();
   private readonly groups = new Map<string, Group>();
+  private readonly claims = new Map<number, StoredRespClaim>();
   private groupDefs: GroupDef[];
   private bans: StoredBan[] = [];
 
@@ -109,7 +110,7 @@ export class Hub {
 
   constructor(
     public settings: ServerSettings,
-    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'botConfig'>,
+    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig'>,
     private readonly deps: HubDeps,
   ) {
     for (const c of stored.channels) {
@@ -117,6 +118,7 @@ export class Hub {
       this.seedChannel(info, password);
     }
     for (const [fp, group] of Object.entries(stored.groups)) this.groups.set(fp, group);
+    for (const claim of stored.claims ?? []) this.claims.set(claim.id, claim);
     this.groupDefs = stored.groupDefs?.length ? [...stored.groupDefs] : [...DEFAULT_GROUP_DEFS];
     this.bans = [...stored.bans];
     this.botConfig = stored.botConfig ? { ...stored.botConfig } : { ...DEFAULT_BOT_CONFIG };
@@ -149,6 +151,21 @@ export class Hub {
     return Object.fromEntries(this.groups);
   }
 
+  claimList(): RespClaimInfo[] {
+    this.pruneClaims();
+    return [...this.claims.values()]
+      .sort((a, b) => a.expiresAt - b.expiresAt)
+      .map((c) => ({
+        id: c.id,
+        respawn: c.respawn,
+        note: c.note,
+        ownerId: this.clientIdForFingerprint(c.ownerFingerprint),
+        ownerName: c.ownerName,
+        claimedAt: c.claimedAt,
+        expiresAt: c.expiresAt,
+      }));
+  }
+
   toStored(): StoredServer {
     const botHunted = this.rubinot ? this.rubinot.huntedList : this.botConfig.huntedNames;
     return {
@@ -159,6 +176,7 @@ export class Hub {
       groups: this.groupList(),
       bans: this.banList(),
       groupDefs: [...this.groupDefs],
+      claims: [...this.claims.values()],
       botConfig: { ...this.botConfig, huntedNames: botHunted },
     };
   }
@@ -226,6 +244,7 @@ export class Hub {
         this.drop(s, RemoveReason.Timeout);
       }
     }
+    if (this.pruneClaims(now)) this.broadcastClaims();
   }
 
   private checkAfkOnMute(s: Session): void {
@@ -436,6 +455,14 @@ export class Hub {
         this.handleBotCommand(s, m.command, m.args);
         break;
       }
+
+      case Op.ClaimResp:
+        this.claimResp(s, m.respawn, m.note, m.durationMin);
+        break;
+
+      case Op.ReleaseResp:
+        this.releaseResp(s, m.claimId);
+        break;
     }
   }
 
@@ -544,6 +571,7 @@ export class Hub {
         t: Op.Snapshot,
         channels: this.channelList,
         clients: this.clientList(),
+        claims: this.claimList(),
       }),
     );
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
@@ -805,6 +833,77 @@ export class Hub {
     this.channels.delete(channelId);
     this.broadcast({ t: Op.ChannelRemove, channelId });
     this.deps.onChanged();
+  }
+
+  // --------------------------------------------------------------- claims --
+
+  private claimResp(s: Session, respawn: string, note: string, durationMin: number): void {
+    const name = clean(respawn, 96);
+    if (!name) return this.fail(s, FailureCode.Malformed, 'respawn vazio');
+    this.pruneClaims();
+    const key = name.toLowerCase();
+    for (const claim of this.claims.values()) {
+      if (claim.respawn.toLowerCase() === key) {
+        return this.fail(s, FailureCode.NotPermitted, `${claim.respawn} ja esta claimado por ${claim.ownerName}`);
+      }
+    }
+
+    const now = Date.now();
+    const claim: StoredRespClaim = {
+      id: this.allocClaimId(),
+      respawn: name,
+      note: clean(note, 160),
+      ownerName: s.nickname,
+      ownerFingerprint: s.fingerprint,
+      claimedAt: now,
+      expiresAt: now + clamp(durationMin || 120, 15, 12 * 60) * 60 * 1000,
+    };
+    this.claims.set(claim.id, claim);
+    this.deps.onChanged();
+    this.broadcastClaims();
+    this.announce(`${s.nickname} claimou ${claim.respawn}`);
+  }
+
+  private releaseResp(s: Session, claimId: number): void {
+    const claim = this.claims.get(claimId);
+    if (!claim) return this.fail(s, FailureCode.Unknown, 'claim inexistente');
+    if (claim.ownerFingerprint !== s.fingerprint && s.group < Group.Moderator) {
+      return this.fail(s, FailureCode.NotPermitted, 'apenas quem claimou ou moderador pode liberar');
+    }
+    this.claims.delete(claimId);
+    this.deps.onChanged();
+    this.broadcastClaims();
+    this.announce(`${s.nickname} liberou ${claim.respawn}`);
+  }
+
+  private allocClaimId(): number {
+    for (let i = 1; i < 0xffff; i++) {
+      if (!this.claims.has(i)) return i;
+    }
+    return Math.floor(Math.random() * 0xffff) || 1;
+  }
+
+  private pruneClaims(now = Date.now()): boolean {
+    let changed = false;
+    for (const [id, claim] of this.claims) {
+      if (claim.expiresAt <= now) {
+        this.claims.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) this.deps.onChanged();
+    return changed;
+  }
+
+  private clientIdForFingerprint(fingerprint: string): number {
+    for (const s of this.sessions.values()) {
+      if (s.fingerprint === fingerprint) return s.id;
+    }
+    return 0;
+  }
+
+  private broadcastClaims(): void {
+    this.broadcast({ t: Op.RespClaims, claims: this.claimList() });
   }
 
   // ----------------------------------------------------------------- chat --

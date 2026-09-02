@@ -664,6 +664,83 @@ label.field {
   color: var(--amber);
 }
 
+.claims-panel {
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+  padding: 10px 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.claims-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.claims-head h2 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.claim-form {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.4fr) minmax(120px, 1fr) 78px auto;
+  gap: 8px;
+}
+
+.claim-form input,
+.claim-form select {
+  min-width: 0;
+  height: 34px;
+}
+
+.claims-list {
+  display: grid;
+  gap: 6px;
+  max-height: 156px;
+  overflow-y: auto;
+}
+
+.claim-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.claim-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.claim-main strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.claim-meta,
+.claim-note,
+.claims-empty {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.claim-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .log {
   flex: 1;
   overflow-y: auto;

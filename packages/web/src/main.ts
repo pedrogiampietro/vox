@@ -24,7 +24,7 @@ import {
   NO_CHANNEL,
   ChatScope,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, GroupDef } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, GroupDef, RespClaimInfo } from '@vox/protocol';
 import {
   listFavorites,
   probe,
@@ -58,6 +58,84 @@ let dragActive = false;
 let dragPointerId = 0;
 let inputDevices: MediaDeviceInfo[] = [];
 let outputDevices: MediaDeviceInfo[] = [];
+
+const RESPAWN_SUGGESTIONS = [
+  'Boosted Creature',
+  'Cobra Bastion',
+  'Cobra Underground',
+  'Oskayaat Undercity',
+  'Murky Caverns',
+  'Nightmare Isles',
+  'Library Biting Books',
+  'Energy Library',
+  'Fire Library',
+  'Ice Library',
+  'Crystal Enigma',
+  'Ingol Surface',
+  'Monster Graveyard - East',
+  'Monster Graveyard - West',
+  'Sparkling Pools (East)',
+  'Sparkling Pools (West)',
+  'Ferumbras Castle',
+  'Gloom Pillars',
+  'Grim Reaper Halls',
+  'Werelion Sanctum -1',
+  'Werehyaena Lairs South',
+  'Werehyaena Lairs North',
+  'Burster Spectre Tomb',
+  'Azzilon Catacombs',
+  'Book World',
+  'Falcon Bastion',
+  'Falcon Underground',
+  'Ghastly Dragon Lair',
+  'Draken Walls South',
+  'Draken Walls North',
+  'Nimmersatts Breeding Ground',
+  'Summer Courts',
+  'Winter Court',
+  'Deathlings',
+  'Deeplings',
+  'Goanna West-South',
+  'Goanna East',
+  'Kilmaresh Catacombs',
+  'Pirat Mines',
+  'Ravenous Lava Lurker',
+  'Warzone 1',
+  'Warzone 2',
+  'Warzone 3',
+  'Warzone 4',
+  'Warzone 5',
+  'Warzone 6',
+  'Calassa',
+  'Medusa Cave',
+  'Podzilla Bottom -4',
+  'Carnivora Rocks',
+  'Iksupan',
+  'Asura Palace',
+  'Asura Mirror',
+  'Asura Vaults',
+  'Nagas',
+  'Banuta',
+  'Gazer Spectre Temple',
+  'Netherworld',
+  'Guzzlemaw Valley (East)',
+  'Guzzlemaw Valley (West)',
+  'Lower Roshamuul',
+  'Roshamuul Prison',
+  'Minotaur Cults',
+  'Brain Grounds',
+  'Ripper Spectre Cellar',
+  'Buried Cathedral',
+  'Furious Crater',
+  'Rotten Wasteland',
+  'Norcferatu Dungeons',
+  'Yalahar Cemetery',
+  'West Oramond',
+  'Glooth Tower',
+  'Catacombs West',
+  'Catacombs East',
+  'Glooth Bandits',
+];
 
 // ---------------------------------------------------------------- helpers --
 
@@ -486,6 +564,8 @@ function renderTalk(): HTMLElement {
   hdr.append(serverLabel, motd, stat);
   pane.append(hdr);
 
+  pane.append(renderRespClaimsPanel());
+
   // info panel (channel or client)
   const selCh = selectedChannelId ? client.channels.get(selectedChannelId) : null;
   const selCl = selectedClientId ? client.clients.get(selectedClientId) : null;
@@ -839,6 +919,104 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
   }
 
   return panel;
+}
+
+function renderRespClaimsPanel(): HTMLElement {
+  const panel = $('section', 'claims-panel');
+  const head = $('div', 'claims-head');
+  head.append(text('h2', '', 'claimed resp'));
+  const active = client.claims.size;
+  head.append(text('span', 'label', active === 1 ? '1 ativo' : `${active} ativos`));
+  panel.append(head);
+
+  const form = $('div', 'claim-form');
+  const respawn = $('input') as HTMLInputElement;
+  respawn.placeholder = 'respawn';
+  respawn.setAttribute('list', 'respawn-suggestions');
+  const list = $('datalist') as HTMLDataListElement;
+  list.id = 'respawn-suggestions';
+  for (const name of RESPAWN_SUGGESTIONS) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    list.append(opt);
+  }
+
+  const note = $('input') as HTMLInputElement;
+  note.placeholder = 'nota opcional';
+
+  const duration = $('select') as HTMLSelectElement;
+  for (const [value, label] of [
+    [60, '1h'],
+    [120, '2h'],
+    [180, '3h'],
+    [240, '4h'],
+    [360, '6h'],
+    [720, '12h'],
+  ] as const) {
+    const opt = document.createElement('option');
+    opt.value = String(value);
+    opt.textContent = label;
+    if (value === 120) opt.selected = true;
+    duration.append(opt);
+  }
+
+  const claimBtn = $('button', 'primary');
+  claimBtn.textContent = 'claim';
+  claimBtn.addEventListener('click', () => {
+    const name = respawn.value.trim();
+    if (!name) {
+      respawn.focus();
+      return;
+    }
+    client.claimResp(name, note.value.trim(), Number(duration.value) || 120);
+    respawn.value = '';
+    note.value = '';
+  });
+  respawn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') claimBtn.click();
+  });
+  form.append(respawn, note, duration, claimBtn, list);
+  panel.append(form);
+
+  const claims = [...client.claims.values()].sort((a, b) => a.expiresAt - b.expiresAt);
+  if (claims.length === 0) {
+    panel.append(text('div', 'claims-empty', 'nenhum respawn claimado'));
+    return panel;
+  }
+
+  const rows = $('div', 'claims-list');
+  for (const claim of claims) rows.append(renderRespClaim(claim));
+  panel.append(rows);
+  return panel;
+}
+
+function renderRespClaim(claim: RespClaimInfo): HTMLElement {
+  const row = $('div', 'claim-row');
+  const main = $('div', 'claim-main');
+  main.append(text('strong', '', claim.respawn));
+  const meta = text('span', 'claim-meta', `${claim.ownerName} · expira em ${formatRemaining(claim.expiresAt)}`);
+  main.append(meta);
+  if (claim.note) main.append(text('span', 'claim-note', claim.note));
+
+  const canRelease = claim.ownerId === client.selfId || client.myGroup >= Group.Moderator;
+  if (canRelease) {
+    const release = $('button', 'ghost');
+    release.textContent = 'liberar';
+    release.addEventListener('click', () => client.releaseResp(claim.id));
+    row.append(main, release);
+  } else {
+    row.append(main);
+  }
+  return row;
+}
+
+function formatRemaining(expiresAt: number): string {
+  const left = Math.max(0, expiresAt - Date.now());
+  const min = Math.ceil(left / 60_000);
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}min`;
 }
 
 function formatDuration(ms: number): string {

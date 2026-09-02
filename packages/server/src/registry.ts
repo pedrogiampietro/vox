@@ -111,6 +111,7 @@ export class Registry {
       groups: {},
       bans: [],
       groupDefs: [],
+      claims: [],
       botConfig: { ...DEFAULT_BOT_CONFIG },
     };
     const hub = this.attach(stored);
