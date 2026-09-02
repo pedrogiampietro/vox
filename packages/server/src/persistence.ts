@@ -34,6 +34,12 @@ export interface StoredBotConfig {
   globalLevelMin: number;
   summarizePresence: boolean;
   presenceSummaryMs: number;
+  alertEnemyDeath: boolean;
+  alertFriendDeath: boolean;
+  alertFriendLevelUp: boolean;
+  alertEnemyLevelUp: boolean;
+  alertEnemyOnline: boolean;
+  alertEnemyOffline: boolean;
 }
 
 export interface StoredServer {
@@ -64,6 +70,12 @@ export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
   globalLevelMin: 800,
   summarizePresence: true,
   presenceSummaryMs: 5 * 60_000,
+  alertEnemyDeath: true,
+  alertFriendDeath: true,
+  alertFriendLevelUp: true,
+  alertEnemyLevelUp: true,
+  alertEnemyOnline: true,
+  alertEnemyOffline: true,
 };
 
 export function defaultServer(id = 1): StoredServer {
@@ -114,20 +126,27 @@ function readJsonServers(): StoredServer[] {
 function normalizeBotConfig(raw: unknown): StoredBotConfig {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_BOT_CONFIG };
   const c = raw as Record<string, unknown>;
+  const boolOr = (v: unknown, d: boolean): boolean => (typeof v === 'boolean' ? v : d);
   return {
     world: typeof c.world === 'string' ? c.world : '',
     guildName: typeof c.guildName === 'string' ? c.guildName : '',
     huntedNames: Array.isArray(c.huntedNames) ? (c.huntedNames as unknown[]).filter((n): n is string => typeof n === 'string') : [],
     intervalMs: typeof c.intervalMs === 'number' && c.intervalMs > 0 ? c.intervalMs : 60_000,
     channelName: typeof c.channelName === 'string' && c.channelName ? c.channelName : 'bot',
-    enabled: typeof c.enabled === 'boolean' ? c.enabled : false,
-    globalDeaths: typeof c.globalDeaths === 'boolean' ? c.globalDeaths : true,
-    globalKills: typeof c.globalKills === 'boolean' ? c.globalKills : true,
+    enabled: boolOr(c.enabled, false),
+    globalDeaths: boolOr(c.globalDeaths, true),
+    globalKills: boolOr(c.globalKills, true),
     globalLevelMin: typeof c.globalLevelMin === 'number' && c.globalLevelMin >= 0 ? c.globalLevelMin : 800,
-    summarizePresence: typeof c.summarizePresence === 'boolean' ? c.summarizePresence : true,
+    summarizePresence: boolOr(c.summarizePresence, true),
     presenceSummaryMs: typeof c.presenceSummaryMs === 'number' && c.presenceSummaryMs > 0
       ? c.presenceSummaryMs
       : 5 * 60_000,
+    alertEnemyDeath: boolOr(c.alertEnemyDeath, true),
+    alertFriendDeath: boolOr(c.alertFriendDeath, true),
+    alertFriendLevelUp: boolOr(c.alertFriendLevelUp, true),
+    alertEnemyLevelUp: boolOr(c.alertEnemyLevelUp, true),
+    alertEnemyOnline: boolOr(c.alertEnemyOnline, true),
+    alertEnemyOffline: boolOr(c.alertEnemyOffline, true),
   };
 }
 

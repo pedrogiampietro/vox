@@ -1,12 +1,13 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 6: alertas do bot com toggles amigo/inimigo.
  * 5: configuracao do bot Rubinot editavel a partir do cliente (owner).
  * 4: claims de respawn por servidor.
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -89,7 +90,20 @@ export interface BotStateInfo {
   globalLevelMin: number;
   summarizePresence: boolean;
   presenceSummaryMs: number;
+  /** Mostrar morte de jogador da hunted list (nao esta na guild). */
+  alertEnemyDeath: boolean;
+  /** Mostrar morte de jogador da guild configurada. */
+  alertFriendDeath: boolean;
+  /** Mostrar levelup de jogador da guild. */
+  alertFriendLevelUp: boolean;
+  /** Mostrar levelup de jogador da hunted list. */
+  alertEnemyLevelUp: boolean;
+  /** Mostrar login de inimigo. */
+  alertEnemyOnline: boolean;
+  /** Mostrar logout de inimigo. */
+  alertEnemyOffline: boolean;
   hunted: string[];
+  friends: string[];
   running: boolean;
 }
 

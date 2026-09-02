@@ -418,7 +418,7 @@ export class VoxClient {
     this.connection.send({ t: Op.GetBotState });
   }
 
-  updateBotConfig(cfg: Omit<BotStateInfo, 'hunted' | 'running'>): void {
+  updateBotConfig(cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'running'>): void {
     this.connection.send({
       t: Op.UpdateBotConfig,
       world: cfg.world,
@@ -431,6 +431,12 @@ export class VoxClient {
       globalLevelMin: cfg.globalLevelMin,
       summarizePresence: cfg.summarizePresence,
       presenceSummaryMs: cfg.presenceSummaryMs,
+      alertEnemyDeath: cfg.alertEnemyDeath,
+      alertFriendDeath: cfg.alertFriendDeath,
+      alertFriendLevelUp: cfg.alertFriendLevelUp,
+      alertEnemyLevelUp: cfg.alertEnemyLevelUp,
+      alertEnemyOnline: cfg.alertEnemyOnline,
+      alertEnemyOffline: cfg.alertEnemyOffline,
     });
   }
 

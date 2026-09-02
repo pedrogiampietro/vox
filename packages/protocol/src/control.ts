@@ -51,6 +51,12 @@ export type ClientMessage =
       globalLevelMin: number;
       summarizePresence: boolean;
       presenceSummaryMs: number;
+      alertEnemyDeath: boolean;
+      alertFriendDeath: boolean;
+      alertFriendLevelUp: boolean;
+      alertEnemyLevelUp: boolean;
+      alertEnemyOnline: boolean;
+      alertEnemyOffline: boolean;
     }
   | { t: Op.BotControl; action: BotControlAction; name: string };
 
@@ -197,8 +203,15 @@ function writeBotState(w: Writer, s: BotStateInfo): void {
     .u16(s.globalLevelMin)
     .u8(s.summarizePresence ? 1 : 0)
     .u32(s.presenceSummaryMs)
+    .u8(s.alertEnemyDeath ? 1 : 0)
+    .u8(s.alertFriendDeath ? 1 : 0)
+    .u8(s.alertFriendLevelUp ? 1 : 0)
+    .u8(s.alertEnemyLevelUp ? 1 : 0)
+    .u8(s.alertEnemyOnline ? 1 : 0)
+    .u8(s.alertEnemyOffline ? 1 : 0)
     .u8(s.running ? 1 : 0)
-    .list(s.hunted, (ww, name) => ww.str(name));
+    .list(s.hunted, (ww, name) => ww.str(name))
+    .list(s.friends, (ww, name) => ww.str(name));
 }
 
 function readBotState(r: Reader): BotStateInfo {
@@ -213,8 +226,15 @@ function readBotState(r: Reader): BotStateInfo {
     globalLevelMin: r.u16(),
     summarizePresence: r.u8() === 1,
     presenceSummaryMs: r.u32(),
+    alertEnemyDeath: r.u8() === 1,
+    alertFriendDeath: r.u8() === 1,
+    alertFriendLevelUp: r.u8() === 1,
+    alertEnemyLevelUp: r.u8() === 1,
+    alertEnemyOnline: r.u8() === 1,
+    alertEnemyOffline: r.u8() === 1,
     running: r.u8() === 1,
     hunted: r.list((rr) => rr.str()),
+    friends: r.list((rr) => rr.str()),
   };
 }
 
@@ -294,7 +314,13 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
         .u8(m.globalKills ? 1 : 0)
         .u16(m.globalLevelMin)
         .u8(m.summarizePresence ? 1 : 0)
-        .u32(m.presenceSummaryMs);
+        .u32(m.presenceSummaryMs)
+        .u8(m.alertEnemyDeath ? 1 : 0)
+        .u8(m.alertFriendDeath ? 1 : 0)
+        .u8(m.alertFriendLevelUp ? 1 : 0)
+        .u8(m.alertEnemyLevelUp ? 1 : 0)
+        .u8(m.alertEnemyOnline ? 1 : 0)
+        .u8(m.alertEnemyOffline ? 1 : 0);
       break;
     case Op.BotControl:
       w.u8(m.action).str(m.name);
@@ -371,6 +397,12 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         globalLevelMin: r.u16(),
         summarizePresence: r.u8() === 1,
         presenceSummaryMs: r.u32(),
+        alertEnemyDeath: r.u8() === 1,
+        alertFriendDeath: r.u8() === 1,
+        alertFriendLevelUp: r.u8() === 1,
+        alertEnemyLevelUp: r.u8() === 1,
+        alertEnemyOnline: r.u8() === 1,
+        alertEnemyOffline: r.u8() === 1,
       };
     case Op.BotControl:
       return { t, action: r.u8() as BotControlAction, name: r.str() };
