@@ -249,6 +249,13 @@ export class AdminApi {
       if (body.channelName !== undefined) bc.channelName = str(body.channelName) || 'bot';
       if (body.intervalMs !== undefined) bc.intervalMs = Math.max(int(body.intervalMs, 60_000), 10_000);
       if (body.enabled !== undefined) bc.enabled = !!body.enabled;
+      if (body.globalDeaths !== undefined) bc.globalDeaths = !!body.globalDeaths;
+      if (body.globalKills !== undefined) bc.globalKills = !!body.globalKills;
+      if (body.globalLevelMin !== undefined) bc.globalLevelMin = Math.max(int(body.globalLevelMin, 800), 0);
+      if (body.summarizePresence !== undefined) bc.summarizePresence = !!body.summarizePresence;
+      if (body.presenceSummaryMs !== undefined) {
+        bc.presenceSummaryMs = Math.max(int(body.presenceSummaryMs, 5 * 60_000), 60_000);
+      }
       hub.botConfig = bc;
       this.registry.scheduleSave();
 
@@ -288,6 +295,7 @@ export class AdminApi {
     if (action === '/bot' && rest === 'test' && method === 'POST') {
       const channelId = hub.ensureChannel(hub.botConfig.channelName || 'bot');
       hub.channelAnnounce(channelId, 'rubinot', '[test] alerta de teste do Rubinot');
+      hub.serverChannelAnnounce(channelId, 'rubinot', '[test] alerta de teste do Rubinot');
       this.broadcastState();
       return send(res, 200, { ok: true });
     }

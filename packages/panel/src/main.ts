@@ -51,6 +51,11 @@ type BotState = {
     intervalMs: number;
     channelName: string;
     enabled: boolean;
+    globalDeaths: boolean;
+    globalKills: boolean;
+    globalLevelMin: number;
+    summarizePresence: boolean;
+    presenceSummaryMs: number;
   };
   running: boolean;
   hunted: string[];
@@ -78,7 +83,14 @@ let overview: Overview | null = null;
 let selectedId = 0;
 let detail: ServerDetail | null = null;
 let botState: BotState | null = null;
-let botDraft: Partial<{ world: string; guildName: string; channelName: string; intervalSec: string }> = {};
+let botDraft: Partial<{
+  world: string;
+  guildName: string;
+  channelName: string;
+  intervalSec: string;
+  globalLevelMin: string;
+  presenceSummarySec: string;
+}> = {};
 let stream: EventSource | null = null;
 let notice = '';
 
@@ -373,11 +385,24 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   const guild = input('guild', botDraft.guildName ?? bot.config.guildName, 'text', 'nome da guild (opcional)');
   const channel = input('canal de notificacao', botDraft.channelName ?? bot.config.channelName, 'text', 'bot');
   const interval = input('intervalo (segundos)', botDraft.intervalSec ?? String(bot.config.intervalMs / 1000), 'number');
+  const globalLevelMin = input('level global min.', botDraft.globalLevelMin ?? String(bot.config.globalLevelMin), 'number');
+  const presenceSummarySec = input(
+    'resumo online/offline (segundos)',
+    botDraft.presenceSummarySec ?? String(bot.config.presenceSummaryMs / 1000),
+    'number',
+  );
 
   world.input.addEventListener('input', () => { botDraft.world = world.input.value; });
   guild.input.addEventListener('input', () => { botDraft.guildName = guild.input.value; });
   channel.input.addEventListener('input', () => { botDraft.channelName = channel.input.value; });
   interval.input.addEventListener('input', () => { botDraft.intervalSec = interval.input.value; });
+  globalLevelMin.input.addEventListener('input', () => { botDraft.globalLevelMin = globalLevelMin.input.value; });
+  presenceSummarySec.input.addEventListener('input', () => { botDraft.presenceSummarySec = presenceSummarySec.input.value; });
+
+  const rules = $('div', 'bot-rules');
+  const deaths = checkbox('kills/deaths globais', bot.config.globalDeaths && bot.config.globalKills);
+  const presence = checkbox('resumir online/offline', bot.config.summarizePresence);
+  rules.append(deaths.wrap, presence.wrap);
 
   const save = $('button', 'primary');
   save.textContent = 'salvar config';
@@ -389,6 +414,11 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
         guildName: guild.input.value.trim(),
         channelName: channel.input.value.trim() || 'bot',
         intervalMs: (Number(interval.input.value) || 60) * 1000,
+        globalDeaths: deaths.input.checked,
+        globalKills: deaths.input.checked,
+        globalLevelMin: Number(globalLevelMin.input.value) || 0,
+        summarizePresence: presence.input.checked,
+        presenceSummaryMs: (Number(presenceSummarySec.input.value) || 300) * 1000,
         enabled: bot.config.enabled,
       }),
     }).then(() => {
@@ -397,7 +427,7 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
     });
   });
 
-  form.append(world.wrap, guild.wrap, channel.wrap, interval.wrap, save);
+  form.append(world.wrap, guild.wrap, channel.wrap, interval.wrap, globalLevelMin.wrap, presenceSummarySec.wrap, rules, save);
   box.append(form);
 
   // hunted list
@@ -457,6 +487,15 @@ function input(label: string, value: string, type = 'text', placeholder = ''): {
   field.value = value;
   field.placeholder = placeholder;
   wrap.append(field);
+  return { wrap, input: field };
+}
+
+function checkbox(label: string, checked: boolean): { wrap: HTMLElement; input: HTMLInputElement } {
+  const wrap = $('label', 'check');
+  const field = $('input') as HTMLInputElement;
+  field.type = 'checkbox';
+  field.checked = checked;
+  wrap.append(field, text('span', '', label));
   return { wrap, input: field };
 }
 

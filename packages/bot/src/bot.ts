@@ -23,6 +23,11 @@ export interface BotConfig {
   intervalMs: number;
   channelName: string;
   enabled: boolean;
+  globalDeaths: boolean;
+  globalKills: boolean;
+  globalLevelMin: number;
+  summarizePresence: boolean;
+  presenceSummaryMs: number;
 }
 
 export function botConfigFromEnv(): BotConfig | null {
@@ -38,6 +43,11 @@ export function botConfigFromEnv(): BotConfig | null {
     intervalMs: (Number(process.env['BOT_INTERVAL']) || 60) * 1000,
     channelName: process.env['BOT_CHANNEL'] ?? 'bot',
     enabled: true,
+    globalDeaths: true,
+    globalKills: true,
+    globalLevelMin: 800,
+    summarizePresence: true,
+    presenceSummaryMs: 5 * 60 * 1000,
   };
 }
 
@@ -50,6 +60,9 @@ export class RubinotBot {
   private timer: ReturnType<typeof setInterval> | null = null;
   private ac = new AbortController();
   private running = false;
+  private readonly pendingLogins: OnlineEvent[] = [];
+  private readonly pendingLogouts: OnlineEvent[] = [];
+  private nextPresenceSummaryAt = 0;
 
   constructor(
     private readonly hub: Hub,
@@ -109,6 +122,9 @@ export class RubinotBot {
     this.online = new OnlineTracker(newCfg.world);
     this.hunted.clear();
     for (const n of newCfg.huntedNames) this.hunted.add(n.toLowerCase());
+    this.pendingLogins.length = 0;
+    this.pendingLogouts.length = 0;
+    this.nextPresenceSummaryAt = 0;
     if (newCfg.enabled && newCfg.world) {
       await this.start();
     }
@@ -137,6 +153,7 @@ export class RubinotBot {
 
       for (const ev of deathEvents) this.onDeath(ev);
       for (const ev of onlineEvents) this.onOnline(ev);
+      this.flushPresenceSummary(false);
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       console.error('[bot] erro no poll:', err);
@@ -166,7 +183,10 @@ export class RubinotBot {
       msg = `[kill] ${ev.killedBy} matou ${ev.victim} (lvl ${ev.level})`;
     }
 
-    this.post(msg);
+    const global = msg.startsWith('[death]')
+      ? this.cfg.globalDeaths
+      : this.cfg.globalKills;
+    this.post(msg, global);
   }
 
   private onOnline(ev: OnlineEvent): void {
@@ -174,14 +194,17 @@ export class RubinotBot {
 
     switch (ev.type) {
       case 'login':
-        this.post(`[online] ${ev.player} logou (lvl ${ev.level}, ${ev.vocation ?? '?'})`);
+        this.post(`[online] ${ev.player} logou (lvl ${ev.level}, ${ev.vocation ?? '?'})`, false);
+        this.pendingLogins.push(ev);
         break;
       case 'logout':
-        this.post(`[offline] ${ev.player} deslogou (lvl ${ev.level})`);
+        this.post(`[offline] ${ev.player} deslogou (lvl ${ev.level})`, false);
+        this.pendingLogouts.push(ev);
         break;
       case 'levelup':
         this.post(
           `[levelup] ${ev.player} subiu de ${ev.previousLevel} para ${ev.level}`,
+          this.cfg.globalLevelMin > 0 && ev.level >= this.cfg.globalLevelMin,
         );
         break;
     }
@@ -189,10 +212,42 @@ export class RubinotBot {
 
   // ---------------------------------------------------------------- post --
 
-  private post(text: string): void {
+  private post(text: string, global: boolean): void {
     const chId = this.hub.ensureChannel(this.cfg.channelName);
     this.hub.channelAnnounce(chId, 'rubinot', text);
+    if (global) this.hub.serverChannelAnnounce(chId, 'rubinot', text);
     console.log(`[bot] ${text}`);
+  }
+
+  private flushPresenceSummary(force: boolean): void {
+    if (!this.cfg.summarizePresence) {
+      this.pendingLogins.length = 0;
+      this.pendingLogouts.length = 0;
+      return;
+    }
+
+    const now = Date.now();
+    if (this.nextPresenceSummaryAt === 0) {
+      this.nextPresenceSummaryAt = now + this.cfg.presenceSummaryMs;
+    }
+    if (!force && now < this.nextPresenceSummaryAt) return;
+    if (this.pendingLogins.length === 0 && this.pendingLogouts.length === 0) {
+      this.nextPresenceSummaryAt = now + this.cfg.presenceSummaryMs;
+      return;
+    }
+
+    const parts: string[] = [];
+    if (this.pendingLogins.length > 0) {
+      parts.push(`${this.pendingLogins.length} entraram: ${names(this.pendingLogins)}`);
+    }
+    if (this.pendingLogouts.length > 0) {
+      parts.push(`${this.pendingLogouts.length} sairam: ${names(this.pendingLogouts)}`);
+    }
+
+    this.pendingLogins.length = 0;
+    this.pendingLogouts.length = 0;
+    this.nextPresenceSummaryAt = now + this.cfg.presenceSummaryMs;
+    this.post(`[presence] ${parts.join(' | ')}`, true);
   }
 
   // ------------------------------------------------------------ guild sync --
@@ -215,4 +270,10 @@ export class RubinotBot {
       console.error(`[bot] falha ao carregar guild "${this.cfg.guildName}":`, err);
     }
   }
+}
+
+function names(events: OnlineEvent[]): string {
+  const list = events.slice(0, 8).map((ev) => ev.player);
+  const extra = events.length - list.length;
+  return extra > 0 ? `${list.join(', ')} +${extra}` : list.join(', ');
 }
