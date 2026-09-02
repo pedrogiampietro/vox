@@ -37,7 +37,9 @@ import type { ChannelInfo, ClientInfo, ClientMessage, GroupDef, ServerMessage } 
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
 import { fingerprintOf, looksLikePublicKey, verifyChallenge } from './identity.js';
-import type { StoredBan, StoredChannel, StoredServer } from './persistence.js';
+import type { StoredBan, StoredBotConfig, StoredChannel, StoredServer } from './persistence.js';
+import { DEFAULT_BOT_CONFIG } from './persistence.js';
+import type { BotConfig } from '../../bot/src/bot.js';
 import { Session, type PeerSocket, type VoiceSink } from './session.js';
 import { clean, clamp } from './util.js';
 
@@ -89,12 +91,25 @@ export class Hub {
 
   afkEnabled = config.afkEnabled;
 
+  /** Referencia ao bot Rubinot, quando ativo. */
+  rubinot: {
+    addHunted(n: string): void;
+    removeHunted(n: string): void;
+    huntedList: string[];
+    isRunning: boolean;
+    start(): Promise<void>;
+    stop(): void;
+    restart(cfg: BotConfig): Promise<void>;
+    config: BotConfig;
+  } | null = null;
+  botConfig: StoredBotConfig;
+
   private nextClientId = 1;
   private nextChannelId = 1;
 
   constructor(
     public settings: ServerSettings,
-    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs'>,
+    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'botConfig'>,
     private readonly deps: HubDeps,
   ) {
     for (const c of stored.channels) {
@@ -104,6 +119,7 @@ export class Hub {
     for (const [fp, group] of Object.entries(stored.groups)) this.groups.set(fp, group);
     this.groupDefs = stored.groupDefs?.length ? [...stored.groupDefs] : [...DEFAULT_GROUP_DEFS];
     this.bans = [...stored.bans];
+    this.botConfig = stored.botConfig ? { ...stored.botConfig } : { ...DEFAULT_BOT_CONFIG };
   }
 
   // ----------------------------------------------------------- inspecao --
@@ -134,6 +150,7 @@ export class Hub {
   }
 
   toStored(): StoredServer {
+    const botHunted = this.rubinot ? this.rubinot.huntedList : this.botConfig.huntedNames;
     return {
       ...this.settings,
       channels: [...this.channels.values()]
@@ -142,6 +159,7 @@ export class Hub {
       groups: this.groupList(),
       bans: this.banList(),
       groupDefs: [...this.groupDefs],
+      botConfig: { ...this.botConfig, huntedNames: botHunted },
     };
   }
 
@@ -883,7 +901,7 @@ export class Hub {
         if (!targetNick || !channelName) return this.sendBotResult(s, false, 'uso: push <nick> <canal>');
         const target = this.findClientByNick(targetNick);
         if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
-        const destChannel = this.findChannelByName(channelName);
+        const destChannel = this.findChannelObjByName(channelName);
         if (!destChannel) return this.sendBotResult(s, false, 'canal nao encontrado');
         if (!this.canEnter(target, destChannel)) return this.sendBotResult(s, false, 'usuario nao pode entrar neste canal');
         this.joinChannel(target, destChannel.info.id, '');
@@ -894,11 +912,11 @@ export class Hub {
         if (args.length < 1) return this.sendBotResult(s, false, 'uso: masspush <destino> [origem]');
         const destChannelName = args[0];
         if (!destChannelName) return this.sendBotResult(s, false, 'uso: masspush <destino> [origem]');
-        const destChannel = this.findChannelByName(destChannelName);
+        const destChannel = this.findChannelObjByName(destChannelName);
         if (!destChannel) return this.sendBotResult(s, false, 'canal destino nao encontrado');
         let sources: Session[];
         if (args[1]) {
-          const srcChannel = this.findChannelByName(args[1]);
+          const srcChannel = this.findChannelObjByName(args[1]);
           if (!srcChannel) return this.sendBotResult(s, false, 'canal origem nao encontrado');
           sources = [...srcChannel.members];
         } else {
@@ -1060,6 +1078,29 @@ export class Hub {
         console.log(`[vox] servidor ${this.settings.id}: ${s.fingerprint.slice(0, 12)} virou dono via /owner`);
         break;
       }
+      case 'hunt': {
+        if (!this.rubinot) return this.sendBotResult(s, false, 'bot rubinot nao esta ativo');
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: hunt <nome>');
+        const name = args.join(' ');
+        this.rubinot.addHunted(name);
+        this.sendBotResult(s, true, `${name} adicionado a hunted list`);
+        break;
+      }
+      case 'unhunt': {
+        if (!this.rubinot) return this.sendBotResult(s, false, 'bot rubinot nao esta ativo');
+        if (args.length < 1) return this.sendBotResult(s, false, 'uso: unhunt <nome>');
+        const name = args.join(' ');
+        this.rubinot.removeHunted(name);
+        this.sendBotResult(s, true, `${name} removido da hunted list`);
+        break;
+      }
+      case 'hunted': {
+        if (!this.rubinot) return this.sendBotResult(s, false, 'bot rubinot nao esta ativo');
+        const list = this.rubinot.huntedList;
+        if (list.length === 0) return this.sendBotResult(s, true, 'hunted list vazia');
+        this.sendBotResult(s, true, `hunted list (${list.length}):\n${list.join('\n')}`);
+        break;
+      }
       default:
         this.sendBotResult(s, false, `comando desconhecido: ${command}`);
     }
@@ -1083,6 +1124,9 @@ export class Hub {
       case 'moderate': return Group.Moderator;
       case 'voice': return Group.Moderator;
       case 'devoice': return Group.Moderator;
+      case 'hunt': return Group.Moderator;
+      case 'unhunt': return Group.Moderator;
+      case 'hunted': return Group.Guest;
       default: return Group.Owner;
     }
   }
@@ -1095,7 +1139,7 @@ export class Hub {
     return undefined;
   }
 
-  private findChannelByName(name: string): Channel | undefined {
+  private findChannelObjByName(name: string): Channel | undefined {
     const lower = name.toLowerCase();
     for (const ch of this.channels.values()) {
       if (ch.info.name.toLowerCase() === lower) return ch;
@@ -1143,6 +1187,54 @@ export class Hub {
       stamp: Date.now(),
     });
     for (const s of this.sessions.values()) s.send(frame);
+  }
+
+  /** Envia mensagem de bot para um canal especifico. */
+  channelAnnounce(channelId: number, sender: string, text: string): void {
+    const ch = this.channels.get(channelId);
+    if (!ch) return;
+    const frame = encodeServerMessage({
+      t: Op.ChatDeliver,
+      scope: ChatScope.Channel,
+      senderId: 0,
+      targetId: channelId,
+      senderName: sender,
+      text,
+      stamp: Date.now(),
+    });
+    for (const m of ch.members) m.send(frame);
+  }
+
+  /** Encontra canal pelo nome (primeiro match, case-insensitive). */
+  findChannelByName(name: string): number | undefined {
+    const lower = name.toLowerCase();
+    for (const [id, ch] of this.channels) {
+      if (ch.info.name.toLowerCase() === lower) return id;
+    }
+    return undefined;
+  }
+
+  /**
+   * Garante que um canal com o nome dado exista. Se nao existir, cria um canal
+   * permanente na raiz (para o bot postar notificacoes).
+   */
+  ensureChannel(name: string): number {
+    const existing = this.findChannelByName(name);
+    if (existing !== undefined) return existing;
+    const label = clean(name, 64) || 'bot';
+    const info: ChannelInfo = {
+      id: this.allocChannelId(),
+      parentId: NO_CHANNEL,
+      order: this.channels.size,
+      name: label,
+      topic: '',
+      maxClients: 0,
+      flags: ChannelFlags.Permanent,
+    };
+    this.channels.set(info.id, { info, password: '', members: new Set() });
+    this.broadcast({ t: Op.ChannelAdd, channel: info });
+    this.deps.onChanged();
+    return info.id;
   }
 
   private broadcast(m: ServerMessage, except?: Session): void {

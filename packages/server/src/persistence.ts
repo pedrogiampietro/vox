@@ -7,10 +7,20 @@ import { database, exportJson } from './sqlite.js';
 
 export interface StoredChannel extends ChannelInfo { password: string; }
 export interface StoredBan { fingerprint: string; until: number; reason: string; }
+export interface StoredBotConfig {
+  world: string;
+  guildName: string;
+  huntedNames: string[];
+  intervalMs: number;
+  channelName: string;
+  enabled: boolean;
+}
+
 export interface StoredServer {
   id: number; slug: string; ownerId: number | null; name: string; motd: string;
   password: string; maxClients: number; channels: StoredChannel[];
   groups: Record<string, Group>; bans: StoredBan[]; groupDefs: GroupDef[];
+  botConfig: StoredBotConfig;
 }
 
 export function defaultChannels(): StoredChannel[] {
@@ -21,8 +31,12 @@ export function defaultChannels(): StoredChannel[] {
   ];
 }
 
+export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
+  world: '', guildName: '', huntedNames: [], intervalMs: 60_000, channelName: 'bot', enabled: false,
+};
+
 export function defaultServer(id = 1): StoredServer {
-  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS] };
+  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS], botConfig: { ...DEFAULT_BOT_CONFIG } };
 }
 
 export function loadServers(): StoredServer[] {
@@ -37,11 +51,11 @@ export function loadServers(): StoredServer[] {
 }
 
 export function saveServers(servers: StoredServer[]): void {
-  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json, bot_config_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   database.exec('BEGIN');
   try {
     database.exec('DELETE FROM servers');
-    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs));
+    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs), JSON.stringify(s.botConfig));
     database.exec('COMMIT');
   } catch (err) {
     database.exec('ROLLBACK');
@@ -66,13 +80,26 @@ function readJsonServers(): StoredServer[] {
   return [];
 }
 
+function normalizeBotConfig(raw: unknown): StoredBotConfig {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_BOT_CONFIG };
+  const c = raw as Record<string, unknown>;
+  return {
+    world: typeof c.world === 'string' ? c.world : '',
+    guildName: typeof c.guildName === 'string' ? c.guildName : '',
+    huntedNames: Array.isArray(c.huntedNames) ? (c.huntedNames as unknown[]).filter((n): n is string => typeof n === 'string') : [],
+    intervalMs: typeof c.intervalMs === 'number' && c.intervalMs > 0 ? c.intervalMs : 60_000,
+    channelName: typeof c.channelName === 'string' && c.channelName ? c.channelName : 'bot',
+    enabled: typeof c.enabled === 'boolean' ? c.enabled : false,
+  };
+}
+
 function normalize(s: Partial<StoredServer>): StoredServer {
   const base = defaultServer(s.id ?? 1);
-  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: s.groups ?? {}, bans: s.bans ?? [], groupDefs: s.groupDefs?.length ? s.groupDefs : [...DEFAULT_GROUP_DEFS] };
+  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: s.groups ?? {}, bans: s.bans ?? [], groupDefs: s.groupDefs?.length ? s.groupDefs : [...DEFAULT_GROUP_DEFS], botConfig: normalizeBotConfig(s.botConfig) };
 }
 
 function fromRow(row: Record<string, unknown>): StoredServer {
-  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)) });
+  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)), botConfig: JSON.parse(String(row.bot_config_json || '{}')) });
 }
 
 function normalizeSlug(value: unknown): string {

@@ -32,6 +32,11 @@ import {
   type ServerStatus,
 } from './favorites.js';
 import { $, text, timeHHMM } from './ui/dom.js';
+import {
+  iconHome, iconSettings, iconMic, iconMicOff,
+  iconVolume, iconVolumeOff, iconBell, iconBellOff,
+  iconBrandMark,
+} from './ui/icons.js';
 import { closeMenu, openMenu } from './ui/menu.js';
 import { keyLabel, loadPttKey, savePttKey } from './ui/ptt.js';
 
@@ -110,8 +115,10 @@ function renderShell(): HTMLElement {
 function renderRail(): HTMLElement {
   const rail = $('div', 'rail');
 
+  rail.append(iconBrandMark());
+
   const home = $('button');
-  home.textContent = '⌂';
+  home.append(iconHome());
   home.title = 'servidores';
   home.addEventListener('click', () => {
     client.disconnect();
@@ -121,7 +128,7 @@ function renderRail(): HTMLElement {
   rail.append(home);
 
   const settingsBtn = $('button');
-  settingsBtn.textContent = '⚙';
+  settingsBtn.append(iconSettings());
   settingsBtn.title = 'configurações';
   settingsBtn.addEventListener('click', () => {
     settingsOpen = true;
@@ -133,9 +140,9 @@ function renderRail(): HTMLElement {
 
   const me = client.self;
   if (me) {
-    const nick = text('button', '', me.nickname.charAt(0).toUpperCase());
+    const nick = $('button', 'rail-avatar');
+    nick.textContent = me.nickname.charAt(0).toUpperCase();
     nick.title = me.nickname;
-    nick.style.fontWeight = '700';
     rail.append(nick);
   }
 
@@ -148,9 +155,8 @@ function renderRooms(): HTMLElement {
   const pane = $('div', 'rooms');
 
   // header
-  const hdr = $('div', '');
-  hdr.style.cssText = 'padding:11px 14px;border-bottom:1px solid var(--line);';
-  hdr.append(text('div', 'name', client.serverName || 'vox'), text('span', 'label', `v${client.serverId || 1}`));
+  const hdr = $('header', '');
+  hdr.append(text('div', 'name', client.serverName || 'v0x'), text('span', 'label', `v${client.serverId || 1}`));
   pane.append(hdr);
 
   // tree
@@ -168,8 +174,7 @@ function renderRooms(): HTMLElement {
   pane.append(tree);
 
   // footer
-  const foot = $('div', '');
-  foot.style.cssText = 'border-top:1px solid var(--line);padding:8px 10px;display:flex;gap:8px;';
+  const foot = $('footer', '');
 
   const addBtn = $('button', 'ghost');
   addBtn.textContent = '+ canal';
@@ -190,8 +195,16 @@ function renderRooms(): HTMLElement {
 }
 
 function renderChannelTree(parent: HTMLElement, parentId: number, depth: number): void {
-  const children = client.childrenOf(parentId);
+  const rawChildren = client.childrenOf(parentId);
+  // Na raiz, o canal do bot fica em uma secao propria logo apos os canais
+  // padrao (Lobby), com um cabecalho "BOT" para dar destaque.
+  const children = depth === 0 ? reorderTopLevel(rawChildren) : rawChildren;
+  let botHeaderPending = depth === 0 && children.some((c) => isBotChannel(c));
   for (const ch of children) {
+    if (botHeaderPending && isBotChannel(ch)) {
+      parent.append(renderBotSectionHeader());
+      botHeaderPending = false;
+    }
     const members = client.membersOf(ch.id);
     const locked = (ch.flags & ChannelFlags.Password) !== 0;
     const full = ch.maxClients > 0 && members.length >= ch.maxClients;
@@ -199,10 +212,12 @@ function renderChannelTree(parent: HTMLElement, parentId: number, depth: number)
     const row = $('div', 'room');
     if (ch.id === client.self?.channelId) row.classList.add('here');
     if (ch.id === selectedChannelId) row.classList.add('selected');
+    if (isBotChannel(ch)) row.classList.add('bot-channel');
     row.style.paddingLeft = `${8 + depth * 14}px`;
 
     const moderated = (ch.flags & ChannelFlags.Moderated) !== 0;
-    const idx = text('span', 'idx', locked ? '🔒' : moderated ? '🎙' : '#');
+    const glyph = isBotChannel(ch) ? '◆' : locked ? '🔒' : moderated ? '🎙' : '#';
+    const idx = text('span', 'idx', glyph);
     const info = $('div', 'room-info');
     info.append(text('span', 'name', ch.name));
     if (moderated) {
@@ -243,6 +258,29 @@ function renderChannelTree(parent: HTMLElement, parentId: number, depth: number)
   }
 }
 
+function isBotChannel(ch: ChannelInfo): boolean {
+  return ch.name.toLowerCase() === 'bot';
+}
+
+/** Sobe o canal do bot para logo depois dos canais padrao (Lobby). */
+function reorderTopLevel(children: ChannelInfo[]): ChannelInfo[] {
+  const defaults: ChannelInfo[] = [];
+  const bots: ChannelInfo[] = [];
+  const rest: ChannelInfo[] = [];
+  for (const c of children) {
+    if ((c.flags & ChannelFlags.Default) !== 0) defaults.push(c);
+    else if (isBotChannel(c)) bots.push(c);
+    else rest.push(c);
+  }
+  return [...defaults, ...bots, ...rest];
+}
+
+function renderBotSectionHeader(): HTMLElement {
+  const header = $('div', 'section-header bot-section');
+  header.append(text('span', 'section-label', 'BOT'));
+  return header;
+}
+
 function renderPeer(c: ClientInfo): HTMLElement {
   const row = $('div', 'peer');
   if (c.id === client.selfId) row.classList.add('me');
@@ -253,6 +291,12 @@ function renderPeer(c: ClientInfo): HTMLElement {
   const away = (c.flags & ClientFlags.Away) !== 0;
   const noInput = (c.flags & ClientFlags.NoInput) !== 0;
   if (!talking && (muted || away || noInput)) row.classList.add('quiet');
+
+  // avatar
+  const avatar = $('div', 'peer-avatar');
+  avatar.textContent = c.nickname.charAt(0).toUpperCase();
+  if (talking) avatar.classList.add('talking');
+  if (muted || noInput) avatar.classList.add('muted');
 
   // VU meter
   const vu = $('div', 'vu');
@@ -292,7 +336,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
   const gdef = client.groupDef(c.group);
   if (gdef.color) nick.style.color = gdef.color;
   else if (c.group >= Group.Owner) nick.style.color = 'var(--amber)';
-  row.append(vu, nick);
+  row.append(avatar, vu, nick);
 
   // rank badge — mostra se o grupo tem icone ou se nao e guest
   if (gdef.icon) {
@@ -419,8 +463,7 @@ function renderTalk(): HTMLElement {
 
   // header
   const hdr = $('header');
-  const serverLabel = text('span', 'name', client.serverName || 'vox');
-  serverLabel.style.cssText = 'font-weight:650;font-size:15px;';
+  const serverLabel = text('span', 'name', client.serverName || 'v0x');
   const motd = text('span', 'motd', client.motd || '');
   if (client.notice?.kind === 'error') motd.classList.add('warn');
   const stat = $('span', 'stat');
@@ -489,21 +532,44 @@ function renderTalk(): HTMLElement {
     const row = $('div', 'line');
     if (line.senderId === 0) row.classList.add('system');
     if (line.scope === ChatScope.Private) row.classList.add('dm');
+    // Mensagens do bot: destaca por tipo do evento no comeco do texto.
+    const isBot = line.senderId === 0 && line.senderName === 'rubinot';
+    let botKind: string | null = null;
+    let botBody = line.text;
+    if (isBot) {
+      row.classList.add('bot');
+      const m = /^\[(death|kill|online|offline|levelup)\]\s*(.*)$/i.exec(line.text);
+      if (m && m[1] && m[2] !== undefined) {
+        botKind = m[1].toLowerCase();
+        botBody = m[2];
+        row.classList.add(`bot-${botKind}`);
+      }
+    }
     row.append(
       text('time', '', timeHHMM(line.stamp)),
       (() => {
         const body = $('span', 'body');
-        if (line.senderId !== 0) {
-          body.append(text('span', 'who', line.senderName));
+        if (isBot) {
+          if (botKind) body.append(text('span', 'bot-tag', botKind));
+          body.append(document.createTextNode(botBody));
+        } else {
+          if (line.senderId !== 0) {
+            body.append(text('span', 'who', line.senderName));
+          }
+          body.append(document.createTextNode(line.text));
         }
-        body.append(document.createTextNode(line.text));
         return body;
       })(),
     );
     log.append(row);
   }
-  if (client.activeDmTab !== null && messages.length === 0) {
-    const empty = text('div', 'empty-dm', 'nenhuma mensagem ainda');
+  if (messages.length === 0) {
+    const empty = $('div', 'empty-chat');
+    empty.append(
+      text('div', 'empty-chat-icon', '#'),
+      text('div', '', client.activeDmTab !== null ? 'nenhuma mensagem ainda' : 'sem mensagens no canal'),
+      text('div', 'empty-chat-hint', 'escreva algo para começar a conversa'),
+    );
     log.append(empty);
   }
   requestAnimationFrame(() => (log.scrollTop = log.scrollHeight));
@@ -814,7 +880,8 @@ function renderConsole(): HTMLElement {
   // mic toggle
   const micBtn = $('button');
   const micMuted = (client.flags & ClientFlags.MutedMic) !== 0;
-  micBtn.textContent = micMuted ? '🔇' : '🎙️';
+  micBtn.append(micMuted ? iconMicOff() : iconMic());
+  if (micMuted) micBtn.classList.add('armed');
   micBtn.title = micMuted ? 'ligar microfone' : 'desligar microfone';
   micBtn.addEventListener('click', () => client.toggleMic());
   bar.append(micBtn);
@@ -835,7 +902,8 @@ function renderConsole(): HTMLElement {
   // speaker toggle
   const spkBtn = $('button');
   const spkMuted = (client.flags & ClientFlags.MutedSpeakers) !== 0;
-  spkBtn.textContent = spkMuted ? '🔇' : '🔊';
+  spkBtn.append(spkMuted ? iconVolumeOff() : iconVolume());
+  if (spkMuted) spkBtn.classList.add('armed');
   spkBtn.title = spkMuted ? 'ligar som' : 'desligar som';
   spkBtn.addEventListener('click', () => client.toggleSpeakers());
   bar.append(spkBtn);
@@ -854,7 +922,7 @@ function renderConsole(): HTMLElement {
 
   // sound toggle
   const sndBtn = $('button', 'ghost');
-  sndBtn.textContent = client.soundsEnabled ? '🔔' : '🔕';
+  sndBtn.append(client.soundsEnabled ? iconBell() : iconBellOff());
   sndBtn.title = client.soundsEnabled ? 'silenciar avisos' : 'ativar avisos';
   sndBtn.addEventListener('click', () => client.setSoundsEnabled(!client.soundsEnabled));
   bar.append(sndBtn);
@@ -1389,7 +1457,7 @@ function buildNotificationsSection(body: HTMLElement): void {
   testBtn.textContent = '▶ testar notificação';
   testBtn.addEventListener('click', () => {
     (async () => {
-      await notify({ title: 'Vox Test', body: 'Notificação de teste funcionando!', tag: 'test' });
+      await notify({ title: 'v0x', body: 'Notificação de teste funcionando!', tag: 'test' });
     })();
   });
   testRow.append(testBtn);
@@ -2293,7 +2361,7 @@ function showTreeMenu(e: MouseEvent): void {
 
   // header
   const head = $('div', 'head');
-  head.append(text('div', 'nick', client.serverName || 'vox'));
+  head.append(text('div', 'nick', client.serverName || 'v0x'));
   const stats: string[] = [];
   stats.push(`${client.channels.size} canais`);
   stats.push(`${client.clients.size} conectados`);

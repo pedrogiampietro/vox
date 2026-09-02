@@ -13,7 +13,7 @@
 
 import { Group } from '@vox/protocol';
 import { Hub, type ServerSettings } from './hub.js';
-import { loadServers, saveServers, defaultChannels, type StoredServer } from './persistence.js';
+import { loadServers, saveServers, defaultChannels, DEFAULT_BOT_CONFIG, type StoredServer } from './persistence.js';
 import type { Session, VoiceSink } from './session.js';
 import { clean, clamp } from './util.js';
 import { config } from './config.js';
@@ -111,6 +111,7 @@ export class Registry {
       groups: {},
       bans: [],
       groupDefs: [],
+      botConfig: { ...DEFAULT_BOT_CONFIG },
     };
     const hub = this.attach(stored);
     this.scheduleSave();

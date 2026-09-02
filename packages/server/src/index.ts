@@ -16,6 +16,8 @@ import { AdminApi } from './admin-api.js';
 import { Registry } from './registry.js';
 import { attachWebSocket } from './transport-ws.js';
 import { startVoiceTransport, type VoiceEndpoint } from './transport-wt.js';
+import { RubinotBot, botConfigFromEnv } from '../../bot/src/bot.js';
+import { shutdownRubinotClient } from '../../bot/src/scrapers/rubinot.js';
 
 // --------------------------------------------------------------- estado --
 
@@ -165,11 +167,28 @@ server.listen(config.port, config.host, () => {
         '      (http://localhost e a unica excecao, para desenvolvimento.)',
     );
   }
+
+  for (const hub of registry.list()) {
+    const envCfg = botConfigFromEnv();
+    const stored = hub.botConfig;
+    const cfg = stored.enabled && stored.world
+      ? stored
+      : envCfg && !stored.world
+        ? envCfg
+        : null;
+    if (cfg && cfg.enabled && cfg.world) {
+      const bot = new RubinotBot(hub, cfg);
+      hub.rubinot = bot;
+      bot.start().catch((err) => console.error(`[bot] servidor ${hub.id}: falha ao iniciar:`, err));
+    }
+  }
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     console.log('\n[vox] encerrando...');
+    for (const hub of registry.list()) hub.rubinot?.stop();
+    void shutdownRubinotClient();
     clearInterval(sweeper);
     clearInterval(pulse);
     void voice?.stop();

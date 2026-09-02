@@ -20,6 +20,15 @@ database.exec(`
   );
 `);
 
+// Migracoes incrementais — cada uma roda so se a coluna ainda nao existe.
+{
+  const cols = database.prepare("PRAGMA table_info('servers')").all() as { name: string }[];
+  const has = new Set(cols.map((c) => c.name));
+  if (!has.has('bot_config_json')) {
+    database.exec("ALTER TABLE servers ADD COLUMN bot_config_json TEXT NOT NULL DEFAULT '{}'");
+  }
+}
+
 export function exportJson(name: string, value: unknown): void {
   const file = join(config.dataDir, name);
   const tmp = `${file}.tmp`;
