@@ -418,7 +418,9 @@ export class VoxClient {
     this.connection.send({ t: Op.GetBotState });
   }
 
-  updateBotConfig(cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'running'>): void {
+  updateBotConfig(
+    cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'friendGuilds' | 'enemyGuilds' | 'running'>,
+  ): void {
     this.connection.send({
       t: Op.UpdateBotConfig,
       world: cfg.world,

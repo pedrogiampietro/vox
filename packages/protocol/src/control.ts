@@ -211,7 +211,9 @@ function writeBotState(w: Writer, s: BotStateInfo): void {
     .u8(s.alertEnemyOffline ? 1 : 0)
     .u8(s.running ? 1 : 0)
     .list(s.hunted, (ww, name) => ww.str(name))
-    .list(s.friends, (ww, name) => ww.str(name));
+    .list(s.friends, (ww, name) => ww.str(name))
+    .list(s.friendGuilds, (ww, name) => ww.str(name))
+    .list(s.enemyGuilds, (ww, name) => ww.str(name));
 }
 
 function readBotState(r: Reader): BotStateInfo {
@@ -235,6 +237,8 @@ function readBotState(r: Reader): BotStateInfo {
     running: r.u8() === 1,
     hunted: r.list((rr) => rr.str()),
     friends: r.list((rr) => rr.str()),
+    friendGuilds: r.list((rr) => rr.str()),
+    enemyGuilds: r.list((rr) => rr.str()),
   };
 }
 

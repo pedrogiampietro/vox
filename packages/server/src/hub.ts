@@ -1034,6 +1034,8 @@ export class Hub {
       running: this.rubinot?.isRunning ?? false,
       hunted: this.rubinot?.enemiesList ?? [...c.huntedNames],
       friends: this.rubinot?.friendsList ?? [],
+      friendGuilds: [...c.friendGuilds],
+      enemyGuilds: [...c.enemyGuilds],
     };
   }
 
@@ -1079,6 +1081,37 @@ export class Hub {
           );
         }
         this.deps.onChanged();
+        break;
+      }
+      case BotControlAction.AddFriendGuild:
+      case BotControlAction.AddEnemyGuild: {
+        const trimmed = clean(name, 64);
+        if (!trimmed) return this.fail(s, FailureCode.Malformed, 'nome vazio');
+        const list = action === BotControlAction.AddFriendGuild
+          ? this.botConfig.friendGuilds
+          : this.botConfig.enemyGuilds;
+        if (!list.some((g) => g.toLowerCase() === trimmed.toLowerCase())) {
+          list.push(trimmed);
+          this.deps.onChanged();
+          applyBotConfig(this);
+        }
+        break;
+      }
+      case BotControlAction.RemoveFriendGuild:
+      case BotControlAction.RemoveEnemyGuild: {
+        const trimmed = clean(name, 64);
+        if (!trimmed) return this.fail(s, FailureCode.Malformed, 'nome vazio');
+        if (action === BotControlAction.RemoveFriendGuild) {
+          this.botConfig.friendGuilds = this.botConfig.friendGuilds.filter(
+            (g) => g.toLowerCase() !== trimmed.toLowerCase(),
+          );
+        } else {
+          this.botConfig.enemyGuilds = this.botConfig.enemyGuilds.filter(
+            (g) => g.toLowerCase() !== trimmed.toLowerCase(),
+          );
+        }
+        this.deps.onChanged();
+        applyBotConfig(this);
         break;
       }
       default:
