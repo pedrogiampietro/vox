@@ -100,6 +100,8 @@ export class Hub {
     addHunted(n: string): void;
     removeHunted(n: string): void;
     huntedList: string[];
+    friendsList: string[];
+    enemiesList: string[];
     isRunning: boolean;
     start(): Promise<void>;
     stop(): void;
@@ -497,6 +499,12 @@ export class Hub {
         bc.globalLevelMin = clamp(m.globalLevelMin, 0, 4000);
         bc.summarizePresence = m.summarizePresence;
         bc.presenceSummaryMs = Math.max(m.presenceSummaryMs || 5 * 60_000, 60_000);
+        bc.alertEnemyDeath = m.alertEnemyDeath;
+        bc.alertFriendDeath = m.alertFriendDeath;
+        bc.alertFriendLevelUp = m.alertFriendLevelUp;
+        bc.alertEnemyLevelUp = m.alertEnemyLevelUp;
+        bc.alertEnemyOnline = m.alertEnemyOnline;
+        bc.alertEnemyOffline = m.alertEnemyOffline;
         this.deps.onChanged();
         applyBotConfig(this);
         this.broadcastBotState();
@@ -1017,8 +1025,15 @@ export class Hub {
       globalLevelMin: c.globalLevelMin,
       summarizePresence: c.summarizePresence,
       presenceSummaryMs: c.presenceSummaryMs,
+      alertEnemyDeath: c.alertEnemyDeath,
+      alertFriendDeath: c.alertFriendDeath,
+      alertFriendLevelUp: c.alertFriendLevelUp,
+      alertEnemyLevelUp: c.alertEnemyLevelUp,
+      alertEnemyOnline: c.alertEnemyOnline,
+      alertEnemyOffline: c.alertEnemyOffline,
       running: this.rubinot?.isRunning ?? false,
-      hunted: this.rubinot?.huntedList ?? [...c.huntedNames],
+      hunted: this.rubinot?.enemiesList ?? [...c.huntedNames],
+      friends: this.rubinot?.friendsList ?? [],
     };
   }
 

@@ -723,12 +723,6 @@ label.field {
   align-items: start;
 }
 
-.bot-page {
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-}
-
 .bot-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -772,6 +766,34 @@ label.field {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
+}
+
+.bot-name-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.bot-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.bot-name {
+  font-size: 13px;
+}
+
+.settings-hint {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 2px 0 6px;
 }
 
 .claim-form input,

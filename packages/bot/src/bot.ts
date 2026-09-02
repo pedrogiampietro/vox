@@ -28,6 +28,12 @@ export interface BotConfig {
   globalLevelMin: number;
   summarizePresence: boolean;
   presenceSummaryMs: number;
+  alertEnemyDeath: boolean;
+  alertFriendDeath: boolean;
+  alertFriendLevelUp: boolean;
+  alertEnemyLevelUp: boolean;
+  alertEnemyOnline: boolean;
+  alertEnemyOffline: boolean;
 }
 
 export function botConfigFromEnv(): BotConfig | null {
@@ -48,6 +54,12 @@ export function botConfigFromEnv(): BotConfig | null {
     globalLevelMin: 800,
     summarizePresence: true,
     presenceSummaryMs: 5 * 60 * 1000,
+    alertEnemyDeath: true,
+    alertFriendDeath: true,
+    alertFriendLevelUp: true,
+    alertEnemyLevelUp: true,
+    alertEnemyOnline: true,
+    alertEnemyOffline: true,
   };
 }
 
@@ -56,7 +68,10 @@ export function botConfigFromEnv(): BotConfig | null {
 export class RubinotBot {
   private deaths = new DeathTracker();
   private online: OnlineTracker;
-  private readonly hunted = new Set<string>();
+  /** Adicionados manualmente pelo owner: sao os inimigos. */
+  private readonly enemies = new Set<string>();
+  /** Puxados do guildName: sao os amigos. */
+  private readonly friends = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ac = new AbortController();
   private running = false;
@@ -69,7 +84,7 @@ export class RubinotBot {
     private cfg: BotConfig,
   ) {
     this.online = new OnlineTracker(cfg.world);
-    for (const n of cfg.huntedNames) this.hunted.add(n.toLowerCase());
+    for (const n of cfg.huntedNames) this.enemies.add(n.toLowerCase());
   }
 
   get isRunning(): boolean {
@@ -78,6 +93,14 @@ export class RubinotBot {
 
   get config(): BotConfig {
     return { ...this.cfg, huntedNames: this.huntedList };
+  }
+
+  get friendsList(): string[] {
+    return [...this.friends];
+  }
+
+  get enemiesList(): string[] {
+    return [...this.enemies];
   }
 
   async start(): Promise<void> {
@@ -96,8 +119,9 @@ export class RubinotBot {
     await this.online.poll(this.ac.signal);
     this.running = true;
     console.log(
-      `[bot] ativo: world=${this.cfg.world}, hunted=${this.hunted.size}, ` +
-        `canal="${this.cfg.channelName}", intervalo=${this.cfg.intervalMs / 1000}s`,
+      `[bot] ativo: world=${this.cfg.world}, inimigos=${this.enemies.size}, ` +
+        `amigos=${this.friends.size}, canal="${this.cfg.channelName}", ` +
+        `intervalo=${this.cfg.intervalMs / 1000}s`,
     );
 
     this.timer = setInterval(() => void this.tick(), this.cfg.intervalMs);
@@ -120,8 +144,9 @@ export class RubinotBot {
     this.cfg = newCfg;
     this.deaths = new DeathTracker();
     this.online = new OnlineTracker(newCfg.world);
-    this.hunted.clear();
-    for (const n of newCfg.huntedNames) this.hunted.add(n.toLowerCase());
+    this.enemies.clear();
+    this.friends.clear();
+    for (const n of newCfg.huntedNames) this.enemies.add(n.toLowerCase());
     this.pendingLogins.length = 0;
     this.pendingLogouts.length = 0;
     this.nextPresenceSummaryAt = 0;
@@ -131,15 +156,16 @@ export class RubinotBot {
   }
 
   addHunted(name: string): void {
-    this.hunted.add(name.toLowerCase());
+    this.enemies.add(name.toLowerCase());
   }
 
   removeHunted(name: string): void {
-    this.hunted.delete(name.toLowerCase());
+    this.enemies.delete(name.toLowerCase());
   }
 
+  /** Lista combinada, para clientes antigos e persistencia. */
   get huntedList(): string[] {
-    return [...this.hunted];
+    return [...new Set([...this.enemies, ...this.friends])];
   }
 
   // ---------------------------------------------------------------- poll --
@@ -162,51 +188,78 @@ export class RubinotBot {
 
   // -------------------------------------------------------------- events --
 
-  private isTracked(name: string): boolean {
-    return this.hunted.has(name.toLowerCase());
+  private isFriend(name: string): boolean {
+    return this.friends.has(name.toLowerCase());
+  }
+
+  private isEnemy(name: string): boolean {
+    const key = name.toLowerCase();
+    // Se o mesmo nome aparece nas duas listas, tratamos como amigo:
+    // guildmates promovem, inimigos afiliados nao existem.
+    return this.enemies.has(key) && !this.friends.has(key);
   }
 
   private onDeath(ev: DeathEvent): void {
     if (ev.world !== this.cfg.world) return;
 
-    const victimTracked = this.isTracked(ev.victim);
-    const killerTracked = ev.killerIsPlayer && this.isTracked(ev.killedBy);
+    const victimFriend = this.isFriend(ev.victim);
+    const victimEnemy = this.isEnemy(ev.victim);
+    const killerFriend = ev.killerIsPlayer && this.isFriend(ev.killedBy);
+    const killerEnemy = ev.killerIsPlayer && this.isEnemy(ev.killedBy);
 
-    if (!victimTracked && !killerTracked) return;
+    if (!victimFriend && !victimEnemy && !killerFriend && !killerEnemy) return;
 
-    let msg: string;
-    if (victimTracked && ev.killerIsPlayer) {
-      msg = `[death] ${ev.victim} (lvl ${ev.level}) morreu para ${ev.killedBy}`;
-    } else if (victimTracked) {
-      msg = `[death] ${ev.victim} (lvl ${ev.level}) morreu para ${ev.killedBy} (mob)`;
-    } else {
-      msg = `[kill] ${ev.killedBy} matou ${ev.victim} (lvl ${ev.level})`;
+    // Cada linha pode ser sobre a morte da vitima ou sobre o kill do outro:
+    // enviamos ate as duas mensagens quando ambos os lados estao rastreados,
+    // respeitando o toggle de cada uma.
+    if (victimFriend || victimEnemy) {
+      const allow = victimFriend ? this.cfg.alertFriendDeath : this.cfg.alertEnemyDeath;
+      if (allow) {
+        const cause = ev.killerIsPlayer ? ev.killedBy : `${ev.killedBy} (mob)`;
+        const tag = victimFriend ? 'death/amigo' : 'death/inimigo';
+        this.post(`[${tag}] ${ev.victim} (lvl ${ev.level}) morreu para ${cause}`, this.cfg.globalDeaths);
+      }
     }
-
-    const global = msg.startsWith('[death]')
-      ? this.cfg.globalDeaths
-      : this.cfg.globalKills;
-    this.post(msg, global);
+    if (killerFriend || killerEnemy) {
+      // Se a vitima ja gerou o post e ela tambem estava rastreada, evitar
+      // ruido dobrado — a linha de death ja cita o killer.
+      if (victimFriend || victimEnemy) return;
+      const allow = killerFriend ? this.cfg.alertFriendDeath : this.cfg.alertEnemyDeath;
+      if (allow) {
+        const tag = killerFriend ? 'kill/amigo' : 'kill/inimigo';
+        this.post(`[${tag}] ${ev.killedBy} matou ${ev.victim} (lvl ${ev.level})`, this.cfg.globalKills);
+      }
+    }
   }
 
   private onOnline(ev: OnlineEvent): void {
-    if (!this.isTracked(ev.player)) return;
+    const friend = this.isFriend(ev.player);
+    const enemy = this.isEnemy(ev.player);
+    if (!friend && !enemy) return;
 
     switch (ev.type) {
       case 'login':
-        this.post(`[online] ${ev.player} logou (lvl ${ev.level}, ${ev.vocation ?? '?'})`, false);
-        this.pendingLogins.push(ev);
+        if (enemy && this.cfg.alertEnemyOnline) {
+          this.post(`[online/inimigo] ${ev.player} logou (lvl ${ev.level}, ${ev.vocation ?? '?'})`, false);
+        }
+        if (enemy) this.pendingLogins.push(ev);
         break;
       case 'logout':
-        this.post(`[offline] ${ev.player} deslogou (lvl ${ev.level})`, false);
-        this.pendingLogouts.push(ev);
+        if (enemy && this.cfg.alertEnemyOffline) {
+          this.post(`[offline/inimigo] ${ev.player} deslogou (lvl ${ev.level})`, false);
+        }
+        if (enemy) this.pendingLogouts.push(ev);
         break;
-      case 'levelup':
+      case 'levelup': {
+        const allow = friend ? this.cfg.alertFriendLevelUp : this.cfg.alertEnemyLevelUp;
+        if (!allow) return;
+        const tag = friend ? 'levelup/amigo' : 'levelup/inimigo';
         this.post(
-          `[levelup] ${ev.player} subiu de ${ev.previousLevel} para ${ev.level}`,
+          `[${tag}] ${ev.player} subiu de ${ev.previousLevel} para ${ev.level}`,
           this.cfg.globalLevelMin > 0 && ev.level >= this.cfg.globalLevelMin,
         );
         break;
+      }
     }
   }
 
@@ -255,16 +308,10 @@ export class RubinotBot {
   private async syncGuildMembers(): Promise<void> {
     try {
       const guild = await fetchGuild(this.cfg.guildName, this.ac.signal);
-      let added = 0;
-      for (const m of guild.members) {
-        const key = m.name.toLowerCase();
-        if (!this.hunted.has(key)) {
-          this.hunted.add(key);
-          added++;
-        }
-      }
+      this.friends.clear();
+      for (const m of guild.members) this.friends.add(m.name.toLowerCase());
       console.log(
-        `[bot] guild "${this.cfg.guildName}": ${guild.members.length} membros, ${added} novos na hunted list`,
+        `[bot] guild "${this.cfg.guildName}": ${guild.members.length} amigos carregados`,
       );
     } catch (err) {
       console.error(`[bot] falha ao carregar guild "${this.cfg.guildName}":`, err);

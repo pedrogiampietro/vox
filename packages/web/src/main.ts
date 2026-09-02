@@ -52,7 +52,7 @@ let settingsOpen = false;
 
 let selectedChannelId = 0;
 let selectedClientId = 0;
-let selectedTool: 'statistics' | 'claims' | 'bot' | null = null;
+let selectedTool: 'statistics' | 'claims' | null = null;
 
 // ---- drag-to-move state ----
 let dragClientId = 0;
@@ -303,16 +303,12 @@ function renderToolRows(parent: HTMLElement): void {
   const stats = renderToolRow('statistics', 'statistics', String(client.clients.size));
   const claims = renderToolRow('claims', 'claimed resp', String(client.claims.size));
   parent.append(stats, claims);
-  if (client.myGroup >= Group.Owner) {
-    const bot = renderToolRow('bot', 'bot', client.botState?.running ? 'on' : 'off');
-    parent.append(bot);
-  }
 }
 
-function renderToolRow(tool: 'statistics' | 'claims' | 'bot', label: string, count: string): HTMLElement {
+function renderToolRow(tool: 'statistics' | 'claims', label: string, count: string): HTMLElement {
   const row = $('div', 'room tool-channel');
   if (selectedTool === tool) row.classList.add('selected');
-  const glyph = tool === 'statistics' ? '≡' : tool === 'claims' ? '◇' : '✦';
+  const glyph = tool === 'statistics' ? '≡' : '◇';
   row.append(text('span', 'idx', glyph));
   const info = $('div', 'room-info');
   info.append(text('span', 'name', label));
@@ -322,7 +318,6 @@ function renderToolRow(tool: 'statistics' | 'claims' | 'bot', label: string, cou
     selectedChannelId = 0;
     selectedClientId = 0;
     client.activeDmTab = null;
-    if (tool === 'bot' && client.botState === null) client.getBotState();
     render();
   });
   return row;
@@ -535,14 +530,6 @@ function renderTalk(): HTMLElement {
   if (selectedTool === 'claims') {
     pane.append(renderRespClaimsPanel());
     return pane;
-  }
-  if (selectedTool === 'bot') {
-    if (client.myGroup < Group.Owner) {
-      selectedTool = null;
-    } else {
-      pane.append(renderBotPanel());
-      return pane;
-    }
   }
 
   // info panel (channel or client)
@@ -1102,29 +1089,35 @@ function renderRespawnCatalogRow(
   return row;
 }
 
-function renderBotPanel(): HTMLElement {
-  const panel = $('section', 'bot-page');
-  const head = $('div', 'claims-head');
-  head.append(text('h2', '', 'bot rubinot'));
-  const running = client.botState?.running ?? false;
-  head.append(text('span', 'label', running ? 'rodando' : 'parado'));
-  panel.append(head);
-
+function buildBotSection(body: HTMLElement, rebuild: () => void): void {
+  if (client.botState === null) client.getBotState();
   const state = client.botState;
+
+  body.append(text('h3', '', 'BOT RUBINOT'));
+
   if (!state) {
-    panel.append(text('div', 'claims-empty', 'carregando configuracao...'));
-    return panel;
+    body.append(text('span', '', 'carregando configuracao...'));
+    return;
   }
 
-  const form = $('section', 'claims-panel bot-form');
-  form.append(text('h3', '', 'configuracao'));
+  const status = $('div', 'settings-row');
+  const running = state.running;
+  status.append(
+    text('span', '', `estado: ${running ? 'rodando' : 'parado'}`),
+  );
+  body.append(status);
+
+  // ---- config -----------------------------------------------------------
+  const cfgHeader = text('h3', '', 'CONEXAO');
+  cfgHeader.style.cssText = 'margin-top:14px;';
+  body.append(cfgHeader);
 
   const worldInput = $('input') as HTMLInputElement;
   worldInput.placeholder = 'ex: Vesperia';
   worldInput.value = state.world;
 
   const guildInput = $('input') as HTMLInputElement;
-  guildInput.placeholder = 'opcional';
+  guildInput.placeholder = 'opcional — guildmates viram amigos';
   guildInput.value = state.guildName;
 
   const channelInput = $('input') as HTMLInputElement;
@@ -1136,6 +1129,45 @@ function renderBotPanel(): HTMLElement {
   intervalInput.step = '5';
   intervalInput.value = String(Math.max(Math.round(state.intervalMs / 1000), 10));
 
+  const grid = $('div', 'bot-grid');
+  grid.append(
+    botField('world', worldInput),
+    botField('guild (opcional)', guildInput),
+    botField('canal', channelInput),
+    botField('intervalo (s)', intervalInput),
+  );
+  body.append(grid);
+
+  // ---- alertas por evento ----------------------------------------------
+  const alertsHeader = text('h3', '', 'ALERTAS');
+  alertsHeader.style.cssText = 'margin-top:14px;';
+  body.append(alertsHeader);
+  body.append(text('span', 'settings-hint', 'escolha o que o bot deve postar no canal.'));
+
+  const enemyDeathCb = boolCheckbox(state.alertEnemyDeath);
+  const friendDeathCb = boolCheckbox(state.alertFriendDeath);
+  const friendLvlCb = boolCheckbox(state.alertFriendLevelUp);
+  const enemyLvlCb = boolCheckbox(state.alertEnemyLevelUp);
+  const enemyOnCb = boolCheckbox(state.alertEnemyOnline);
+  const enemyOffCb = boolCheckbox(state.alertEnemyOffline);
+
+  const alerts = $('div', 'bot-grid');
+  alerts.append(
+    botField('morte de inimigo', enemyDeathCb),
+    botField('morte de amigo', friendDeathCb),
+    botField('level up de amigo', friendLvlCb),
+    botField('level up de inimigo', enemyLvlCb),
+    botField('inimigo online', enemyOnCb),
+    botField('inimigo offline', enemyOffCb),
+  );
+  body.append(alerts);
+
+  // ---- broadcast global -----------------------------------------------
+  const broadHeader = text('h3', '', 'BROADCAST');
+  broadHeader.style.cssText = 'margin-top:14px;';
+  body.append(broadHeader);
+  body.append(text('span', 'settings-hint', 'enviar tambem para quem esta fora do canal do bot.'));
+
   const levelInput = $('input') as HTMLInputElement;
   levelInput.type = 'number';
   levelInput.min = '0';
@@ -1146,42 +1178,28 @@ function renderBotPanel(): HTMLElement {
   presenceInput.min = '1';
   presenceInput.value = String(Math.max(Math.round(state.presenceSummaryMs / 60_000), 1));
 
-  const deathsCb = $('input') as HTMLInputElement;
-  deathsCb.type = 'checkbox';
-  deathsCb.checked = state.globalDeaths;
+  const deathsCb = boolCheckbox(state.globalDeaths);
+  const killsCb = boolCheckbox(state.globalKills);
+  const summarizeCb = boolCheckbox(state.summarizePresence);
+  const enabledCb = boolCheckbox(state.enabled);
 
-  const killsCb = $('input') as HTMLInputElement;
-  killsCb.type = 'checkbox';
-  killsCb.checked = state.globalKills;
-
-  const summarizeCb = $('input') as HTMLInputElement;
-  summarizeCb.type = 'checkbox';
-  summarizeCb.checked = state.summarizePresence;
-
-  const enabledCb = $('input') as HTMLInputElement;
-  enabledCb.type = 'checkbox';
-  enabledCb.checked = state.enabled;
-
-  const grid = $('div', 'bot-grid');
-  grid.append(
-    botField('world', worldInput),
-    botField('guild (opcional)', guildInput),
-    botField('canal', channelInput),
-    botField('intervalo (s)', intervalInput),
-    botField('nivel minimo (global)', levelInput),
+  const broad = $('div', 'bot-grid');
+  broad.append(
+    botField('nivel minimo (levelup global)', levelInput),
     botField('resumo presenca (min)', presenceInput),
     botField('mortes globais', deathsCb),
     botField('kills globais', killsCb),
     botField('resumir login/logout', summarizeCb),
     botField('habilitar bot', enabledCb),
   );
-  form.append(grid);
+  body.append(broad);
 
+  // ---- actions --------------------------------------------------------
   const actions = $('div', 'bot-actions');
   const save = $('button', 'primary');
-  save.textContent = 'salvar';
+  save.textContent = 'salvar configuracao';
   save.addEventListener('click', () => {
-    const cfg: Omit<BotStateInfo, 'hunted' | 'running'> = {
+    const cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'running'> = {
       world: worldInput.value.trim(),
       guildName: guildInput.value.trim(),
       channelName: channelInput.value.trim() || 'bot',
@@ -1192,20 +1210,33 @@ function renderBotPanel(): HTMLElement {
       globalKills: killsCb.checked,
       summarizePresence: summarizeCb.checked,
       enabled: enabledCb.checked,
+      alertEnemyDeath: enemyDeathCb.checked,
+      alertFriendDeath: friendDeathCb.checked,
+      alertFriendLevelUp: friendLvlCb.checked,
+      alertEnemyLevelUp: enemyLvlCb.checked,
+      alertEnemyOnline: enemyOnCb.checked,
+      alertEnemyOffline: enemyOffCb.checked,
     };
     client.updateBotConfig(cfg);
+    setTimeout(rebuild, 200);
   });
   actions.append(save);
 
   const startBtn = $('button', 'ghost');
   startBtn.textContent = running ? 'reiniciar' : 'iniciar';
-  startBtn.addEventListener('click', () => client.botControl(BotControlAction.Start));
+  startBtn.addEventListener('click', () => {
+    client.botControl(BotControlAction.Start);
+    setTimeout(rebuild, 200);
+  });
   actions.append(startBtn);
 
   if (running) {
     const stopBtn = $('button', 'ghost danger');
     stopBtn.textContent = 'parar';
-    stopBtn.addEventListener('click', () => client.botControl(BotControlAction.Stop));
+    stopBtn.addEventListener('click', () => {
+      client.botControl(BotControlAction.Stop);
+      setTimeout(rebuild, 200);
+    });
     actions.append(stopBtn);
   }
 
@@ -1214,12 +1245,13 @@ function renderBotPanel(): HTMLElement {
   testBtn.addEventListener('click', () => client.botControl(BotControlAction.Test));
   actions.append(testBtn);
 
-  form.append(actions);
-  panel.append(form);
+  body.append(actions);
 
-  // ---- hunted -----------------------------------------------------------
-  const hunted = $('section', 'claims-panel');
-  hunted.append(text('h3', '', `hunted list (${state.hunted.length})`));
+  // ---- inimigos (hunted) ---------------------------------------------
+  const enemiesHeader = text('h3', '', `INIMIGOS (${state.hunted.length})`);
+  enemiesHeader.style.cssText = 'margin-top:14px;';
+  body.append(enemiesHeader);
+  body.append(text('span', 'settings-hint', 'nomes adicionados manualmente.'));
 
   const addRow = $('div', 'bot-hunted-add');
   const addInput = $('input') as HTMLInputElement;
@@ -1231,32 +1263,55 @@ function renderBotPanel(): HTMLElement {
     if (!name) return;
     client.botControl(BotControlAction.AddHunted, name);
     addInput.value = '';
+    setTimeout(rebuild, 200);
   };
   addBtn.addEventListener('click', addAction);
   addInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') addAction();
   });
   addRow.append(addInput, addBtn);
-  hunted.append(addRow);
+  body.append(addRow);
 
   if (state.hunted.length === 0) {
-    hunted.append(text('div', 'claims-empty', 'nenhum jogador hunted'));
+    body.append(text('span', 'settings-hint', 'nenhum inimigo cadastrado.'));
   } else {
-    const list = $('div', 'claims-list');
+    const list = $('div', 'bot-name-list');
     for (const name of [...state.hunted].sort((a, b) => a.localeCompare(b))) {
-      const row = $('div', 'claim-row');
-      row.append(text('strong', 'claim-main', name));
+      const row = $('div', 'bot-name-row');
+      row.append(text('span', 'bot-name', name));
       const remove = $('button', 'ghost danger');
       remove.textContent = 'remover';
-      remove.addEventListener('click', () => client.botControl(BotControlAction.RemoveHunted, name));
+      remove.addEventListener('click', () => {
+        client.botControl(BotControlAction.RemoveHunted, name);
+        setTimeout(rebuild, 200);
+      });
       row.append(remove);
       list.append(row);
     }
-    hunted.append(list);
+    body.append(list);
   }
-  panel.append(hunted);
 
-  return panel;
+  // ---- amigos (guild) ------------------------------------------------
+  if (state.friends.length > 0) {
+    const fHeader = text('h3', '', `AMIGOS (${state.friends.length})`);
+    fHeader.style.cssText = 'margin-top:14px;';
+    body.append(fHeader);
+    body.append(text('span', 'settings-hint', `sincronizados da guild "${state.guildName || '?'}".`));
+    const list = $('div', 'bot-name-list');
+    for (const name of [...state.friends].sort((a, b) => a.localeCompare(b))) {
+      const row = $('div', 'bot-name-row');
+      row.append(text('span', 'bot-name', name));
+      list.append(row);
+    }
+    body.append(list);
+  }
+}
+
+function boolCheckbox(checked: boolean): HTMLInputElement {
+  const cb = $('input') as HTMLInputElement;
+  cb.type = 'checkbox';
+  cb.checked = checked;
+  return cb;
 }
 
 function botField(label: string, control: HTMLElement): HTMLElement {
@@ -1447,7 +1502,12 @@ function renderSettings(): HTMLElement {
     { id: 'capture', icon: '🎙', label: 'Capturar' },
     { id: 'playback', icon: '🔊', label: 'Reprodução' },
     { id: 'notifications', icon: '🔔', label: 'Notificações' },
-    ...(client.myGroup >= Group.Owner ? [{ id: 'groups', icon: '👥', label: 'Grupos' }] : []),
+    ...(client.myGroup >= Group.Owner
+      ? [
+          { id: 'groups', icon: '👥', label: 'Grupos' },
+          { id: 'bot', icon: '🤖', label: 'Bot' },
+        ]
+      : []),
   ];
   let activeSection = 'identity';
 
@@ -1476,6 +1536,7 @@ function renderSettings(): HTMLElement {
     else if (activeSection === 'playback') buildPlaybackSection(body);
     else if (activeSection === 'notifications') buildNotificationsSection(body);
     else if (activeSection === 'groups') buildGroupsSection(body, buildBody);
+    else if (activeSection === 'bot') buildBotSection(body, buildBody);
   }
 
   // --- footer ---

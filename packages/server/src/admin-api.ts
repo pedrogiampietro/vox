@@ -256,6 +256,12 @@ export class AdminApi {
       if (body.presenceSummaryMs !== undefined) {
         bc.presenceSummaryMs = Math.max(int(body.presenceSummaryMs, 5 * 60_000), 60_000);
       }
+      if (body.alertEnemyDeath !== undefined) bc.alertEnemyDeath = !!body.alertEnemyDeath;
+      if (body.alertFriendDeath !== undefined) bc.alertFriendDeath = !!body.alertFriendDeath;
+      if (body.alertFriendLevelUp !== undefined) bc.alertFriendLevelUp = !!body.alertFriendLevelUp;
+      if (body.alertEnemyLevelUp !== undefined) bc.alertEnemyLevelUp = !!body.alertEnemyLevelUp;
+      if (body.alertEnemyOnline !== undefined) bc.alertEnemyOnline = !!body.alertEnemyOnline;
+      if (body.alertEnemyOffline !== undefined) bc.alertEnemyOffline = !!body.alertEnemyOffline;
       hub.botConfig = bc;
       this.registry.scheduleSave();
       applyBotConfig(hub);
