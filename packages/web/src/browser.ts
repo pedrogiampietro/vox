@@ -61,14 +61,13 @@ function renderServerCard(fav: Favorite, options: BrowserViewOptions): HTMLEleme
   const card = $('div', 'server-card');
   card.style.cursor = 'pointer';
 
-  const slot = text('span', 'slot', fav.serverId ? String(fav.serverId) : '–');
+  const slot = text('span', 'slot', '•');
   const info = $('div', '');
   const displayName = fav.label || fav.address || 'local';
   info.append(text('div', 'name', displayName));
   const details: string[] = [];
   if (fav.address) details.push(fav.address);
   if (fav.nickname) details.push(fav.nickname);
-  if (fav.serverId) details.push(`vsrv #${fav.serverId}`);
   info.append(text('div', 'where', details.join(' · ') || 'servidor local'));
   const occ = $('div', 'occupancy');
 
@@ -88,7 +87,7 @@ function renderServerCard(fav: Favorite, options: BrowserViewOptions): HTMLEleme
 
 function renderLiveCard(s: ServerStatus, options: BrowserViewOptions): HTMLElement {
   const card = $('button', 'server-card');
-  const slot = text('span', 'slot', String(s.id));
+  const slot = text('span', 'slot', '•');
   const info = $('div', '');
   info.append(text('div', 'name', s.name), text('div', 'where', s.motd || '–'));
   const occ = renderOccupancy(s.clients, s.maxClients);
@@ -140,16 +139,12 @@ function renderAddForm(options: BrowserViewOptions): HTMLElement {
     }
     form = $('div', 'form-grid');
 
-    const lblName = $('label', 'field');
-    lblName.append(text('span', 'label', 'nome do servidor'));
-    const inpName = $('input') as HTMLInputElement;
-    inpName.placeholder = 'ex: servidor da galera';
-    lblName.append(inpName);
-
     const lblAddr = $('label', 'field');
-    lblAddr.append(text('span', 'label', 'endereco (IP ou dominio)'));
+    lblAddr.append(text('span', 'label', 'codigo ou endereco do servidor'));
     const inpAddr = $('input') as HTMLInputElement;
-    inpAddr.placeholder = '127.0.0.1';
+    inpAddr.placeholder = 'manowar ou manowar.v0x.online';
+    inpAddr.setAttribute('autocomplete', 'url');
+    lblAddr.classList.add('wide');
     lblAddr.append(inpAddr);
 
     const lblNick = $('label', 'field');
@@ -162,24 +157,22 @@ function renderAddForm(options: BrowserViewOptions): HTMLElement {
     lblPass.append(text('span', 'label', 'senha (opcional)'));
     const inpPass = $('input') as HTMLInputElement;
     inpPass.type = 'password';
-    inpPass.placeholder = 'senha do servidor ou admin';
+    inpPass.placeholder = 'se houver';
     lblPass.append(inpPass);
 
-    const lblSid = $('label', 'field');
-    lblSid.append(text('span', 'label', 'servidor virtual (0 = primeiro)'));
-    const inpSid = $('input') as HTMLInputElement;
-    inpSid.type = 'number';
-    inpSid.value = '0';
-    lblSid.append(inpSid);
-
     const submit = $('button', 'primary wide');
-    submit.textContent = 'salvar e conectar';
+    submit.textContent = 'entrar no servidor';
     submit.addEventListener('click', () => {
+      const address = resolveAddress(inpAddr.value);
+      if (!address) {
+        inpAddr.focus();
+        return;
+      }
       const fav: Favorite = {
         id: newFavoriteId(),
-        label: inpName.value.trim() || inpAddr.value || 'local',
-        address: inpAddr.value.trim(),
-        serverId: Number(inpSid.value) || 0,
+        label: address,
+        address,
+        serverId: 0,
         nickname: inpNick.value.trim() || 'eu',
         password: inpPass.value,
         lastUsed: Date.now(),
@@ -188,7 +181,7 @@ function renderAddForm(options: BrowserViewOptions): HTMLElement {
       options.connectTo(fav);
     });
 
-    form.append(lblName, lblAddr, lblNick, lblPass, lblSid, submit);
+    form.append(lblAddr, lblNick, lblPass, submit);
     wrap.append(form);
     open = true;
   });
@@ -221,11 +214,9 @@ function showEditFavoriteMenu(anchor: HTMLElement, fav: Favorite, rerender: () =
     return inp;
   }
 
-  const inpLabel = field('apelido do servidor', fav.label, 'meu servidor');
-  const inpAddr = field('endereco (IP ou dominio)', fav.address, '127.0.0.1');
+  const inpAddr = field('codigo ou endereco', fav.address, 'manowar.v0x.online');
   const inpNick = field('seu apelido', fav.nickname, 'eu');
   const inpPass = field('senha', fav.password, '', 'password');
-  const inpSid = field('servidor virtual (0 = primeiro)', String(fav.serverId), '0', 'number');
 
   const btnRow = $('div', '');
   btnRow.style.cssText = 'display:grid;grid-template-columns:1fr auto auto;gap:8px;margin-top:8px;';
@@ -234,11 +225,10 @@ function showEditFavoriteMenu(anchor: HTMLElement, fav: Favorite, rerender: () =
   saveBtn.textContent = 'salvar';
   saveBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    fav.label = inpLabel.value.trim() || fav.address || 'local';
-    fav.address = inpAddr.value.trim();
+    fav.address = resolveAddress(inpAddr.value);
+    fav.label = fav.address || 'servidor';
     fav.nickname = inpNick.value.trim() || 'eu';
     fav.password = inpPass.value;
-    fav.serverId = Number(inpSid.value) || 0;
     fav.lastUsed = Date.now();
     saveFavorite(fav);
     closeMenu();
@@ -266,4 +256,11 @@ function showEditFavoriteMenu(anchor: HTMLElement, fav: Favorite, rerender: () =
   menu.append(form);
 
   openCustomMenu(anchor, menu);
+}
+
+function resolveAddress(value: string): string {
+  const address = value.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  if (!address || address === 'localhost' || /^\d+(?:\.\d+){3}(?::\d+)?$/.test(address)) return address;
+  if (/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/i.test(address)) return `${address}.v0x.online`;
+  return address;
 }
