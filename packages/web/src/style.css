@@ -1714,6 +1714,85 @@ label.field {
   font-weight: 600;
 }
 
+/* -------------------------------------------------------- screen sharing -- */
+
+.screen-dock {
+  position: fixed;
+  right: 16px;
+  bottom: 64px;
+  z-index: 30;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(60vh, 420px);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(29, 27, 24, 0.94);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-xl);
+}
+
+.screen-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.screen-title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.screen-head button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.screen-tile {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--ink-900);
+  aspect-ratio: 16 / 9;
+}
+
+.screen-tile video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: #050505;
+}
+
+.screen-label {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  font-size: 11px;
+}
+
+.screen-error {
+  padding: 8px;
+  border: 1px solid var(--alert-dim);
+  border-radius: 6px;
+  background: rgba(145, 55, 45, 0.12);
+  color: #f3ccc4;
+  font-size: 12px;
+}
+
 /* ------------------------------------------------------- menu de contexto -- */
 
 .menu {
