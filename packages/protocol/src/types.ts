@@ -1,6 +1,7 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 8: read receipts para mensagens privadas.
  * 7: guilds amigas/inimigas configuraveis (varias por lado).
  * 6: alertas do bot com toggles amigo/inimigo.
  * 5: configuracao do bot Rubinot editavel a partir do cliente (owner).
@@ -8,7 +9,7 @@
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -50,6 +51,7 @@ export enum Op {
   GetBotState = 0x74,
   UpdateBotConfig = 0x75,
   BotControl = 0x76,
+  ChatRead = 0x77,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -69,6 +71,7 @@ export enum Op {
   BotCommandResult = 0xc0,
   RespClaims = 0xc1,
   BotState = 0xc2,
+  ChatReadDeliver = 0xc3,
 }
 
 export enum BotControlAction {

@@ -520,6 +520,20 @@ export class Hub {
         this.applyBotControl(s, m.action, m.name);
         break;
       }
+
+      case Op.ChatRead: {
+        // Confirmacao de leitura de DM: encaminha ao remetente. Nao precisa
+        // persistir; se o remetente estiver offline, o read simplesmente se
+        // perde — o receptor confirma de novo ao reabrir a aba.
+        const target = this.sessions.get(m.targetId);
+        if (!target || target === s) break;
+        target.send(encodeServerMessage({
+          t: Op.ChatReadDeliver,
+          readerId: s.id,
+          upToStamp: m.upToStamp,
+        }));
+        break;
+      }
     }
   }
 

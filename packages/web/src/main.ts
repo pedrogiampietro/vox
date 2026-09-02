@@ -11,7 +11,7 @@
  */
 
 import { initNotifications, notify, requestNotificationPermission } from './notifications.js';
-import { VoxClient } from './client.js';
+import { VoxClient, type ChatLine } from './client.js';
 import type { MicSettings } from './audio/microphone.js';
 import { isMicTestRunning, startMicTest, stopMicTest } from './audio/mic-test.js';
 import { renderBrowserView } from './browser.js';
@@ -578,20 +578,39 @@ function renderTalk(): HTMLElement {
     const close = text('span', 'tab-close', '×');
     close.addEventListener('click', (e) => { e.stopPropagation(); client.closeDm(dmId); render(); });
     tab.append(close);
-    tab.addEventListener('click', () => { client.activeDmTab = dmId; dm.unread = 0; render(); });
+    tab.addEventListener('click', () => {
+      client.activeDmTab = dmId;
+      dm.unread = 0;
+      client.markDmRead(dmId);
+      render();
+    });
     tabs.append(tab);
   }
   pane.append(tabs);
 
   // chat log
-  const messages = client.activeDmTab !== null
-    ? client.dmMessages(client.activeDmTab)
+  const isDmView = client.activeDmTab !== null;
+  const dmPeerId = client.activeDmTab;
+  const messages = isDmView
+    ? client.dmMessages(client.activeDmTab!)
     : client.channelMessages();
 
-  const log = $('div', 'log');
+  // Se a aba de DM esta em foco, mandamos read receipt para o pico atual das
+  // mensagens recebidas — cobre o caso de novas mensagens chegando enquanto a
+  // aba ja estava aberta.
+  if (isDmView && dmPeerId !== null) client.markDmRead(dmPeerId);
+
+  const log = $('div', isDmView ? 'log dm-log' : 'log');
+  const readStamp = dmPeerId !== null ? (client.dmReadStamps.get(dmPeerId) ?? 0) : 0;
   for (const line of messages) {
+    // Em DM view, mensagens de usuarios (nao-sistema, nao-bot) viram bolhas.
+    const isSystem = line.senderId === 0;
+    if (isDmView && !isSystem) {
+      log.append(renderDmBubble(line, line.senderId === client.selfId, readStamp));
+      continue;
+    }
     const row = $('div', 'line');
-    if (line.senderId === 0) row.classList.add('system');
+    if (isSystem) row.classList.add('system');
     if (line.scope === ChatScope.Private) row.classList.add('dm');
     const isBot = line.senderId === 0 && line.senderName === 'rubinot';
     const parsed = isBot ? parseBotLine(line.text) : null;
@@ -1384,6 +1403,37 @@ function buildGuildManager(
     list.append(rr);
   }
   body.append(list);
+}
+
+function renderDmBubble(line: ChatLine, mine: boolean, peerReadStamp: number): HTMLElement {
+  const row = $('div', `dm-row ${mine ? 'dm-out' : 'dm-in'}`);
+
+  if (!mine) {
+    const avatar = $('div', 'dm-avatar');
+    avatar.textContent = (line.senderName || '?').charAt(0).toUpperCase();
+    row.append(avatar);
+  }
+
+  const bubble = $('div', 'dm-bubble');
+  bubble.append(text('div', 'dm-text', line.text));
+
+  const meta = $('div', 'dm-meta');
+  meta.append(text('time', '', timeHHMM(line.stamp)));
+  if (mine) {
+    const read = line.stamp <= peerReadStamp;
+    const check = text('span', `dm-check ${read ? 'read' : 'sent'}`, read ? '✓✓' : '✓');
+    check.title = read ? 'lida' : 'enviada';
+    meta.append(check);
+  }
+  bubble.append(meta);
+  row.append(bubble);
+
+  if (mine) {
+    const avatar = $('div', 'dm-avatar dm-avatar-mine');
+    avatar.textContent = (client.self?.nickname || '?').charAt(0).toUpperCase();
+    row.append(avatar);
+  }
+  return row;
 }
 
 interface ParsedBotLine {

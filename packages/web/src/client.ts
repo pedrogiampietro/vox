@@ -50,6 +50,8 @@ export class VoxClient {
   readonly clients = new Map<number, ClientInfo>();
   readonly claims = new Map<number, RespClaimInfo>();
   botState: BotStateInfo | null = null;
+  /** peerId -> maior stamp da minha DM outgoing que este peer confirmou ler. */
+  readonly dmReadStamps = new Map<number, number>();
   readonly chat: ChatLine[] = [];
   notice: Notice | null = null;
   /** Mensagens que chegaram com o chat fora de foco. */
@@ -215,6 +217,7 @@ export class VoxClient {
     this.clients.clear();
     this.claims.clear();
     this.dmTabs.clear();
+    this.dmReadStamps.clear();
     this.activeDmTab = null;
     this.selfId = 0;
     this.myGroup = Group.Guest;
@@ -446,6 +449,18 @@ export class VoxClient {
     this.connection.send({ t: Op.BotControl, action, name });
   }
 
+  /** Marca as DMs recebidas deste peer como lidas ate `upToStamp`. */
+  markDmRead(peerId: number): void {
+    const msgs = this.dmMessages(peerId);
+    // Ultima mensagem recebida (que nao seja minha).
+    let last = 0;
+    for (const m of msgs) {
+      if (m.senderId === peerId && m.stamp > last) last = m.stamp;
+    }
+    if (last === 0) return;
+    this.connection.send({ t: Op.ChatRead, targetId: peerId, upToStamp: last });
+  }
+
   say(text: string, scope?: ChatScope, targetId?: number): void {
     const body = text.trim();
     if (!body) return;
@@ -661,10 +676,16 @@ export class VoxClient {
         } else if (m.senderId !== this.selfId) {
           if (m.scope === ChatScope.Private) {
             const otherId = m.senderId;
-            if (!this.dmTabs.has(otherId)) {
+            const isNewTab = !this.dmTabs.has(otherId);
+            if (isNewTab) {
               this.dmTabs.set(otherId, { clientId: otherId, name: m.senderName, unread: 0 });
             }
-            if (this.activeDmTab !== otherId) {
+            // Primeira mensagem de alguem novo puxa foco pro chat dele —
+            // como o WhatsApp. Se o usuario ja esta em outro DM ou tem
+            // conversa em aberto, apenas incrementa o unread.
+            if (isNewTab && this.activeDmTab === null) {
+              this.activeDmTab = otherId;
+            } else if (this.activeDmTab !== otherId) {
               const tab = this.dmTabs.get(otherId)!;
               tab.unread++;
             }
@@ -709,6 +730,12 @@ export class VoxClient {
       case Op.BotState:
         this.botState = m.state;
         break;
+
+      case Op.ChatReadDeliver: {
+        const prev = this.dmReadStamps.get(m.readerId) ?? 0;
+        if (m.upToStamp > prev) this.dmReadStamps.set(m.readerId, m.upToStamp);
+        break;
+      }
 
       case Op.GroupDefs:
         this.groupDefs = m.groups;
