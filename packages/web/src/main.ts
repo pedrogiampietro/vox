@@ -63,6 +63,12 @@ let dragPointerId = 0;
 let inputDevices: MediaDeviceInfo[] = [];
 let outputDevices: MediaDeviceInfo[] = [];
 
+/**
+ * Edicoes pendentes de grupos, mantidas fora do closure para sobreviver
+ * a re-renders do modal de settings. Somente aplicadas ao clicar em salvar.
+ */
+const groupEdits = new Map<number, { name: string; color: string; icon: string }>();
+
 
 // ---------------------------------------------------------------- helpers --
 
@@ -105,6 +111,9 @@ function closeSettings(): void {
   const existing = document.querySelector('.settings-overlay');
   if (existing) existing.remove();
   stopMicTest();
+  // Descarta edicoes nao salvas de grupos quando o modal fecha, para nao
+  // reaparecerem na proxima abertura.
+  if (!settingsOpen) groupEdits.clear();
 }
 
 // ================================================================ shell ==
@@ -2116,26 +2125,90 @@ function buildNotificationsSection(body: HTMLElement): void {
 
 function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
   body.append(text('h3', '', 'GRUPOS DO SERVIDOR'));
-  body.append(text('span', '', 'Configure nome, cor e ícone dos grupos'));
+  body.append(text('span', '', 'Configure nome, cor e ícone dos grupos. As alterações só valem depois de salvar.'));
 
+  // Seed a partir do server para cada def que ainda nao tem edicao local,
+  // e purga edicoes de defs que sumiram (grupo removido).
+  const knownIds = new Set(client.groupDefs.map((d) => d.id));
+  for (const id of [...groupEdits.keys()]) if (!knownIds.has(id)) groupEdits.delete(id);
   for (const def of client.groupDefs) {
-    const card = $('div', 'group-card');
+    if (!groupEdits.has(def.id)) {
+      groupEdits.set(def.id, { name: def.name, color: def.color, icon: def.icon });
+    }
+  }
 
-    // icon area
+  const isDirty = (def: GroupDef): boolean => {
+    const e = groupEdits.get(def.id);
+    if (!e) return false;
+    return e.name !== def.name || e.color !== def.color || e.icon !== def.icon;
+  };
+  const dirtyCount = (): number => client.groupDefs.reduce((n, d) => n + (isDirty(d) ? 1 : 0), 0);
+
+  // --- toolbar (topo, sticky visual) -----------------------------------
+  const toolbar = $('div', 'groups-toolbar');
+  const status = text('span', 'groups-status', '');
+  const saveAll = $('button', 'primary') as HTMLButtonElement;
+  saveAll.textContent = 'salvar alterações';
+  const discard = $('button', 'ghost') as HTMLButtonElement;
+  discard.textContent = 'descartar';
+
+  const refreshToolbar = (): void => {
+    const n = dirtyCount();
+    saveAll.disabled = n === 0;
+    discard.disabled = n === 0;
+    status.textContent = n === 0
+      ? 'sem alterações pendentes'
+      : n === 1
+        ? '1 grupo alterado'
+        : `${n} grupos alterados`;
+    status.classList.toggle('dirty', n > 0);
+  };
+
+  saveAll.addEventListener('click', () => {
+    for (const def of client.groupDefs) {
+      if (!isDirty(def)) continue;
+      const e = groupEdits.get(def.id)!;
+      const name = e.name.trim() || def.name;
+      client.setGroupDef(def.id, name, e.icon, e.color);
+    }
+    groupEdits.clear();
+    setTimeout(rebuild, 250);
+  });
+
+  discard.addEventListener('click', () => {
+    groupEdits.clear();
+    rebuild();
+  });
+
+  toolbar.append(status, discard, saveAll);
+  body.append(toolbar);
+  refreshToolbar();
+
+  // --- cards -----------------------------------------------------------
+  for (const def of client.groupDefs) {
+    const edit = groupEdits.get(def.id)!;
+    const card = $('div', 'group-card');
+    const markDirty = (): void => {
+      card.classList.toggle('dirty', isDirty(def));
+      refreshToolbar();
+    };
+    if (isDirty(def)) card.classList.add('dirty');
+
+    // ---- icon area ---------------------------------------------------
     const iconArea = $('div', 'group-icon-area');
-    if (def.icon) {
+    if (edit.icon) {
       const img = $('img') as HTMLImageElement;
-      img.src = def.icon;
+      img.src = edit.icon;
       img.style.cssText = 'width:32px;height:32px;object-fit:contain;border-radius:var(--r);';
       iconArea.append(img);
     } else {
       const placeholder = $('div', 'group-icon-placeholder');
-      placeholder.textContent = def.name.charAt(0).toUpperCase();
+      placeholder.textContent = (edit.name || def.name).charAt(0).toUpperCase();
       iconArea.append(placeholder);
     }
 
     const iconBtn = $('button', 'ghost');
-    iconBtn.textContent = def.icon ? 'trocar' : 'ícone';
+    iconBtn.textContent = edit.icon ? 'trocar' : 'ícone';
     iconBtn.style.cssText = 'padding:2px 8px;font-size:11px;';
     iconBtn.addEventListener('click', () => {
       const input = document.createElement('input');
@@ -2146,9 +2219,8 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
         if (!file || file.size > 32 * 1024) return;
         const reader = new FileReader();
         reader.onload = () => {
-          const dataUri = reader.result as string;
-          client.setGroupDef(def.id, def.name, dataUri, def.color);
-          setTimeout(rebuild, 200);
+          edit.icon = reader.result as string;
+          rebuild();
         };
         reader.readAsDataURL(file);
       });
@@ -2159,26 +2231,34 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
     removeIconBtn.textContent = '✕';
     removeIconBtn.style.cssText = 'padding:2px 6px;font-size:10px;min-width:unset;';
     removeIconBtn.addEventListener('click', () => {
-      client.setGroupDef(def.id, def.name, '', def.color);
-      setTimeout(rebuild, 200);
+      edit.icon = '';
+      rebuild();
     });
 
     const iconBtns = $('div', '');
     iconBtns.style.cssText = 'display:flex;gap:4px;';
     iconBtns.append(iconBtn);
-    if (def.icon) iconBtns.append(removeIconBtn);
+    if (edit.icon) iconBtns.append(removeIconBtn);
     iconArea.append(iconBtns);
     card.append(iconArea);
 
-    // info area
+    // ---- info area ---------------------------------------------------
     const infoArea = $('div', 'group-info-area');
+
+    const preview = text('span', 'group-preview', edit.name || def.name);
+    preview.style.color = edit.color || 'var(--text)';
 
     const nameRow = $('div', 'settings-row');
     const nameLabel = $('label');
     nameLabel.append(text('span', '', 'Nome'));
     const nameInput = $('input') as HTMLInputElement;
-    nameInput.value = def.name;
+    nameInput.value = edit.name;
     nameInput.placeholder = 'Nome do grupo';
+    nameInput.addEventListener('input', () => {
+      edit.name = nameInput.value;
+      preview.textContent = edit.name || def.name;
+      markDirty();
+    });
     nameLabel.append(nameInput);
     nameRow.append(nameLabel);
     infoArea.append(nameRow);
@@ -2189,34 +2269,26 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
     colorLabel.style.cssText = 'font-size:12px;color:var(--text-dim);';
     const colorInput = $('input') as HTMLInputElement;
     colorInput.type = 'color';
-    colorInput.value = def.color || '#ebe5dc';
+    colorInput.value = edit.color || '#ebe5dc';
     colorInput.style.cssText = 'width:32px;height:28px;padding:2px;border:1px solid var(--line);background:var(--ink-900);border-radius:var(--r);cursor:pointer;';
+    colorInput.addEventListener('input', () => {
+      edit.color = colorInput.value === '#ebe5dc' ? '' : colorInput.value;
+      preview.style.color = edit.color || 'var(--text)';
+      markDirty();
+    });
 
     const colorClear = $('button', 'ghost');
     colorClear.textContent = 'padrão';
     colorClear.style.cssText = 'padding:2px 8px;font-size:11px;';
     colorClear.addEventListener('click', () => {
+      edit.color = '';
       colorInput.value = '#ebe5dc';
-      client.setGroupDef(def.id, nameInput.value.trim() || def.name, def.icon, '');
-      setTimeout(rebuild, 200);
+      preview.style.color = 'var(--text)';
+      markDirty();
     });
 
-    const preview = text('span', '', def.name);
-    preview.style.cssText = `font-weight:600;font-size:13px;color:${def.color || 'var(--text)'};`;
     colorRow.append(colorLabel, colorInput, colorClear, preview);
     infoArea.append(colorRow);
-
-    // save button
-    const saveBtn = $('button', 'primary');
-    saveBtn.textContent = 'salvar';
-    saveBtn.style.cssText = 'padding:4px 14px;font-size:12px;justify-self:start;';
-    saveBtn.addEventListener('click', () => {
-      const name = nameInput.value.trim() || def.name;
-      const color = colorInput.value === '#ebe5dc' ? '' : colorInput.value;
-      client.setGroupDef(def.id, name, def.icon, color);
-      setTimeout(rebuild, 200);
-    });
-    infoArea.append(saveBtn);
 
     card.append(infoArea);
 
