@@ -16,7 +16,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Group, RemoveReason } from '@vox/protocol';
 import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
-import { createAccount, findAccount, verifyPassword } from './accounts.js';
+import { ensureAccount, findAccount, verifyPassword } from './accounts.js';
 
 /** Corpo maior que isto so pode ser abuso: o painel manda objetos minusculos. */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -103,10 +103,10 @@ export class AdminApi {
     if (path === '/api/accounts' && method === 'POST') {
       if (session.ownerId !== null) return send(res, 403, { error: 'somente o master pode criar contas' });
       const body = await readJson(req);
-      const account = createAccount(str(body.email), str(body.password));
+      const account = ensureAccount(str(body.email), str(body.password));
       return account
         ? send(res, 201, { id: account.id, email: account.email })
-        : send(res, 409, { error: 'email existente ou senha muito curta (minimo 8 caracteres)' });
+        : send(res, 409, { error: 'email existente, senha incorreta ou senha muito curta (minimo 8 caracteres)' });
     }
 
     if (path === '/api/servers' && method === 'POST') {

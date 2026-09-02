@@ -33,6 +33,13 @@ export function createAccount(email: string, password: string): Account | null {
   return account;
 }
 
+/** Cria uma conta nova ou recupera a existente com a senha correta. */
+export function ensureAccount(email: string, password: string): Account | null {
+  const existing = findAccount(email);
+  if (existing) return verifyPassword(existing, password) ? existing : null;
+  return createAccount(email, password);
+}
+
 export function verifyPassword(account: Account, password: string): boolean {
   const [salt, expected] = account.passwordHash.split(':');
   if (!salt || !expected) return false;
