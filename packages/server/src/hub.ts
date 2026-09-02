@@ -32,6 +32,7 @@ import {
   MAX_NICKNAME,
   MAX_VOICE_PACKET,
   VOICE_HEADER_SIZE,
+  canonicalRespawnName,
 } from '@vox/protocol';
 import type { ChannelInfo, ClientInfo, ClientMessage, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { randomBytes } from 'node:crypto';
@@ -850,8 +851,8 @@ export class Hub {
   // --------------------------------------------------------------- claims --
 
   private claimResp(s: Session, respawn: string, note: string, durationMin: number): void {
-    const name = clean(respawn, 96);
-    if (!name) return this.fail(s, FailureCode.Malformed, 'respawn vazio');
+    const name = canonicalRespawnName(clean(respawn, 96));
+    if (!name) return this.fail(s, FailureCode.Malformed, 'respawn invalido');
     this.pruneClaims();
     const key = name.toLowerCase();
     for (const claim of this.claims.values()) {

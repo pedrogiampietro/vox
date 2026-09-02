@@ -28,6 +28,7 @@ class TestClient {
   private readonly ws = new WebSocket(URL);
   private identity: { spki: Uint8Array; key: CryptoKey } | null = null;
   claims: RespClaimInfo[] = [];
+  failures: string[] = [];
   id = 0;
 
   constructor(private readonly nickname: string) {
@@ -76,6 +77,8 @@ class TestClient {
       this.id = m.clientId;
     } else if (m.t === Op.Snapshot || m.t === Op.RespClaims) {
       this.claims = m.claims;
+    } else if (m.t === Op.Failure) {
+      this.failures.push(m.message);
     }
   }
 }
@@ -94,6 +97,11 @@ async function main(): Promise<void> {
   const alice = new TestClient('alice-claim');
   const bob = new TestClient('bob-claim');
   await Promise.all([alice.ready(), bob.ready()]);
+
+  alice.send({ t: Op.ClaimResp, respawn: 'Respawn Fake', note: '', durationMin: 120 });
+  await until(() => alice.failures.some((m) => m.includes('respawn invalido')), 'claim invalido recusado');
+  if (bob.claims.some((c) => c.respawn === 'Respawn Fake')) throw new Error('claim invalido foi aceito');
+  console.log('ok invalid claim rejected');
 
   alice.send({ t: Op.ClaimResp, respawn: 'Cobra Bastion', note: 'EK+ED', durationMin: 120 });
   await until(() => bob.claims.some((c) => c.respawn === 'Cobra Bastion'), 'claim sincronizado');
