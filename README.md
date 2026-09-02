@@ -111,6 +111,13 @@ Abra <http://localhost:5174/admin/> e entre com a senha definida em
 `VOX_ADMIN_PASSWORD`. Em produção local, `npm run build && npm start` serve o
 cliente em `/` e o painel em `/admin`.
 
+## Pipeline
+
+O workflow `.github/workflows/ci-cd.yml` valida `typecheck` e `build` em cada
+Pull Request. Todo merge na `master` repete as validações e, se passar, atualiza
+a VPS automaticamente via SSH. Configure os secrets `VPS_HOST`, `VPS_USER` e
+`VPS_SSH_KEY` no repositório; a chave deve ter acesso somente ao servidor.
+
 Isso sobe sem WebTransport, e a voz vai por WebSocket. Para desenvolver com
 QUIC ligado é preciso um certificado — o navegador aceita um autoassinado, mas
 só ECDSA P-256 e com validade de no máximo 14 dias:

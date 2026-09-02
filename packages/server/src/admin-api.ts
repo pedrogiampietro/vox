@@ -150,12 +150,17 @@ export class AdminApi {
 
     if (action === '' && method === 'PATCH') {
       const body = await readJson(req);
-      const updated = this.registry.update(hub.id, {
+      const update = {
         ...(body.slug !== undefined ? { slug: str(body.slug) } : {}),
         ...(body.name !== undefined ? { name: str(body.name) } : {}),
         ...(body.motd !== undefined ? { motd: str(body.motd) } : {}),
         ...(body.password !== undefined ? { password: str(body.password) } : {}),
-        ...(body.maxClients !== undefined ? { maxClients: int(body.maxClients, 128) } : {}),
+        ...(session.ownerId === null && body.maxClients !== undefined
+          ? { maxClients: int(body.maxClients, 128) }
+          : {}),
+      };
+      const updated = this.registry.update(hub.id, {
+        ...update,
       });
       if (!updated) return send(res, 409, { error: 'slug invalido ou ja utilizado' });
       this.broadcastState();

@@ -217,6 +217,10 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
   const name = input('nome', server.name);
   const motd = input('motd', server.motd);
   const max = input('max clientes', String(server.maxClients), 'number');
+  if (overview?.role === 'owner') {
+    max.input.disabled = true;
+    max.input.title = 'Definido pelo plano contratado';
+  }
   const pass = input('senha', '', 'password', server.password ? 'definida; preencha para trocar' : 'vazio = aberto');
   const save = $('button', 'primary');
   save.textContent = 'salvar';
@@ -227,7 +231,9 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
         name: name.input.value,
         slug: slug.input.value.trim(),
         motd: motd.input.value,
-        maxClients: Number(max.input.value) || server.maxClients,
+        ...(overview?.role === 'master'
+          ? { maxClients: Number(max.input.value) || server.maxClients }
+          : {}),
         ...(pass.input.value ? { password: pass.input.value } : {}),
       }),
     }).then(() => refreshAll());
