@@ -17,6 +17,8 @@ import { Group, RemoveReason } from '@vox/protocol';
 import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
 import { ensureAccount, findAccount, verifyPassword } from './accounts.js';
+import { RubinotBot } from '../../bot/src/bot.js';
+import type { StoredBotConfig } from './persistence.js';
 
 /** Corpo maior que isto so pode ser abuso: o painel manda objetos minusculos. */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -226,6 +228,89 @@ export class AdminApi {
       const text = str(body.text);
       if (!text) return send(res, 400, { error: 'texto vazio' });
       hub.announce(text);
+      return send(res, 200, { ok: true });
+    }
+
+    // ---- bot ---------------------------------------------------------------
+
+    if (action === '/bot' && method === 'GET') {
+      return send(res, 200, {
+        config: hub.botConfig,
+        running: hub.rubinot?.isRunning ?? false,
+        hunted: hub.rubinot?.huntedList ?? hub.botConfig.huntedNames,
+      });
+    }
+
+    if (action === '/bot' && method === 'PATCH') {
+      const body = await readJson(req);
+      const bc = hub.botConfig;
+      if (body.world !== undefined) bc.world = str(body.world);
+      if (body.guildName !== undefined) bc.guildName = str(body.guildName);
+      if (body.channelName !== undefined) bc.channelName = str(body.channelName) || 'bot';
+      if (body.intervalMs !== undefined) bc.intervalMs = Math.max(int(body.intervalMs, 60_000), 10_000);
+      if (body.enabled !== undefined) bc.enabled = !!body.enabled;
+      hub.botConfig = bc;
+      this.registry.scheduleSave();
+
+      if (hub.rubinot) {
+        const newCfg = { ...bc, huntedNames: hub.rubinot.huntedList };
+        void hub.rubinot.restart(newCfg);
+      } else if (bc.enabled && bc.world) {
+        const bot = new RubinotBot(hub, bc);
+        hub.rubinot = bot;
+        void bot.start().catch((err) => console.error('[bot] falha:', err));
+      }
+
+      this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest === 'start' && method === 'POST') {
+      hub.botConfig.enabled = true;
+      this.registry.scheduleSave();
+      if (!hub.rubinot) {
+        const bot = new RubinotBot(hub, hub.botConfig);
+        hub.rubinot = bot;
+      }
+      if (!hub.rubinot.isRunning) {
+        void hub.rubinot.start().catch((err) => console.error('[bot] falha:', err));
+      }
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest === 'stop' && method === 'POST') {
+      hub.botConfig.enabled = false;
+      this.registry.scheduleSave();
+      hub.rubinot?.stop();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest === 'hunted' && method === 'POST') {
+      const body = await readJson(req);
+      const name = str(body.name).trim();
+      if (!name) return send(res, 400, { error: 'nome vazio' });
+      if (hub.rubinot) {
+        hub.rubinot.addHunted(name);
+      } else {
+        if (!hub.botConfig.huntedNames.some((n) => n.toLowerCase() === name.toLowerCase())) {
+          hub.botConfig.huntedNames.push(name);
+        }
+      }
+      this.registry.scheduleSave();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest.startsWith('hunted/') && method === 'DELETE') {
+      const name = decodeURIComponent(rest.slice('hunted/'.length)).trim();
+      if (!name) return send(res, 400, { error: 'nome vazio' });
+      if (hub.rubinot) {
+        hub.rubinot.removeHunted(name);
+      } else {
+        hub.botConfig.huntedNames = hub.botConfig.huntedNames.filter(
+          (n) => n.toLowerCase() !== name.toLowerCase(),
+        );
+      }
+      this.registry.scheduleSave();
       return send(res, 200, { ok: true });
     }
 

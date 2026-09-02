@@ -43,6 +43,19 @@ type ClientInfo = {
 
 type Ban = { fingerprint: string; until: number; reason: string };
 
+type BotState = {
+  config: {
+    world: string;
+    guildName: string;
+    huntedNames: string[];
+    intervalMs: number;
+    channelName: string;
+    enabled: boolean;
+  };
+  running: boolean;
+  hunted: string[];
+};
+
 type ServerDetail = {
   id: number;
   slug: string;
@@ -64,6 +77,8 @@ let token = sessionStorage.getItem(TOKEN_KEY) ?? '';
 let overview: Overview | null = null;
 let selectedId = 0;
 let detail: ServerDetail | null = null;
+let botState: BotState | null = null;
+let botDraft: Partial<{ world: string; guildName: string; channelName: string; intervalSec: string }> = {};
 let stream: EventSource | null = null;
 let notice = '';
 
@@ -86,7 +101,7 @@ function render(): void {
 function renderLogin(): HTMLElement {
   const root = $('div', 'login');
   const panel = $('form', 'panel form');
-  panel.append(text('h1', '', 'Vox Admin'));
+  panel.append(text('h1', '', 'v0x admin'));
   panel.append(text('p', 'subtle', 'Entre com sua conta ou com a senha master.'));
 
   const email = input('email do cliente (opcional)', '', 'email', 'cliente@exemplo.com');
@@ -122,7 +137,7 @@ function renderAdmin(): HTMLElement {
 function renderSidebar(): HTMLElement {
   const side = $('aside', 'sidebar');
   const brand = $('div', 'brand');
-  brand.append(text('h1', '', 'vox'), text('span', 'label', 'admin'));
+  brand.append(text('h1', '', 'v0x'), text('span', 'label', 'admin'));
   side.append(brand);
 
   const totals = overview?.totals;
@@ -189,6 +204,7 @@ function renderMain(): HTMLElement {
     grid.append(renderChannels(detail));
     grid.append(renderBans(detail));
     grid.append(renderAnnouncement(detail));
+    if (botState) grid.append(renderBot(detail, botState));
   } else {
     grid.append(text('div', 'panel span-12 subtle', 'carregando detalhes...'));
   }
@@ -326,6 +342,103 @@ function renderAnnouncement(server: ServerDetail): HTMLElement {
   return box;
 }
 
+function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
+  const box = $('section', 'panel span-12');
+  box.append(text('h3', '', 'Bot Rubinot'));
+
+  const statusLine = $('div', 'toolbar');
+  const statusLabel = text('span', bot.running ? 'bot-status bot-on' : 'bot-status bot-off', bot.running ? 'ativo' : 'parado');
+  statusLine.append(statusLabel);
+  const toggle = $('button', bot.running ? 'danger' : 'primary');
+  toggle.textContent = bot.running ? 'parar' : 'iniciar';
+  toggle.addEventListener('click', () => {
+    void api(`/api/servers/${server.id}/bot/${bot.running ? 'stop' : 'start'}`, { method: 'POST' })
+      .then(() => loadDetail(server.id));
+  });
+  statusLine.append(toggle);
+  box.append(statusLine);
+
+  const form = $('div', 'form two');
+  const world = input('world', botDraft.world ?? bot.config.world, 'text', 'ex: Vesperia');
+  const guild = input('guild', botDraft.guildName ?? bot.config.guildName, 'text', 'nome da guild (opcional)');
+  const channel = input('canal de notificacao', botDraft.channelName ?? bot.config.channelName, 'text', 'bot');
+  const interval = input('intervalo (segundos)', botDraft.intervalSec ?? String(bot.config.intervalMs / 1000), 'number');
+
+  world.input.addEventListener('input', () => { botDraft.world = world.input.value; });
+  guild.input.addEventListener('input', () => { botDraft.guildName = guild.input.value; });
+  channel.input.addEventListener('input', () => { botDraft.channelName = channel.input.value; });
+  interval.input.addEventListener('input', () => { botDraft.intervalSec = interval.input.value; });
+
+  const save = $('button', 'primary');
+  save.textContent = 'salvar config';
+  save.addEventListener('click', () => {
+    void api(`/api/servers/${server.id}/bot`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        world: world.input.value.trim(),
+        guildName: guild.input.value.trim(),
+        channelName: channel.input.value.trim() || 'bot',
+        intervalMs: (Number(interval.input.value) || 60) * 1000,
+        enabled: bot.config.enabled,
+      }),
+    }).then(() => {
+      botDraft = {};
+      void loadDetail(server.id);
+    });
+  });
+
+  form.append(world.wrap, guild.wrap, channel.wrap, interval.wrap, save);
+  box.append(form);
+
+  // hunted list
+  const huntedSection = $('div', 'bot-hunted');
+  huntedSection.append(text('h4', '', `Hunted List (${bot.hunted.length})`));
+
+  const addRow = $('div', 'toolbar');
+  const addInput = $('input') as HTMLInputElement;
+  addInput.placeholder = 'adicionar jogador';
+  const addBtn = $('button', 'ghost');
+  addBtn.textContent = '+ adicionar';
+  addBtn.addEventListener('click', () => {
+    const name = addInput.value.trim();
+    if (!name) return;
+    void api(`/api/servers/${server.id}/bot/hunted`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }).then(() => {
+      addInput.value = '';
+      void loadDetail(server.id);
+    });
+  });
+  addInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') addBtn.click();
+  });
+  addRow.append(addInput, addBtn);
+  huntedSection.append(addRow);
+
+  const list = $('div', 'table');
+  if (bot.hunted.length === 0) {
+    list.append(text('div', 'subtle', 'nenhum jogador na hunted list'));
+  }
+  for (const name of bot.hunted.sort()) {
+    const row = $('div', 'rowline');
+    row.append(text('span', 'mono', name));
+    const del = $('button', 'danger');
+    del.textContent = 'remover';
+    del.addEventListener('click', () => {
+      void api(`/api/servers/${server.id}/bot/hunted/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      }).then(() => loadDetail(server.id));
+    });
+    row.append(del);
+    list.append(row);
+  }
+  huntedSection.append(list);
+  box.append(huntedSection);
+
+  return box;
+}
+
 function input(label: string, value: string, type = 'text', placeholder = ''): { wrap: HTMLElement; input: HTMLInputElement } {
   const wrap = $('label', 'form');
   wrap.append(text('span', 'label', label));
@@ -381,6 +494,11 @@ async function loadOverview(): Promise<void> {
 
 async function loadDetail(id: number): Promise<void> {
   detail = await api<ServerDetail>(`/api/servers/${id}`);
+  try {
+    botState = await api<BotState>(`/api/servers/${id}/bot`);
+  } catch {
+    botState = null;
+  }
   render();
 }
 

@@ -47,7 +47,7 @@ export const config = {
   host: str('VOX_HOST', '0.0.0.0'),
   port: num('VOX_PORT', 9987),
 
-  serverName: str('VOX_NAME', 'Servidor Vox'),
+  serverName: str('VOX_NAME', 'Servidor v0x'),
   /** Dominio base usado para resolver subdominios de servidores. */
   baseDomain: str('VOX_BASE_DOMAIN', 'v0x.online'),
   motd: str('VOX_MOTD', 'Bem-vindo.'),

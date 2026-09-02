@@ -155,6 +155,32 @@ body {
   color: var(--alert);
 }
 
+.bot-status {
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.bot-on {
+  color: var(--signal);
+}
+
+.bot-off {
+  color: var(--text-faint);
+}
+
+.bot-hunted {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.bot-hunted h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
 @media (max-width: 880px) {
   .admin {
     grid-template-columns: 1fr;

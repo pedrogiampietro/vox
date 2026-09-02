@@ -1,0 +1,11 @@
+{
+  "name": "@vox/bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@vox/protocol": "*",
+    "cycletls": "^1.0.26",
+    "form-data": "^4.0.0"
+  }
+}
