@@ -183,6 +183,13 @@ export class VoxClient {
       password: favorite.password,
       identity: this.identity,
     };
+    // A rede nao deve ficar refem da permissao do microfone ou do AudioWorklet.
+    // O usuario pode entrar sem audio e resolver isso depois nas preferencias.
+    void this.ensureAudio().then(() => {
+      if (this.link === 'online') void this.startMic();
+    }).catch((err) => {
+      this.warn(`audio indisponivel: ${describeError(err)}`);
+    });
     this.connection.connect(target);
   }
 
