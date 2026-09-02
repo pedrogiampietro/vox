@@ -438,10 +438,14 @@ export class Hub {
       case Op.SetClientGroup: {
         const target = this.targetFor(s, m.clientId, REQUIRED.setGroup);
         if (!target) break;
-        // Ninguem promove alguem ao proprio nivel ou acima: seria escada
-        // para o topo em dois passos.
-        if (m.group >= s.group) {
+        // Nunca promove acima do proprio nivel.
+        if (m.group > s.group) {
           return this.fail(s, FailureCode.NotPermitted, 'grupo acima do seu');
+        }
+        // Promover para o proprio nivel so e permitido para Owner (co-donos).
+        // Admin nao pode criar outro Admin — evita cascata acidental.
+        if (m.group === s.group && s.group !== Group.Owner) {
+          return this.fail(s, FailureCode.NotPermitted, 'nao pode promover ao seu proprio nivel');
         }
         this.assignGroup(target, m.group);
         break;

@@ -2550,10 +2550,15 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
       const { toggle, sub } = collapsible('grupo');
       items.push(toggle);
 
-      const groups = client.groupDefs.filter((g) => g.id < client.myGroup);
+      // Owner pode promover a Owner (co-donos). Demais so promovem abaixo do
+      // proprio nivel — evita cascata acidental de admins.
+      const groups = client.groupDefs.filter((g) =>
+        g.id < client.myGroup || (g.id === Group.Owner && client.myGroup >= Group.Owner),
+      );
       for (const g of groups) {
         const gBtn = $('button');
         const isCurrent = target.group === g.id;
+        const isPromoteToOwner = g.id === Group.Owner && target.group !== Group.Owner;
         if (g.icon) {
           const gIcon = $('img') as HTMLImageElement;
           gIcon.src = g.icon;
@@ -2567,6 +2572,12 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
         }
         gBtn.addEventListener('click', (e) => {
           e.stopPropagation();
+          if (isPromoteToOwner) {
+            const ok = window.confirm(
+              `promover ${target.nickname} a Dono? donos podem editar tudo, inclusive rebaixar voce.`,
+            );
+            if (!ok) return;
+          }
           client.setGroup(target.id, g.id);
           closeMenu();
         });
