@@ -128,6 +128,18 @@ function readJsonServers(): StoredServer[] {
   return [];
 }
 
+function dedupeCaseInsensitive(list: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of list) {
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
+}
+
 function normalizeBotConfig(raw: unknown): StoredBotConfig {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_BOT_CONFIG };
   const c = raw as Record<string, unknown>;
@@ -135,16 +147,30 @@ function normalizeBotConfig(raw: unknown): StoredBotConfig {
   const strList = (v: unknown): string[] =>
     Array.isArray(v) ? (v as unknown[]).filter((n): n is string => typeof n === 'string' && n.length > 0) : [];
   const guildName = typeof c.guildName === 'string' ? c.guildName : '';
-  const friendGuilds = strList(c.friendGuilds);
-  // Se guildName antigo nao esta em friendGuilds, migrar como amiga.
-  if (guildName && !friendGuilds.some((g) => g.toLowerCase() === guildName.toLowerCase())) {
+  let friendGuilds = strList(c.friendGuilds);
+  let enemyGuilds = strList(c.enemyGuilds);
+  const enemyKeys = new Set(enemyGuilds.map((g) => g.toLowerCase()));
+  // Se guildName antigo nao esta em nenhuma lista, migrar como amiga —
+  // exceto se ja foi explicitamente marcado como inimiga.
+  if (
+    guildName
+    && !friendGuilds.some((g) => g.toLowerCase() === guildName.toLowerCase())
+    && !enemyKeys.has(guildName.toLowerCase())
+  ) {
     friendGuilds.push(guildName);
   }
+  // Se a mesma guild ficou nas duas listas (migracao legada + acao manual),
+  // a intencao explicita mais recente vence: enemyGuilds (o usuario adicionou
+  // ela de proposito) fica; friendGuilds e limpo.
+  friendGuilds = friendGuilds.filter((g) => !enemyKeys.has(g.toLowerCase()));
+  // Dedupe interno preservando ordem.
+  friendGuilds = dedupeCaseInsensitive(friendGuilds);
+  enemyGuilds = dedupeCaseInsensitive(enemyGuilds);
   return {
     world: typeof c.world === 'string' ? c.world : '',
     guildName,
     friendGuilds,
-    enemyGuilds: strList(c.enemyGuilds),
+    enemyGuilds,
     huntedNames: strList(c.huntedNames),
     intervalMs: typeof c.intervalMs === 'number' && c.intervalMs > 0 ? c.intervalMs : 60_000,
     channelName: typeof c.channelName === 'string' && c.channelName ? c.channelName : 'bot',

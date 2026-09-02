@@ -8,8 +8,26 @@ import { RubinotBot } from '../../bot/src/bot.js';
 import type { Hub } from './hub.js';
 import type { StoredBotConfig } from './persistence.js';
 
+/**
+ * Garante que a mesma guild nao aparece em friendGuilds e enemyGuilds.
+ * Intencao explicita mais recente (enemyGuilds) vence sobre migracao legada.
+ * Roda antes de restart, para o bot nao carregar sync ambigua.
+ */
+function sanitizeGuildLists(hub: Hub): void {
+  const c = hub.botConfig;
+  const enemyKeys = new Set(c.enemyGuilds.map((g) => g.toLowerCase()));
+  const before = c.friendGuilds.length;
+  c.friendGuilds = c.friendGuilds.filter((g) => !enemyKeys.has(g.toLowerCase()));
+  if (c.friendGuilds.length !== before) {
+    console.log(
+      `[bot] limpou ${before - c.friendGuilds.length} guild(s) duplicadas de friendGuilds`,
+    );
+  }
+}
+
 /** Recria/atualiza o bot para refletir a config atual do hub. */
 export function applyBotConfig(hub: Hub): void {
+  sanitizeGuildLists(hub);
   if (hub.rubinot) {
     const cfg = { ...hub.botConfig, huntedNames: hub.rubinot.huntedList };
     void hub.rubinot.restart(cfg);

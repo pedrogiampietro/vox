@@ -1091,11 +1091,23 @@ export class Hub {
       case BotControlAction.AddEnemyGuild: {
         const trimmed = clean(name, 64);
         if (!trimmed) return this.fail(s, FailureCode.Malformed, 'nome vazio');
-        const list = action === BotControlAction.AddFriendGuild
-          ? this.botConfig.friendGuilds
-          : this.botConfig.enemyGuilds;
-        if (!list.some((g) => g.toLowerCase() === trimmed.toLowerCase())) {
+        const key = trimmed.toLowerCase();
+        const isFriend = action === BotControlAction.AddFriendGuild;
+        // Uma guild so pode estar em uma lista de cada vez: adicionar em uma
+        // remove da outra, para nao ficar sync ambigua com "amigo ganha".
+        const opposite = isFriend ? this.botConfig.enemyGuilds : this.botConfig.friendGuilds;
+        const oppositeBefore = opposite.length;
+        const filtered = opposite.filter((g) => g.toLowerCase() !== key);
+        if (isFriend) this.botConfig.enemyGuilds = filtered;
+        else this.botConfig.friendGuilds = filtered;
+
+        const list = isFriend ? this.botConfig.friendGuilds : this.botConfig.enemyGuilds;
+        let mutated = filtered.length !== oppositeBefore;
+        if (!list.some((g) => g.toLowerCase() === key)) {
           list.push(trimmed);
+          mutated = true;
+        }
+        if (mutated) {
           this.deps.onChanged();
           applyBotConfig(this);
         }
