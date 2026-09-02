@@ -856,6 +856,13 @@ export class Hub {
     this.pruneClaims();
     const key = name.toLowerCase();
     for (const claim of this.claims.values()) {
+      if (claim.ownerFingerprint === s.fingerprint) {
+        return this.fail(
+          s,
+          FailureCode.NotPermitted,
+          `voce ja tem ${claim.respawn} claimado; libere antes de pegar outro`,
+        );
+      }
       if (claim.respawn.toLowerCase() === key) {
         return this.fail(s, FailureCode.NotPermitted, `${claim.respawn} ja esta claimado por ${claim.ownerName}`);
       }

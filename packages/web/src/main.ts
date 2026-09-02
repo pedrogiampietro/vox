@@ -893,13 +893,19 @@ function renderRespClaimsPanel(): HTMLElement {
   head.append(text('span', 'label', active === 1 ? '1 ativo' : `${active} ativos`));
   panel.append(head);
 
+  const myClaim = [...client.claims.values()].find((c) => c.ownerId === client.selfId);
+
   const form = $('div', 'claim-form');
   const searchWrap = $('div', 'resp-search');
   const respawn = $('input') as HTMLInputElement;
   respawn.placeholder = 'buscar respawn';
   const searchResults = $('div', 'resp-search-results');
-  const searchHint = text('span', 'claim-meta resp-search-hint', 'selecione um respawn da lista');
+  const defaultHint = myClaim
+    ? `voce ja tem ${myClaim.respawn} claimado; libere antes de pegar outro`
+    : 'selecione um respawn da lista';
+  const searchHint = text('span', 'claim-meta resp-search-hint', defaultHint);
   searchWrap.append(respawn, searchResults, searchHint);
+  if (myClaim) respawn.disabled = true;
 
   const note = $('input') as HTMLInputElement;
   note.placeholder = 'nota opcional';
@@ -924,9 +930,15 @@ function renderRespClaimsPanel(): HTMLElement {
   claimBtn.textContent = 'claim';
   claimBtn.disabled = true;
   const updateSearch = () => {
+    if (myClaim) {
+      claimBtn.disabled = true;
+      searchHint.textContent = defaultHint;
+      searchResults.replaceChildren();
+      return;
+    }
     const selected = canonicalRespawnName(respawn.value);
     claimBtn.disabled = !selected;
-    searchHint.textContent = selected ? selected : 'selecione um respawn da lista';
+    searchHint.textContent = selected ? selected : defaultHint;
     searchResults.replaceChildren();
     const query = respawn.value.trim().toLowerCase();
     if (!query || selected) return;
@@ -985,7 +997,9 @@ function renderRespClaimsPanel(): HTMLElement {
   catalog.append(text('h3', '', 'todos os respawns'));
   const taken = new Map(claims.map((c) => [c.respawn.toLowerCase(), c]));
   const catalogRows = $('div', 'claims-list resp-list');
-  for (const group of RESPAWN_CATALOG) catalogRows.append(renderRespawnCatalogGroup(group.title, group.items, taken));
+  for (const group of RESPAWN_CATALOG) {
+    catalogRows.append(renderRespawnCatalogGroup(group.title, group.items, taken, Boolean(myClaim)));
+  }
   catalog.append(catalogRows);
   panel.append(catalog);
   return panel;
@@ -1030,16 +1044,23 @@ function renderRespawnCatalogGroup(
   title: string,
   items: RespawnCatalogItem[],
   taken: Map<string, RespClaimInfo>,
+  alreadyHasClaim: boolean,
 ): HTMLElement {
   const group = $('section', 'resp-group');
   const head = $('div', 'resp-group-head');
   head.append(text('strong', '', title), text('span', 'label', `${items.length}`));
   group.append(head);
-  for (const item of items) group.append(renderRespawnCatalogRow(item, taken.get(item.name.toLowerCase())));
+  for (const item of items) {
+    group.append(renderRespawnCatalogRow(item, taken.get(item.name.toLowerCase()), alreadyHasClaim));
+  }
   return group;
 }
 
-function renderRespawnCatalogRow(item: RespawnCatalogItem, claim?: RespClaimInfo): HTMLElement {
+function renderRespawnCatalogRow(
+  item: RespawnCatalogItem,
+  claim: RespClaimInfo | undefined,
+  alreadyHasClaim: boolean,
+): HTMLElement {
   const name = item.name;
   const row = $('div', claim ? 'claim-row occupied' : 'claim-row free');
   const main = $('div', 'claim-main');
@@ -1054,6 +1075,10 @@ function renderRespawnCatalogRow(item: RespawnCatalogItem, claim?: RespClaimInfo
   }
   const action = $('button', claim ? 'ghost' : 'primary');
   action.textContent = claim ? 'fila' : 'claim';
+  if (!claim && alreadyHasClaim) {
+    action.disabled = true;
+    action.title = 'voce ja tem um respawn claimado';
+  }
   action.addEventListener('click', () => {
     if (claim) client.joinRespQueue(claim.id);
     else client.claimResp(name, '', 120);
