@@ -42,6 +42,8 @@ export enum Op {
   BotCommand = 0x60,
   ClaimResp = 0x70,
   ReleaseResp = 0x71,
+  JoinRespQueue = 0x72,
+  LeaveRespQueue = 0x73,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -188,6 +190,12 @@ export interface RespClaimInfo {
   ownerName: string;
   claimedAt: number;
   expiresAt: number;
+  queue: RespQueueEntry[];
+}
+
+export interface RespQueueEntry {
+  clientId: number;
+  name: string;
 }
 
 export const DEFAULT_GROUP_DEFS: GroupDef[] = [

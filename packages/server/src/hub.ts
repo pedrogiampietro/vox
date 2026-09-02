@@ -163,6 +163,10 @@ export class Hub {
         ownerName: c.ownerName,
         claimedAt: c.claimedAt,
         expiresAt: c.expiresAt,
+        queue: c.queue.map((q) => ({
+          clientId: this.clientIdForFingerprint(q.fingerprint),
+          name: this.liveNameForFingerprint(q.fingerprint) || q.name,
+        })),
       }));
   }
 
@@ -462,6 +466,14 @@ export class Hub {
 
       case Op.ReleaseResp:
         this.releaseResp(s, m.claimId);
+        break;
+
+      case Op.JoinRespQueue:
+        this.joinRespQueue(s, m.claimId);
+        break;
+
+      case Op.LeaveRespQueue:
+        this.leaveRespQueue(s, m.claimId);
         break;
     }
   }
@@ -857,6 +869,7 @@ export class Hub {
       ownerFingerprint: s.fingerprint,
       claimedAt: now,
       expiresAt: now + clamp(durationMin || 120, 15, 12 * 60) * 60 * 1000,
+      queue: [],
     };
     this.claims.set(claim.id, claim);
     this.deps.onChanged();
@@ -870,10 +883,43 @@ export class Hub {
     if (claim.ownerFingerprint !== s.fingerprint && s.group < Group.Moderator) {
       return this.fail(s, FailureCode.NotPermitted, 'apenas quem claimou ou moderador pode liberar');
     }
-    this.claims.delete(claimId);
+    const next = claim.queue.shift();
+    if (next) {
+      const now = Date.now();
+      claim.ownerFingerprint = next.fingerprint;
+      claim.ownerName = this.liveNameForFingerprint(next.fingerprint) || next.name;
+      claim.claimedAt = now;
+      claim.expiresAt = now + 2 * 60 * 60 * 1000;
+      this.announce(`${claim.ownerName} assumiu ${claim.respawn}`);
+    } else {
+      this.claims.delete(claimId);
+      this.announce(`${s.nickname} liberou ${claim.respawn}`);
+    }
     this.deps.onChanged();
     this.broadcastClaims();
-    this.announce(`${s.nickname} liberou ${claim.respawn}`);
+  }
+
+  private joinRespQueue(s: Session, claimId: number): void {
+    const claim = this.claims.get(claimId);
+    if (!claim) return this.fail(s, FailureCode.Unknown, 'claim inexistente');
+    if (claim.ownerFingerprint === s.fingerprint) {
+      return this.fail(s, FailureCode.NotPermitted, 'voce ja esta neste respawn');
+    }
+    if (claim.queue.some((q) => q.fingerprint === s.fingerprint)) return;
+    claim.queue.push({ name: s.nickname, fingerprint: s.fingerprint });
+    this.deps.onChanged();
+    this.broadcastClaims();
+    this.announce(`${s.nickname} entrou na fila de ${claim.respawn}`);
+  }
+
+  private leaveRespQueue(s: Session, claimId: number): void {
+    const claim = this.claims.get(claimId);
+    if (!claim) return this.fail(s, FailureCode.Unknown, 'claim inexistente');
+    const before = claim.queue.length;
+    claim.queue = claim.queue.filter((q) => q.fingerprint !== s.fingerprint);
+    if (claim.queue.length === before) return;
+    this.deps.onChanged();
+    this.broadcastClaims();
   }
 
   private allocClaimId(): number {
@@ -900,6 +946,13 @@ export class Hub {
       if (s.fingerprint === fingerprint) return s.id;
     }
     return 0;
+  }
+
+  private liveNameForFingerprint(fingerprint: string): string {
+    for (const s of this.sessions.values()) {
+      if (s.fingerprint === fingerprint) return s.nickname;
+    }
+    return '';
   }
 
   private broadcastClaims(): void {

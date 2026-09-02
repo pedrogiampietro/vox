@@ -15,6 +15,12 @@ export interface StoredRespClaim {
   ownerFingerprint: string;
   claimedAt: number;
   expiresAt: number;
+  queue: StoredRespQueueEntry[];
+}
+
+export interface StoredRespQueueEntry {
+  name: string;
+  fingerprint: string;
 }
 export interface StoredBotConfig {
   world: string;
@@ -147,8 +153,20 @@ function normalizeClaims(raw: unknown): StoredRespClaim[] {
       ownerFingerprint: typeof c.ownerFingerprint === 'string' ? c.ownerFingerprint : '',
       claimedAt: Number(c.claimedAt) || now,
       expiresAt: Number(c.expiresAt) || 0,
+      queue: normalizeClaimQueue(c.queue),
     }))
     .filter((c) => c.id > 0 && c.respawn && c.expiresAt > now);
+}
+
+function normalizeClaimQueue(raw: unknown): StoredRespQueueEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((q): q is Record<string, unknown> => Boolean(q) && typeof q === 'object')
+    .map((q) => ({
+      name: typeof q.name === 'string' ? q.name : '',
+      fingerprint: typeof q.fingerprint === 'string' ? q.fingerprint : '',
+    }))
+    .filter((q) => q.name && q.fingerprint);
 }
 
 function normalizeSlug(value: unknown): string {
