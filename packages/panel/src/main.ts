@@ -3,6 +3,7 @@ import { Group, GROUP_NAMES } from '@vox/protocol';
 
 type ServerSummary = {
   id: number;
+  slug: string;
   name: string;
   motd: string;
   clients: number;
@@ -45,6 +46,7 @@ type Ban = { fingerprint: string; until: number; reason: string };
 type ServerDetail = {
   id: number;
   slug: string;
+  url: string;
   name: string;
   motd: string;
   password: string;
@@ -131,7 +133,7 @@ function renderSidebar(): HTMLElement {
     const btn = $('button', `server-button${server.id === selectedId ? ' active' : ''}`);
     const label = $('div', '');
     label.append(text('strong', '', server.name));
-    label.append(text('div', 'mono subtle', `#${server.id} · ${server.clients}/${server.maxClients}`));
+    label.append(text('div', 'mono subtle', `${server.slug} · ${server.clients}/${server.maxClients}`));
     btn.append(label, text('span', 'mono', String(server.channels)));
     btn.addEventListener('click', () => {
       selectedId = server.id;
@@ -204,6 +206,12 @@ function stat(label: string, value: string, hint: string, cls: string): HTMLElem
 function renderServerSettings(server: ServerDetail): HTMLElement {
   const box = $('section', 'panel span-6');
   box.append(text('h3', '', 'Servidor'));
+  const link = $('a', 'public-link') as HTMLAnchorElement;
+  link.href = server.url;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  link.textContent = server.url;
+  box.append(link);
   const form = $('div', 'form two');
   const slug = input('slug publico', server.slug, 'text', 'manowar');
   const name = input('nome', server.name);
@@ -409,10 +417,11 @@ async function createServer(): Promise<void> {
     });
     ownerId = account.id;
   }
-  const created = await api<{ id: number }>('/api/servers', {
+  const created = await api<{ id: number; url: string }>('/api/servers', {
     method: 'POST',
     body: JSON.stringify({ name, slug, ownerId, maxClients: 128 }),
   });
+  notice = `servidor criado: ${created.url}`;
   selectedId = created.id;
   await refreshAll();
 }

@@ -120,7 +120,7 @@ export class AdminApi {
         maxClients: int(body.maxClients, 128),
       });
       this.broadcastState();
-      return send(res, 201, { id: hub.id });
+      return send(res, 201, { id: hub.id, slug: hub.settings.slug, url: publicUrl(hub.settings.slug) });
     }
 
     const match = /^\/api\/servers\/(\d+)(\/[a-z-]+)?(?:\/(.+))?$/.exec(path);
@@ -139,6 +139,7 @@ export class AdminApi {
     if (action === '' && method === 'GET') {
       return send(res, 200, {
         ...hub.settings,
+        url: publicUrl(hub.settings.slug),
         password: hub.settings.password ? '(definida)' : '',
         channels: hub.channelList,
         clients: hub.clientList(),
@@ -368,4 +369,8 @@ function str(v: unknown): string {
 function int(v: unknown, fallback: number): number {
   const n = typeof v === 'number' ? v : Number(v);
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+function publicUrl(slug: string): string {
+  return `https://${slug}.${config.baseDomain}`;
 }
