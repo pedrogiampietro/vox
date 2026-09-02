@@ -544,7 +544,7 @@ function renderTalk(): HTMLElement {
     let botBody = line.text;
     if (isBot) {
       row.classList.add('bot');
-      const m = /^\[(death|kill|online|offline|levelup)\]\s*(.*)$/i.exec(line.text);
+      const m = /^\[(death|kill|online|offline|levelup|test)\]\s*(.*)$/i.exec(line.text);
       if (m && m[1] && m[2] !== undefined) {
         botKind = m[1].toLowerCase();
         botBody = m[2];

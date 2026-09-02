@@ -356,6 +356,16 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
       .then(() => loadDetail(server.id));
   });
   statusLine.append(toggle);
+  const test = $('button', 'ghost');
+  test.textContent = 'testar alerta';
+  test.addEventListener('click', () => {
+    void api(`/api/servers/${server.id}/bot/test`, { method: 'POST' })
+      .then(() => {
+        notice = 'alerta de teste enviado';
+        render();
+      });
+  });
+  statusLine.append(test);
   box.append(statusLine);
 
   const form = $('div', 'form two');
