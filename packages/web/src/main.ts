@@ -584,26 +584,24 @@ function renderTalk(): HTMLElement {
     const row = $('div', 'line');
     if (line.senderId === 0) row.classList.add('system');
     if (line.scope === ChatScope.Private) row.classList.add('dm');
-    // Mensagens do bot: destaca por tipo do evento no comeco do texto.
     const isBot = line.senderId === 0 && line.senderName === 'rubinot';
-    let botKind: string | null = null;
-    let botBody = line.text;
+    const parsed = isBot ? parseBotLine(line.text) : null;
     if (isBot) {
       row.classList.add('bot');
-      const m = /^\[(death|kill|online|offline|levelup|presence|test)\]\s*(.*)$/i.exec(line.text);
-      if (m && m[1] && m[2] !== undefined) {
-        botKind = m[1].toLowerCase();
-        botBody = m[2];
-        row.classList.add(`bot-${botKind}`);
-      }
+      if (parsed?.kind) row.classList.add(`bot-${parsed.kind}`);
+      if (parsed?.side) row.classList.add(`bot-side-${parsed.side}`);
     }
     row.append(
       text('time', '', timeHHMM(line.stamp)),
       (() => {
         const body = $('span', 'body');
-        if (isBot) {
-          if (botKind) body.append(text('span', 'bot-tag', botKind));
-          body.append(document.createTextNode(botBody));
+        if (isBot && parsed) {
+          if (parsed.kind) body.append(text('span', 'bot-tag', parsed.kind));
+          if (parsed.side) body.append(text('span', `bot-side bot-side-${parsed.side}-tag`, parsed.side));
+          if (parsed.guild) body.append(text('span', 'bot-guild-tag', parsed.guild));
+          appendBotBody(body, parsed.body);
+        } else if (isBot) {
+          body.append(document.createTextNode(line.text));
         } else {
           if (line.senderId !== 0) {
             body.append(text('span', 'who', line.senderName));
@@ -1377,6 +1375,56 @@ function buildGuildManager(
     list.append(rr);
   }
   body.append(list);
+}
+
+interface ParsedBotLine {
+  kind: string;
+  side: 'amigo' | 'inimigo' | '';
+  guild: string;
+  body: string;
+}
+
+function parseBotLine(text: string): ParsedBotLine | null {
+  // Formatos aceitos:
+  //   [test] ...
+  //   [presence] ...
+  //   [death/amigo][GUILD] ...
+  //   [levelup/inimigo] ...        (sem guild = manual)
+  const m = /^\[([a-z]+)(?:\/(amigo|inimigo))?\](?:\[([^\]]+)\])?\s*(.*)$/i.exec(text);
+  if (!m || !m[1]) return null;
+  return {
+    kind: m[1].toLowerCase(),
+    side: (m[2]?.toLowerCase() ?? '') as ParsedBotLine['side'],
+    guild: m[3] ?? '',
+    body: m[4] ?? '',
+  };
+}
+
+function appendBotBody(target: HTMLElement, body: string): void {
+  // 1) `nome (lvl NNN) rest` — nome em destaque, level como badge.
+  const withLvl = /^(.*?)\s\(lvl\s([^)]+)\)\s?(.*)$/.exec(body);
+  if (withLvl) {
+    target.append(
+      text('span', 'bot-player', withLvl[1] ?? ''),
+      document.createTextNode(' '),
+      text('span', 'bot-level', `lvl ${withLvl[2] ?? ''}`),
+    );
+    if (withLvl[3]) target.append(document.createTextNode(` ${withLvl[3]}`));
+    return;
+  }
+  // 2) levelup: `nome subiu de X para Y` — nome em destaque, numeros como badges.
+  const lvlUp = /^(.*?)\ssubiu de (\d+) para (\d+)\s*$/.exec(body);
+  if (lvlUp) {
+    target.append(
+      text('span', 'bot-player', lvlUp[1] ?? ''),
+      document.createTextNode(' subiu de '),
+      text('span', 'bot-level bot-level-from', lvlUp[2] ?? ''),
+      document.createTextNode(' para '),
+      text('span', 'bot-level bot-level-to', lvlUp[3] ?? ''),
+    );
+    return;
+  }
+  target.append(document.createTextNode(body));
 }
 
 function boolCheckbox(checked: boolean): HTMLInputElement {
