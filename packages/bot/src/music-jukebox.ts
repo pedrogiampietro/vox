@@ -20,6 +20,7 @@ const password = process.env['VOX_BOT_PASSWORD'] || '';
 const botChannelName = process.env['VOX_BOT_CHANNEL'] || 'bot';
 const ffmpegBin = process.env['VOX_FFMPEG'] || 'ffmpeg';
 const ytdlpBin = process.env['VOX_YTDLP'] || 'yt-dlp';
+const ytdlpExtraArgs = (process.env['VOX_YTDLP_ARGS'] || '').trim();
 const bitrate = process.env['VOX_BOT_BITRATE'] || '96k';
 
 interface TrackRequest {
@@ -176,11 +177,13 @@ function trimError(err: unknown): string {
 async function resolveTrack(query: string): Promise<ResolvedTrack> {
   if (looksDirect(query)) return { input: query, title: query };
 
+  const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
   const lines = await runCapture(ytdlpBin, [
     '--no-playlist',
     '-f', 'bestaudio',
     '--print', '%(title)s',
     '--get-url',
+    ...extra,
     `ytsearch1:${query}`,
   ]);
   const useful = lines.map((l) => l.trim()).filter(Boolean);
@@ -188,6 +191,20 @@ async function resolveTrack(query: string): Promise<ResolvedTrack> {
   if (!url) throw new Error(`instale yt-dlp ou envie uma URL direta`);
   const title = useful.find((line) => line !== url) || query;
   return { input: url, title };
+}
+
+/**
+ * Split shell-ish "--flag valor --outra=x" preservando "aspas". Simples de
+ * proposito — nao roda comando, so vira argv pro spawn.
+ */
+function splitArgs(input: string): string[] {
+  const out: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input)) !== null) {
+    out.push(m[1] ?? m[2] ?? m[3] ?? '');
+  }
+  return out;
 }
 
 function looksDirect(value: string): boolean {
