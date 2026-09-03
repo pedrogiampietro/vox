@@ -68,7 +68,8 @@ Crie `/etc/vox-edge.env` com permissão restrita:
 
 ```ini
 VOX_EDGE_WT_PORT=9987
-VOX_EDGE_WT_HOST=::
+# O DNS do edge usa A/IPv4; mantenha o listener em IPv4.
+VOX_EDGE_WT_HOST=0.0.0.0
 VOX_EDGE_ORIGIN=wss://server-1.v0x.online/internal/edge
 VOX_EDGE_SECRET=COLOQUE_A_MESMA_CHAVE_DA_ORIGEM
 VOX_EDGE_CERT=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/voice-sp.v0x.online/voice-sp.v0x.online.crt
