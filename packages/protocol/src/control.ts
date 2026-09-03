@@ -60,7 +60,8 @@ export type ClientMessage =
     }
   | { t: Op.BotControl; action: BotControlAction; name: string }
   | { t: Op.ChatRead; targetId: number; upToStamp: number }
-  | { t: Op.ScreenSignal; targetId: number; kind: string; data: string };
+  | { t: Op.ScreenSignal; targetId: number; kind: string; data: string }
+  | { t: Op.SetClientDescription; fingerprint: string; description: string };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -135,7 +136,7 @@ function readChannel(r: Reader): ChannelInfo {
 
 function writeClient(w: Writer, c: ClientInfo): void {
   w.u16(c.id).u16(c.channelId).str(c.nickname).u8(c.flags).u8(c.group).str(c.fingerprint);
-  w.u32(Math.floor((c.connectedAt || 0) / 1000)).str(c.platform || '');
+  w.u32(Math.floor((c.connectedAt || 0) / 1000)).str(c.platform || '').str(c.description || '');
 }
 
 function readClient(r: Reader): ClientInfo {
@@ -148,6 +149,7 @@ function readClient(r: Reader): ClientInfo {
     fingerprint: r.str(),
     connectedAt: r.u32() * 1000,
     platform: r.str(),
+    description: r.str(),
   };
 }
 
@@ -340,6 +342,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.ScreenSignal:
       w.u16(m.targetId).str(m.kind).str(m.data);
       break;
+    case Op.SetClientDescription:
+      w.str(m.fingerprint).str(m.description);
+      break;
   }
   return w.finish();
 }
@@ -425,6 +430,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, targetId: r.u16(), upToStamp: r.f64() };
     case Op.ScreenSignal:
       return { t, targetId: r.u16(), kind: r.str(), data: r.str() };
+    case Op.SetClientDescription:
+      return { t, fingerprint: r.str(), description: r.str() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }

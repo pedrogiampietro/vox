@@ -802,6 +802,51 @@ label.field {
   letter-spacing: 0.03em;
 }
 
+.tibia-template {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: rgba(232, 163, 61, 0.04);
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.tibia-template h4 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--amber);
+  letter-spacing: 0.04em;
+}
+
+.tibia-template-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.tibia-template-row input {
+  height: 30px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.client-desc-edit {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.client-desc-edit input {
+  height: 28px;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
 .settings-hint {
   display: block;
   font-size: 12px;

@@ -1,6 +1,7 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 10: 8 tiers de grupo (Visitante..Leader) e descricao por fingerprint.
  * 9: sinalizacao WebRTC para compartilhamento de tela/janela.
  * 8: read receipts para mensagens privadas.
  * 7: guilds amigas/inimigas configuraveis (varias por lado).
@@ -10,7 +11,7 @@
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -54,6 +55,7 @@ export enum Op {
   BotControl = 0x76,
   ChatRead = 0x77,
   ScreenSignal = 0x78,
+  SetClientDescription = 0x79,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -180,20 +182,33 @@ export enum FailureCode {
  * Grupos, em ordem crescente de poder. Comparacao numerica basta: quem tem
  * grupo maior ou igual ao exigido pode agir - e ninguem age sobre alguem de
  * grupo maior ou igual ao seu.
+ *
+ * Nomes internos (Guest/Moderator/Admin/Owner) foram mantidos para nao
+ * quebrar todo o codigo que checa Group.Moderator etc. Os valores mudaram:
+ * agora ha 8 tiers entre eles, com espacos para "Spy/Membro/Elite/Suporte"
+ * organizacionalmente entre Visitante e Moderador.
  */
 export enum Group {
-  Guest = 0,
-  Moderator = 1,
-  Admin = 2,
-  Owner = 3,
+  Guest = 0,       // Visitante
+  Spy = 1,
+  Member = 2,      // Membro
+  Elite = 3,
+  Support = 4,     // Suporte
+  Moderator = 5,   // Moderador
+  Admin = 6,
+  Owner = 7,       // Leader / Dono
 }
 
 /** Nome legivel do grupo, usado na interface e no painel. */
 export const GROUP_NAMES: Record<Group, string> = {
-  [Group.Guest]: 'convidado',
+  [Group.Guest]: 'visitante',
+  [Group.Spy]: 'spy',
+  [Group.Member]: 'membro',
+  [Group.Elite]: 'elite',
+  [Group.Support]: 'suporte',
   [Group.Moderator]: 'moderador',
-  [Group.Admin]: 'administrador',
-  [Group.Owner]: 'dono',
+  [Group.Admin]: 'admin',
+  [Group.Owner]: 'leader',
 };
 
 export enum RemoveReason {
@@ -226,6 +241,8 @@ export interface ClientInfo {
   connectedAt: number;
   /** Plataforma do cliente (ex: "Web", "Desktop"). Vazio = desconhecido. */
   platform: string;
+  /** Descricao livre por identidade (ex: "Main: Pedrao Warsz"). Persistida. */
+  description: string;
 }
 
 /** Definicao visual de um grupo. */
@@ -255,11 +272,39 @@ export interface RespQueueEntry {
 }
 
 export const DEFAULT_GROUP_DEFS: GroupDef[] = [
-  { id: Group.Guest, name: 'Convidado', icon: '', color: '' },
-  { id: Group.Moderator, name: 'Moderador', icon: '', color: '' },
-  { id: Group.Admin, name: 'Administrador', icon: '', color: '#e0a040' },
-  { id: Group.Owner, name: 'Dono', icon: '', color: '#e8a33d' },
+  { id: Group.Guest, name: 'Visitante', icon: '', color: '' },
+  { id: Group.Spy, name: 'Spy', icon: '', color: '#8f8f8f' },
+  { id: Group.Member, name: 'Membro', icon: '', color: '#7fd89b' },
+  { id: Group.Elite, name: 'Elite', icon: '', color: '#a9c4ff' },
+  { id: Group.Support, name: 'Suporte', icon: '', color: '#9edcad' },
+  { id: Group.Moderator, name: 'Moderador', icon: '', color: '#f0cd76' },
+  { id: Group.Admin, name: 'Admin', icon: '', color: '#e0a040' },
+  { id: Group.Owner, name: 'Leader', icon: '', color: '#e8a33d' },
 ];
+
+/** Template Tibia: canais base pra guild/team, criados idempotentes. */
+export const TIBIA_TEMPLATE_CHANNELS: readonly { name: string; topic: string }[] = [
+  { name: 'Lobby', topic: 'Canal de entrada' },
+  { name: 'Bosses', topic: 'Boss hunts' },
+  { name: 'Team Hunt', topic: 'Hunt em grupo' },
+  { name: 'Cavebot', topic: 'Bots respawn' },
+  { name: 'Trades', topic: 'Comercio e mercado' },
+  { name: 'Off-topic', topic: 'Papo geral' },
+  { name: 'Suporte', topic: 'Suporte e duvidas' },
+];
+
+/**
+ * Faixas de nivel Tibia. Geradas em intervalos configuraveis; padrao 100 em 100
+ * do 50 ao 2000, e um canal 2000+ pra levels no topo.
+ */
+export function tibiaLevelChannels(step = 100, min = 50, max = 2000): { name: string; topic: string }[] {
+  const out: { name: string; topic: string }[] = [];
+  for (let lo = min; lo < max; lo += step) {
+    out.push({ name: `${lo}-${lo + step}`, topic: `Level ${lo} a ${lo + step}` });
+  }
+  out.push({ name: `${max}+`, topic: `Level ${max}+` });
+  return out;
+}
 
 /** Raiz da arvore de canais / "nenhum canal". */
 export const NO_CHANNEL = 0;

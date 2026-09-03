@@ -51,6 +51,8 @@ export interface StoredServer {
   groups: Record<string, Group>; bans: StoredBan[]; groupDefs: GroupDef[];
   claims: StoredRespClaim[];
   botConfig: StoredBotConfig;
+  /** fingerprint -> descricao livre (ex: "Main: Pedrao Warsz"). */
+  descriptions: Record<string, string>;
 }
 
 export function defaultChannels(): StoredChannel[] {
@@ -84,7 +86,7 @@ export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
 };
 
 export function defaultServer(id = 1): StoredServer {
-  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS], claims: [], botConfig: { ...DEFAULT_BOT_CONFIG } };
+  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS], claims: [], botConfig: { ...DEFAULT_BOT_CONFIG }, descriptions: {} };
 }
 
 export function loadServers(): StoredServer[] {
@@ -99,11 +101,11 @@ export function loadServers(): StoredServer[] {
 }
 
 export function saveServers(servers: StoredServer[]): void {
-  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json, claims_json, bot_config_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json, claims_json, bot_config_json, descriptions_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   database.exec('BEGIN');
   try {
     database.exec('DELETE FROM servers');
-    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs), JSON.stringify(s.claims), JSON.stringify(s.botConfig));
+    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs), JSON.stringify(s.claims), JSON.stringify(s.botConfig), JSON.stringify(s.descriptions ?? {}));
     database.exec('COMMIT');
   } catch (err) {
     database.exec('ROLLBACK');
@@ -193,11 +195,56 @@ function normalizeBotConfig(raw: unknown): StoredBotConfig {
 
 function normalize(s: Partial<StoredServer>): StoredServer {
   const base = defaultServer(s.id ?? 1);
-  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: s.groups ?? {}, bans: s.bans ?? [], groupDefs: s.groupDefs?.length ? s.groupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig) };
+  const rawGroups = s.groups ?? {};
+  const migratedGroups = migrateGroupValues(rawGroups);
+  const migratedGroupDefs = migrateGroupDefIds(s.groupDefs);
+  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: migratedGroups, bans: s.bans ?? [], groupDefs: migratedGroupDefs.length ? migratedGroupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig), descriptions: normalizeDescriptions(s.descriptions) };
 }
 
 function fromRow(row: Record<string, unknown>): StoredServer {
-  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)), claims: JSON.parse(String(row.claims_json || '[]')), botConfig: JSON.parse(String(row.bot_config_json || '{}')) });
+  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)), claims: JSON.parse(String(row.claims_json || '[]')), botConfig: JSON.parse(String(row.bot_config_json || '{}')), descriptions: JSON.parse(String(row.descriptions_json || '{}')) });
+}
+
+/**
+ * Antes o enum Group tinha 4 valores (0..3). Agora tem 8, com Moderator=5,
+ * Admin=6, Owner=7. Servidores existentes tem no db grupos velhos —
+ * remapeamos ao carregar para nao rebaixar todo mundo silenciosamente.
+ */
+function migrateGroupValues(raw: Record<string, unknown>): Record<string, Group> {
+  const out: Record<string, Group> = {};
+  const mapped = (v: number): Group => {
+    if (v >= 8) return Group.Owner; // guard-rail
+    if (v >= 4) return v as Group;   // ja e novo enum
+    if (v === 3) return Group.Owner;
+    if (v === 2) return Group.Admin;
+    if (v === 1) return Group.Moderator;
+    return Group.Guest;
+  };
+  for (const [fp, val] of Object.entries(raw)) {
+    if (typeof val === 'number') out[fp] = mapped(val);
+  }
+  return out;
+}
+
+function migrateGroupDefIds(raw: GroupDef[] | undefined): GroupDef[] {
+  if (!raw?.length) return [];
+  return raw.map((g) => ({ ...g, id: g.id <= 3 ? mapLegacyGroupId(g.id) : g.id }));
+}
+
+function mapLegacyGroupId(v: number): Group {
+  if (v === 3) return Group.Owner;
+  if (v === 2) return Group.Admin;
+  if (v === 1) return Group.Moderator;
+  return Group.Guest;
+}
+
+function normalizeDescriptions(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [fp, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof val === 'string' && val.trim()) out[fp] = val.slice(0, 200);
+  }
+  return out;
 }
 
 function normalizeClaims(raw: unknown): StoredRespClaim[] {

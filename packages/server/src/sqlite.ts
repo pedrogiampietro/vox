@@ -30,6 +30,9 @@ database.exec(`
   if (!has.has('claims_json')) {
     database.exec("ALTER TABLE servers ADD COLUMN claims_json TEXT NOT NULL DEFAULT '[]'");
   }
+  if (!has.has('descriptions_json')) {
+    database.exec("ALTER TABLE servers ADD COLUMN descriptions_json TEXT NOT NULL DEFAULT '{}'");
+  }
 }
 
 export function exportJson(name: string, value: unknown): void {

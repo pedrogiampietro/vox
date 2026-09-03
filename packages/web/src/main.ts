@@ -20,12 +20,15 @@ import {
   BotControlAction,
   ChannelFlags,
   ClientFlags,
+  DEFAULT_GROUP_DEFS,
   Group,
   GROUP_NAMES,
   NO_CHANNEL,
   ChatScope,
   RESPAWN_CATALOG,
+  TIBIA_TEMPLATE_CHANNELS,
   canonicalRespawnName,
+  tibiaLevelChannels,
 } from '@vox/protocol';
 import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
 import {
@@ -900,12 +903,38 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     }
   }
 
+  // description (Main: X, notas...)
+  if (c.description) {
+    addRow('Descrição:', c.description);
+  }
+
   // fingerprint / ID (only visible to owners)
   if (c.fingerprint && isOwner) {
     addRow('ID:', c.fingerprint);
   }
 
   panel.append(info);
+
+  // Editor de descricao — voce edita a sua sempre; Mod+ edita a de outros.
+  const canEditDesc = c.fingerprint !== '' && (isSelf || client.myGroup >= Group.Moderator);
+  if (canEditDesc) {
+    const descRow = $('div', 'client-desc-edit');
+    const descInput = $('input') as HTMLInputElement;
+    descInput.placeholder = 'ex: Main: Pedrao Warsz';
+    descInput.value = c.description ?? '';
+    descInput.maxLength = 200;
+    const saveBtn = $('button', 'ghost');
+    saveBtn.textContent = 'salvar descrição';
+    saveBtn.style.cssText = 'font-size:11px;padding:3px 8px;';
+    saveBtn.addEventListener('click', () => {
+      client.setClientDescription(c.fingerprint, descInput.value.trim());
+    });
+    descInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') saveBtn.click();
+    });
+    descRow.append(descInput, saveBtn);
+    panel.append(descRow);
+  }
 
   // volume + mute controls (only for other users)
   if (!isSelf) {
@@ -2306,9 +2335,82 @@ function buildNotificationsSection(body: HTMLElement): void {
   body.append(testRow);
 }
 
+function clampNum(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return Math.min(Math.max(Math.round(v), lo), hi);
+}
+
+/**
+ * Aplica o template Tibia: renomeia os 8 grupos com nomes/cores padrao e
+ * cria canais base + faixas de level, pulando o que ja existe (idempotente).
+ */
+function applyTibiaTemplate(step: number, max: number): void {
+  // 1) Grupos: usa DEFAULT_GROUP_DEFS como fonte.
+  for (const def of DEFAULT_GROUP_DEFS) {
+    client.setGroupDef(def.id, def.name, def.icon, def.color);
+  }
+
+  // 2) Canais existentes (case-insensitive), pra nao duplicar.
+  const existing = new Set(
+    [...client.channels.values()].map((c) => c.name.toLowerCase()),
+  );
+
+  const wanted: { name: string; topic: string }[] = [
+    ...TIBIA_TEMPLATE_CHANNELS,
+    ...tibiaLevelChannels(step, 50, max),
+  ];
+  for (const w of wanted) {
+    if (existing.has(w.name.toLowerCase())) continue;
+    client.createChannel(w.name);
+  }
+}
+
 function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
   body.append(text('h3', '', 'GRUPOS DO SERVIDOR'));
   body.append(text('span', '', 'Configure nome, cor e ícone dos grupos. As alterações só valem depois de salvar.'));
+
+  // Bloco de template: cria/atualiza grupos e canais base pra Tibia em um clique.
+  const tplBox = $('div', 'tibia-template');
+  tplBox.append(text('h4', '', 'TEMPLATE TIBIA'));
+  tplBox.append(text('span', 'settings-hint', 'aplica nomes/cores nos 8 grupos e cria os canais padrão (Lobby, Bosses, Team Hunt, Cavebot, Trades, Off-topic, Suporte + faixas de level).'));
+
+  const tplRow = $('div', 'tibia-template-row');
+  const levelStepInput = $('input') as HTMLInputElement;
+  levelStepInput.type = 'number';
+  levelStepInput.min = '25';
+  levelStepInput.max = '500';
+  levelStepInput.step = '25';
+  levelStepInput.value = '100';
+  levelStepInput.style.cssText = 'width:70px;';
+
+  const levelMaxInput = $('input') as HTMLInputElement;
+  levelMaxInput.type = 'number';
+  levelMaxInput.min = '500';
+  levelMaxInput.max = '5000';
+  levelMaxInput.step = '100';
+  levelMaxInput.value = '2000';
+  levelMaxInput.style.cssText = 'width:80px;';
+
+  const applyBtn = $('button', 'primary');
+  applyBtn.textContent = 'aplicar template Tibia';
+  applyBtn.addEventListener('click', () => {
+    const step = clampNum(Number(levelStepInput.value), 25, 500) || 100;
+    const max = clampNum(Number(levelMaxInput.value), 500, 5000) || 2000;
+    if (!confirm(`isso vai renomear os 8 grupos e criar os canais base + faixas de level (${step}-${max}). continuar?`)) return;
+    applyTibiaTemplate(step, max);
+    setTimeout(rebuild, 400);
+  });
+
+  tplRow.append(
+    text('span', '', 'passo:'),
+    levelStepInput,
+    text('span', '', 'max:'),
+    levelMaxInput,
+    applyBtn,
+  );
+  tplBox.append(tplRow);
+  body.append(tplBox);
+  body.append($('hr'));
 
   // Seed a partir do server para cada def que ainda nao tem edicao local,
   // e purga edicoes de defs que sumiram (grupo removido).

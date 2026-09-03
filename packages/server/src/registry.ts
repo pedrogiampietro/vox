@@ -113,6 +113,7 @@ export class Registry {
       groupDefs: [],
       claims: [],
       botConfig: { ...DEFAULT_BOT_CONFIG },
+      descriptions: {},
     };
     const hub = this.attach(stored);
     this.scheduleSave();

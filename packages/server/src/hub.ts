@@ -93,6 +93,7 @@ export class Hub {
   private readonly claims = new Map<number, StoredRespClaim>();
   private groupDefs: GroupDef[];
   private bans: StoredBan[] = [];
+  private readonly descriptions = new Map<string, string>();
 
   afkEnabled = config.afkEnabled;
 
@@ -116,7 +117,7 @@ export class Hub {
 
   constructor(
     public settings: ServerSettings,
-    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig'>,
+    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig' | 'descriptions'>,
     private readonly deps: HubDeps,
   ) {
     for (const c of stored.channels) {
@@ -128,6 +129,9 @@ export class Hub {
     this.groupDefs = stored.groupDefs?.length ? [...stored.groupDefs] : [...DEFAULT_GROUP_DEFS];
     this.bans = [...stored.bans];
     this.botConfig = stored.botConfig ? { ...stored.botConfig } : { ...DEFAULT_BOT_CONFIG };
+    for (const [fp, desc] of Object.entries(stored.descriptions ?? {})) {
+      if (typeof desc === 'string' && desc) this.descriptions.set(fp, desc);
+    }
   }
 
   // ----------------------------------------------------------- inspecao --
@@ -145,7 +149,21 @@ export class Hub {
   }
 
   clientList(): ClientInfo[] {
-    return [...this.sessions.values()].map(describe);
+    return [...this.sessions.values()].map((s) => this.describe(s));
+  }
+
+  private describe(s: Session): ClientInfo {
+    return {
+      id: s.id,
+      channelId: s.channelId,
+      nickname: s.nickname,
+      flags: s.flags,
+      group: s.group,
+      fingerprint: s.fingerprint,
+      connectedAt: s.connectedAt,
+      platform: s.platform,
+      description: this.descriptions.get(s.fingerprint) ?? '',
+    };
   }
 
   banList(): StoredBan[] {
@@ -188,6 +206,7 @@ export class Hub {
       groupDefs: [...this.groupDefs],
       claims: [...this.claims.values()],
       botConfig: { ...this.botConfig, huntedNames: botHunted },
+      descriptions: Object.fromEntries(this.descriptions),
     };
   }
 
@@ -382,7 +401,7 @@ export class Hub {
           const nick = clean(m.nickname, MAX_NICKNAME) || 'convidado';
           if (nick !== s.nickname) {
             s.nickname = nick;
-            this.broadcast({ t: Op.ClientAdd, client: describe(s) });
+            this.broadcast({ t: Op.ClientAdd, client: this.describe(s) });
           }
         }
         break;
@@ -539,6 +558,25 @@ export class Hub {
       case Op.ScreenSignal:
         this.routeScreenSignal(s, m.targetId, m.kind, m.data);
         break;
+
+      case Op.SetClientDescription: {
+        // Voce pode editar a sua propria. Moderator+ edita a de qualquer um.
+        const isSelf = m.fingerprint === s.fingerprint;
+        if (!isSelf && s.group < Group.Moderator) {
+          return this.fail(s, FailureCode.NotPermitted, 'so quem modera edita descricao alheia');
+        }
+        const desc = clean(m.description, 200);
+        const fp = clean(m.fingerprint, 128);
+        if (!fp) return this.fail(s, FailureCode.Malformed, 'fingerprint invalido');
+        if (desc) this.descriptions.set(fp, desc);
+        else this.descriptions.delete(fp);
+        this.deps.onChanged();
+        // Reannounce todos com esse fingerprint (pode ter varias sessoes).
+        for (const other of this.sessions.values()) {
+          if (other.fingerprint === fp) this.broadcast({ t: Op.ClientAdd, client: this.describe(other) });
+        }
+        break;
+      }
     }
   }
 
@@ -654,7 +692,7 @@ export class Hub {
     if (s.group >= Group.Owner) {
       s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
     }
-    this.broadcast({ t: Op.ClientAdd, client: describe(s) }, s);
+    this.broadcast({ t: Op.ClientAdd, client: this.describe(s) }, s);
   }
 
   private allocClientId(): number {
@@ -710,7 +748,7 @@ export class Hub {
     target.group = group;
     this.deps.onChanged();
     // ClientAdd tambem serve de atualizacao: o cliente indexa por id.
-    this.broadcast({ t: Op.ClientAdd, client: describe(target) });
+    this.broadcast({ t: Op.ClientAdd, client: this.describe(target) });
   }
 
   /** Define o grupo de uma identidade que pode nem estar online. */
@@ -720,7 +758,7 @@ export class Hub {
     for (const s of this.sessions.values()) {
       if (s.fingerprint !== fingerprint) continue;
       s.group = group;
-      this.broadcast({ t: Op.ClientAdd, client: describe(s) });
+      this.broadcast({ t: Op.ClientAdd, client: this.describe(s) });
     }
     this.deps.onChanged();
   }
@@ -1646,15 +1684,3 @@ export class Hub {
   }
 }
 
-function describe(s: Session): ClientInfo {
-  return {
-    id: s.id,
-    channelId: s.channelId,
-    nickname: s.nickname,
-    flags: s.flags,
-    group: s.group,
-    fingerprint: s.fingerprint,
-    connectedAt: s.connectedAt,
-    platform: s.platform,
-  };
-}

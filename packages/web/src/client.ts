@@ -518,6 +518,10 @@ export class VoxClient {
     this.connection.send({ t: Op.SetGroupDef, group, name, icon, color });
   }
 
+  setClientDescription(fingerprint: string, description: string): void {
+    this.connection.send({ t: Op.SetClientDescription, fingerprint, description });
+  }
+
   toggleMic(): void {
     this.setFlags(this.flags ^ ClientFlags.MutedMic);
   }
