@@ -235,7 +235,10 @@ export async function fetchCharacter(
     },
     timeout: 15,
   });
-  if (res.status < 200 || res.status >= 300) return null;
+  if (res.status < 200 || res.status >= 300) {
+    console.error(`[rubinot] fetchCharacter "${name}": HTTP ${res.status}`);
+    return null;
+  }
   const html = typeof res.body === 'string' ? res.body : String(res.body);
 
   // Tenta varios formatos comuns de tabela vertical: <td>Label:</td><td>value</td>.
@@ -253,10 +256,15 @@ export async function fetchCharacter(
   const level = Number(pick('Level')) || 0;
   const vocation = pick('Vocation');
   const world = pick('World');
-  // Online: procura literal "Online" ou "Status: Online" na secao antes de Last Login.
   const beforeLastLogin = html.split(/last\s*login/i)[0] ?? html;
   const online = /\bonline\b/i.test(beforeLastLogin) && !/\boffline\b/i.test(beforeLastLogin);
 
-  if (!level && !vocation) return null;
+  if (!level && !vocation) {
+    // Diagnostico: mostra um trecho do HTML pra sabermos o formato real.
+    const snippet = html.length > 800 ? html.slice(0, 800) : html;
+    console.error(`[rubinot] fetchCharacter "${name}": sem level/voc. HTML (${html.length} bytes):\n${snippet}`);
+    return null;
+  }
+  console.log(`[rubinot] fetchCharacter "${name}" -> lvl=${level} voc="${vocation}" world="${world}"`);
   return { name: parsedName, level, vocation, world, online };
 }
