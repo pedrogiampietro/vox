@@ -249,6 +249,10 @@ liga o QUIC.
 Se a UDP 9987 estiver bloqueada (firewall, rede corporativa), nada quebra: os
 clientes ficam no WebSocket.
 
+Para instalar ou migrar uma VPS com `systemd` + Caddy, consulte o
+[runbook de produção](docs/PRODUCAO.md). Ele documenta certificados QUIC,
+portas, backups, troca de DNS, validação e rollback.
+
 ### Com certificado próprio, sem proxy
 
 O servidor fala TLS direto, útil quando o certificado já vem de outro lugar:

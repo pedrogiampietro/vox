@@ -1,0 +1,16 @@
+[Unit]
+Description=Vox voice server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vox
+EnvironmentFile=/opt/vox/.env
+ExecStart=/usr/bin/node /opt/vox/dist/server.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
