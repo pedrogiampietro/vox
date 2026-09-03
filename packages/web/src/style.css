@@ -2487,7 +2487,6 @@ label.field {
   background: rgb(0 0 0 / 62%);
   backdrop-filter: blur(7px);
   -webkit-backdrop-filter: blur(7px);
-  animation: overlay-in 180ms var(--ease-out);
 }
 
 .connection-modal {

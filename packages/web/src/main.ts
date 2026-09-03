@@ -246,11 +246,24 @@ function syncConnectionOverlay(): void {
   }
 
   const stageKey = `${connectionModal.run}:${connectionModal.stage}`;
-  if (!existing || existing.dataset.stageKey !== stageKey) {
-    existing?.remove();
+  if (!existing) {
     const overlay = renderConnectionModal(connectionModal);
     overlay.dataset.stageKey = stageKey;
     document.body.append(overlay);
+    return;
+  }
+
+  // Preserve o overlay durante todo o handshake. Recria-lo a cada etapa
+  // reinicia a animacao de entrada e faz o fundo parecer que esta piscando.
+  if (existing.dataset.stageKey !== stageKey) {
+    const next = renderConnectionModal(connectionModal);
+    const nextCard = next.firstElementChild as HTMLElement | null;
+    if (nextCard) {
+      // A animacao de entrada pertence apenas a primeira exibicao do modal.
+      nextCard.style.animation = 'none';
+      existing.replaceChildren(nextCard);
+    }
+    existing.dataset.stageKey = stageKey;
     return;
   }
 
