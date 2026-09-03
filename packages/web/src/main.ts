@@ -69,12 +69,42 @@ let outputDevices: MediaDeviceInfo[] = [];
  */
 const groupEdits = new Map<number, { name: string; color: string; icon: string }>();
 
+/**
+ * Enquanto o usuario esta arrastando um slider, qualquer re-render destroi
+ * o input e cancela o drag. Suspendemos renders ate o pointer soltar.
+ */
+let sliderDragging = false;
+let renderPending = false;
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', (e) => {
+    const el = e.target as HTMLElement | null;
+    if (el instanceof HTMLInputElement && el.type === 'range') {
+      sliderDragging = true;
+    }
+  });
+  const releaseDrag = (): void => {
+    if (!sliderDragging) return;
+    sliderDragging = false;
+    if (renderPending) {
+      renderPending = false;
+      render();
+    }
+  };
+  document.addEventListener('pointerup', releaseDrag);
+  document.addEventListener('pointercancel', releaseDrag);
+}
+
 
 // ---------------------------------------------------------------- helpers --
 
 // ---------------------------------------------------------------- render --
 
 function render(): void {
+  if (sliderDragging) {
+    renderPending = true;
+    return;
+  }
   const app = document.getElementById('app')!;
   const chatInput = app.querySelector('.composer input') as HTMLInputElement | null;
   const hadFocus = chatInput && document.activeElement === chatInput;

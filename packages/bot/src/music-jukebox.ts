@@ -372,6 +372,14 @@ class VoxConnection {
   }
 }
 
+/**
+ * ~1s de audio (50 pacotes de 20ms) empilhado antes de comecar a enviar,
+ * pra dar folga contra latencia de rede/ffmpeg no start.
+ */
+const PREBUFFER_PACKETS = 50;
+/** Duracao (ms) de audio por pacote Opus quando o ffmpeg gera com -frame_duration 20. */
+const FRAME_MS = 20;
+
 class MusicPlayer {
   private readonly demux = new OggOpusDemuxer((packet) => this.queue.push(packet));
   private queue: Uint8Array[] = [];
@@ -379,6 +387,9 @@ class MusicPlayer {
   private ytdlp: ReturnType<typeof spawn> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private finished = false;
+  private started = false;
+  private startAt = 0;
+  private packetsSent = 0;
 
   constructor(
     private readonly track: ResolvedTrack,
@@ -458,7 +469,10 @@ class MusicPlayer {
       this.finished = true;
     });
 
-    this.timer = setInterval(() => this.tick(), 20);
+    // Tick roda a 10ms (oversampling), decidindo se ja e hora de mandar o
+    // proximo pacote pelo wall-clock. Isso evita drift do setInterval, que
+    // sozinho a 20ms produz pequenos jitters audiveis ao longo da musica.
+    this.timer = setInterval(() => this.tick(), 10);
   }
 
   stop(skipped: boolean): void {
@@ -475,12 +489,30 @@ class MusicPlayer {
   }
 
   private tick(): void {
-    const packet = this.queue.shift();
-    if (packet) {
-      this.conn.sendVoice(packet, this.finished && this.queue.length === 0 ? VoiceFlags.EndOfTalk : VoiceFlags.None);
-      return;
+    // Warmup: espera acumular buffer minimo (ou o ffmpeg terminar antes disso)
+    // para que a rede tenha folga antes do primeiro pacote sair.
+    if (!this.started) {
+      if (this.queue.length < PREBUFFER_PACKETS && !this.finished) return;
+      this.started = true;
+      this.startAt = Date.now();
+      this.packetsSent = 0;
     }
-    if (this.finished) this.stop(false);
+
+    // Manda quantos pacotes forem necessarios para acompanhar o relogio.
+    // Se o loop atrasou (GC, IO), enviamos varios de uma vez para recuperar.
+    const now = Date.now();
+    const shouldHaveSent = Math.floor((now - this.startAt) / FRAME_MS) + 1;
+    let sent = 0;
+    while (this.packetsSent < shouldHaveSent && this.queue.length > 0) {
+      const packet = this.queue.shift()!;
+      const isLast = this.finished && this.queue.length === 0;
+      this.conn.sendVoice(packet, isLast ? VoiceFlags.EndOfTalk : VoiceFlags.None);
+      this.packetsSent++;
+      sent++;
+      // Guarda contra loop patologico: no maximo 5 pacotes por tick (100ms de audio).
+      if (sent >= 5) break;
+    }
+    if (this.finished && this.queue.length === 0) this.stop(false);
   }
 }
 
