@@ -27,6 +27,7 @@ interface TrackRequest {
   requestedBy: number;
   requestedByName: string;
   channelId: number;
+  viaDm: boolean;
 }
 
 interface ResolvedTrack {
@@ -50,43 +51,67 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
     return;
   }
   if (msg.t !== Op.ChatDeliver) return;
-  if (msg.scope !== ChatScope.Channel) return;
   if (msg.senderId === 0) return;
   if (msg.senderId === controller.selfId) return;
-  // Server ja filtrou por canal (so entrega para membros do canal do remetente).
-  // Confirma pela info local: o sender precisa estar no mesmo canal que o bot.
-  const senderInfo = controller.clients.get(msg.senderId);
-  if (!senderInfo || senderInfo.channelId !== controller.self?.channelId) return;
+  // Aceita mensagens de duas formas:
+  //  - Chat do canal `bot` (quem esta la digitando comandos)
+  //  - DM enviada diretamente ao bot (funciona de qualquer canal — o bot vai
+  //    ate o canal atual do requisitante para tocar).
+  if (msg.scope === ChatScope.Channel) {
+    const senderInfo = controller.clients.get(msg.senderId);
+    if (!senderInfo || senderInfo.channelId !== controller.self?.channelId) return;
+  } else if (msg.scope === ChatScope.Private) {
+    if (msg.targetId !== controller.selfId) return;
+  } else {
+    return;
+  }
+  const isDm = msg.scope === ChatScope.Private;
 
   const body = msg.text.trim();
   if (!body) return;
 
+  // reply: se veio por DM, responde DM pro requisitante; se veio pelo canal,
+  // anuncia no canal do bot.
+  const reply = (text: string): void => {
+    if (isDm) {
+      controller.send({ t: Op.ChatSend, scope: ChatScope.Private, targetId: msg.senderId, text });
+    } else {
+      controller.send({ t: Op.ChatSend, scope: ChatScope.Channel, targetId: 0, text });
+    }
+  };
+
   const lower = body.toLowerCase();
   if (lower === 'fila' || lower === 'queue') {
-    announce(queue.length ? queue.map((t, i) => `${i + 1}. ${t.query} - ${t.requestedByName}`).join('\n') : 'fila vazia');
+    reply(queue.length ? queue.map((t, i) => `${i + 1}. ${t.query} - ${t.requestedByName}`).join('\n') : 'fila vazia');
     return;
   }
   if (lower === 'skip' || lower === 'pular') {
-    if (!activePlayer) announce('nada tocando agora');
+    if (!activePlayer) reply('nada tocando agora');
     else activePlayer.stop(true);
     return;
   }
   if (lower === 'stop' || lower === 'parar') {
     queue.length = 0;
     if (activePlayer) activePlayer.stop(true);
-    announce('fila limpa');
+    reply('fila limpa');
     return;
   }
 
   const requester = controller.clients.get(msg.senderId);
   const channelId = requester?.channelId ?? 0;
   if (!channelId) {
-    announce(`nao achei o canal de ${msg.senderName}`);
+    reply(`nao achei o canal de ${msg.senderName}`);
     return;
   }
 
-  queue.push({ query: body, requestedBy: msg.senderId, requestedByName: msg.senderName, channelId });
-  announce(activePlayer ? `adicionado na fila: ${body}` : `tocando agora: ${body}`);
+  queue.push({
+    query: body,
+    requestedBy: msg.senderId,
+    requestedByName: msg.senderName,
+    channelId,
+    viaDm: isDm,
+  });
+  reply(activePlayer ? `adicionado na fila: ${body}` : `tocando agora: ${body}`);
   void pumpQueue();
 }
 
@@ -105,7 +130,12 @@ async function pumpQueue(): Promise<void> {
   try {
     track = await resolveTrack(current.query);
   } catch (err) {
-    announce(`nao consegui resolver "${current.query}": ${String(err)}`);
+    const msg = `nao consegui resolver "${current.query}": ${trimError(err)}`;
+    if (current.viaDm) {
+      controller.send({ t: Op.ChatSend, scope: ChatScope.Private, targetId: current.requestedBy, text: msg });
+    } else {
+      announce(msg);
+    }
     current = null;
     void pumpQueue();
     return;
@@ -133,6 +163,14 @@ async function pumpQueue(): Promise<void> {
 
 function announce(text: string): void {
   controller.send({ t: Op.ChatSend, scope: ChatScope.Channel, targetId: 0, text });
+}
+
+/** Log de yt-dlp/ffmpeg vem em spam de linhas repetitivas. Deixa so o essencial. */
+function trimError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const lines = raw.split(/\r?\n/).filter((l) => l.trim());
+  const last = lines[lines.length - 1] || raw;
+  return last.length > 200 ? last.slice(0, 200) + '…' : last;
 }
 
 async function resolveTrack(query: string): Promise<ResolvedTrack> {
