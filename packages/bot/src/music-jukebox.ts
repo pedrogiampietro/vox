@@ -214,22 +214,51 @@ function trimError(err: unknown): string {
   return last.length > 200 ? last.slice(0, 200) + '…' : last;
 }
 
+/**
+ * Ordem de tentativa dos motores de busca. SoundCloud vem primeiro por nao
+ * ter bot-check nem cookies: entrega sem manutencao. YouTube fica como
+ * fallback pra cobrir catalogo. Setar VOX_MUSIC_SOURCES=yt so pra forcar.
+ */
+const searchSources: SearchSource[] = (process.env['VOX_MUSIC_SOURCES'] || 'sc,yt')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter((s): s is SearchSource => s === 'sc' || s === 'yt');
+
+type SearchSource = 'sc' | 'yt';
+
+function searchPrefix(source: SearchSource): string {
+  return source === 'sc' ? 'scsearch1:' : 'ytsearch1:';
+}
+
 async function resolveTrack(query: string): Promise<ResolvedTrack> {
   if (looksDirect(query)) return { source: 'direct', input: query, title: query };
 
-  // So extrai o titulo. A URL do googlevideo caduca em segundos e amarra-se
-  // ao user-agent do resolver, entao nao adianta guardar — ffmpeg vai pegar
-  // 403. No playback pipamos yt-dlp -> ffmpeg, aproveitando cookies e headers.
+  let lastError: unknown = null;
+  for (const src of searchSources) {
+    try {
+      return await resolveViaSource(src, query);
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      // Se caiu bot-check no YouTube, so tenta o proximo (nao adianta insistir).
+      console.error(`[jukebox] source ${src} falhou: ${msg.slice(0, 120)}`);
+    }
+  }
+  throw lastError ?? new Error('todas as fontes de musica falharam');
+}
+
+async function resolveViaSource(source: SearchSource, query: string): Promise<ResolvedTrack> {
   const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
+  const prefix = searchPrefix(source);
   const lines = await runCapture(ytdlpBin, [
     '--no-playlist',
     '-f', 'bestaudio',
     '--print', '%(title)s',
     ...extra,
-    `ytsearch1:${query}`,
+    `${prefix}${query}`,
   ]);
   const title = lines.map((l) => l.trim()).find(Boolean) || query;
-  return { source: 'ytdlp', input: `ytsearch1:${query}`, title };
+  return { source: 'ytdlp', input: `${prefix}${query}`, title };
 }
 
 /**
