@@ -1822,6 +1822,40 @@ label.field {
   font-size: 11px;
 }
 
+.screen-full {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.screen-tile:hover .screen-full {
+  opacity: 1;
+}
+
+/* Em fullscreen nativo, o browser recolhe a tile pra tela toda; escondemos
+ * o botao dentro (nao serve mais — sair e Esc) para nao poluir. */
+.screen-tile:fullscreen .screen-full,
+.screen-tile:fullscreen .screen-label {
+  display: none;
+}
+
+.screen-tile:fullscreen video {
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+  background: black;
+}
+
 .screen-error {
   padding: 8px;
   border: 1px solid var(--alert-dim);

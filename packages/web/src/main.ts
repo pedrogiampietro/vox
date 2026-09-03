@@ -1759,7 +1759,22 @@ function renderScreenVideo(label: string, stream: MediaStream, muted: boolean): 
   video.playsInline = true;
   video.muted = muted;
   video.srcObject = stream;
-  tile.append(video, text('span', 'screen-label', label));
+
+  const fullBtn = $('button', 'screen-full');
+  fullBtn.type = 'button';
+  fullBtn.title = 'maximizar (tela cheia)';
+  fullBtn.textContent = '⛶';
+  fullBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const target = tile as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+    const request = target.requestFullscreen?.bind(target) ?? target.webkitRequestFullscreen?.bind(target);
+    if (request) void request().catch(() => {});
+  });
+
+  // Duplo click no video tambem entra em tela cheia — padrao familiar de players.
+  video.addEventListener('dblclick', () => fullBtn.click());
+
+  tile.append(video, text('span', 'screen-label', label), fullBtn);
   queueMicrotask(() => video.play().catch(() => {}));
   return tile;
 }
