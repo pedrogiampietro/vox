@@ -2438,13 +2438,18 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
     btn.textContent = wipe ? 'apagando + criando...' : 'aplicando...';
     try {
       await applyTibiaTemplate(wipe);
+      // Aguarda o server ecoar Op.GroupDefs antes de reconstruir a tela,
+      // e limpa o buffer local pra a re-render reseedar com os defs novos —
+      // senao edicoes antigas em cache mostram nomes/icones desatualizados.
+      await new Promise<void>((r) => setTimeout(r, 500));
+      groupEdits.clear();
     } catch (err) {
       console.error(err);
       alert(`falha: ${String(err)}`);
     } finally {
       btn.disabled = false;
       btn.textContent = prev ?? label;
-      setTimeout(rebuild, 200);
+      rebuild();
     }
   };
 
