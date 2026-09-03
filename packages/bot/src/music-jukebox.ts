@@ -178,6 +178,8 @@ class VoxConnection {
   private readonly ready: Promise<void>;
   private resolveReady: (() => void) | null = null;
   private identity: Awaited<ReturnType<typeof createIdentity>> | null = null;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  private closed = false;
 
   constructor(
     private readonly nickname: string,
@@ -217,6 +219,20 @@ class VoxConnection {
       void this.handle(msg);
     });
     ws.on('error', (err) => console.error(`[jukebox] ${this.nickname}: ${err.message}`));
+    ws.on('close', () => {
+      if (this.heartbeat) clearInterval(this.heartbeat);
+      this.heartbeat = null;
+      if (!this.closed) {
+        console.error(`[jukebox] ${this.nickname}: websocket fechou; encerrando processo para systemd reiniciar limpo`);
+        process.exit(1);
+      }
+    });
+    // Heartbeat: server drops us after ~30s idle. 15s deixa duas janelas de
+    // tolerancia antes do timeout.
+    this.heartbeat = setInterval(() => {
+      this.send({ t: Op.Ping, stamp: Date.now() });
+    }, 15_000);
+    this.heartbeat.unref();
     await this.ready;
   }
 
@@ -275,6 +291,9 @@ class VoxConnection {
   }
 
   close(reason: string): void {
+    this.closed = true;
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
     this.ws?.close(1000, reason);
   }
 }
