@@ -7,7 +7,7 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, RespQueueEntry } from './types.js';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, RespQueueEntry, VoiceEdge } from './types.js';
 import { BotControlAction, ChatScope, FailureCode, FrameKind, Group, Op, PermissionAction, RemoveReason } from './types.js';
 
 export type ClientMessage =
@@ -87,6 +87,8 @@ export type ServerMessage =
        * ajuda. Preenchido em desenvolvimento, com certificado proprio.
        */
       wtCertHash: Uint8Array;
+      /** Candidatos de edge; o cliente escolhe a rota que responde primeiro. */
+      voiceEdges: VoiceEdge[];
     }
   | { t: Op.Pong; stamp: number }
   | { t: Op.Failure; code: FailureCode; message: string }
@@ -156,6 +158,14 @@ function readClient(r: Reader): ClientInfo {
     platform: r.str(),
     description: r.str(),
   };
+}
+
+function writeVoiceEdge(w: Writer, edge: VoiceEdge): void {
+  w.str(edge.host).u16(edge.port).str(edge.region).bytes(edge.certHash);
+}
+
+function readVoiceEdge(r: Reader): VoiceEdge {
+  return { host: r.str(), port: r.u16(), region: r.str(), certHash: r.bytes() };
 }
 
 // ----------------------------------------------------------------- groups --
@@ -486,7 +496,8 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
         .bytes(m.voiceToken)
         .str(m.voiceHost)
         .u16(m.wtPort)
-        .bytes(m.wtCertHash);
+        .bytes(m.wtCertHash)
+        .list(m.voiceEdges, writeVoiceEdge);
       break;
     case Op.Pong:
       w.f64(m.stamp);
@@ -567,6 +578,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         voiceHost: r.str(),
         wtPort: r.u16(),
         wtCertHash: r.bytes(),
+        voiceEdges: r.list(readVoiceEdge),
       };
     case Op.Pong:
       return { t, stamp: r.f64() };

@@ -17,7 +17,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { MAX_VOICE_PACKET, VOICE_TOKEN_BYTES } from '@vox/protocol';
+import { MAX_VOICE_PACKET, VOICE_PROBE_MAGIC, VOICE_TOKEN_BYTES } from '@vox/protocol';
 import { config } from './config.js';
 import type { Registry } from './registry.js';
 import type { Session, VoiceSink } from './session.js';
@@ -394,6 +394,7 @@ async function serve(session: WTSession, registry: Registry): Promise<void> {
     () => release(owner, sink),
     () => release(owner, sink),
   );
+  void echoProbeStreams(session);
 
   const reader = session.datagrams.readable.getReader();
   for (;;) {
@@ -421,32 +422,71 @@ async function readToken(
   session: WTSession,
 ): Promise<{ value: Uint8Array; reply: (byte: number) => Promise<void> } | null> {
   const streams = session.incomingBidirectionalStreams.getReader();
-  const { done, value: stream } = await streams.read();
-  if (done || !stream) return null;
+  try {
+    const { done, value: stream } = await streams.read();
+    if (done || !stream) return null;
 
-  const reader = stream.readable.getReader();
-  const buf = new Uint8Array(VOICE_TOKEN_BYTES);
-  let filled = 0;
-  while (filled < VOICE_TOKEN_BYTES) {
-    const chunk = await reader.read();
-    if (chunk.done || !chunk.value) return null;
-    const take = Math.min(VOICE_TOKEN_BYTES - filled, chunk.value.length);
-    buf.set(chunk.value.subarray(0, take), filled);
-    filled += take;
+    const reader = stream.readable.getReader();
+    const buf = new Uint8Array(VOICE_TOKEN_BYTES);
+    let filled = 0;
+    while (filled < VOICE_TOKEN_BYTES) {
+      const chunk = await reader.read();
+      if (chunk.done || !chunk.value) return null;
+      const take = Math.min(VOICE_TOKEN_BYTES - filled, chunk.value.length);
+      buf.set(chunk.value.subarray(0, take), filled);
+      filled += take;
+    }
+
+    return {
+      value: buf,
+      async reply(byte: number) {
+        const writer = stream.writable.getWriter();
+        try {
+          await writer.write(new Uint8Array([byte]));
+          await writer.close();
+        } catch {
+          // cliente sumiu no meio do handshake
+        }
+      },
+    };
+  } finally {
+    streams.releaseLock();
   }
+}
 
-  return {
-    value: buf,
-    async reply(byte: number) {
-      const writer = stream.writable.getWriter();
-      try {
-        await writer.write(new Uint8Array([byte]));
-        await writer.close();
-      } catch {
-        // cliente sumiu no meio do handshake
-      }
-    },
-  };
+async function echoProbeStreams(session: WTSession): Promise<void> {
+  const streams = session.incomingBidirectionalStreams.getReader();
+  try {
+    for (;;) {
+      const next = await streams.read();
+      if (next.done || !next.value) return;
+      void echoProbeStream(next.value).catch(() => {});
+    }
+  } catch {
+    // A sessao fechou junto com o transporte principal.
+  } finally {
+    streams.releaseLock();
+  }
+}
+
+async function echoProbeStream(stream: {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+}): Promise<void> {
+  const reader = stream.readable.getReader();
+  const writer = stream.writable.getWriter();
+  try {
+    const first = await reader.read();
+    if (first.done || !first.value || first.value[0] !== VOICE_PROBE_MAGIC) return;
+    await writer.write(first.value);
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done || !chunk.value) return;
+      await writer.write(chunk.value);
+    }
+  } finally {
+    try { await writer.close(); } catch { /* cliente sumiu */ }
+  }
 }
 
 function makeSink(session: WTSession): VoiceSink {

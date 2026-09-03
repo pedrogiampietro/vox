@@ -909,15 +909,27 @@ function renderTalk(): HTMLElement {
   const motd = text('span', 'motd', client.motd || '');
   if (client.notice?.kind === 'error') motd.classList.add('warn');
   const stat = $('span', 'stat');
-  const transport = text('span', 'via', client.connection.voiceTransport === 'quic' ? 'QUIC' : 'WS');
+  const connection = client.connection;
+  const usingQuic = connection.voiceTransport === 'quic';
+  const transport = text('span', 'via', usingQuic ? 'QUIC' : 'WS');
+  const voiceRtt = text('b', 'voice-rtt', usingQuic && connection.voiceRtt > 0 ? `${connection.voiceRtt}ms` : '—');
+  const voiceRegion = text('span', 'voice-region', usingQuic ? (connection.voiceRegion || 'edge') : 'voz');
+  const voiceQuality = text('span', `voice-quality ${connection.voiceQuality}`, usingQuic ? voiceQualityLabel(connection.voiceQuality) : 'fallback');
   stat.append(
-    text('span', '', `RTT`),
-    text('b', '', `${client.connection.rtt}ms`),
+    text('span', '', `ctrl`),
+    text('b', '', `${connection.rtt}ms`),
+    text('span', '', '·'),
+    text('span', 'voice-label', 'voz'),
+    voiceRtt,
     text('span', '', '·'),
     transport,
     text('span', '', '·'),
+    voiceRegion,
+    text('span', '', '·'),
+    voiceQuality,
+    text('span', '', '·'),
     text('span', '', 'drop'),
-    text('b', '', String(client.connection.droppedVoice)),
+    text('b', '', String(connection.droppedVoice)),
   );
   hdr.append(serverLabel, motd, stat);
   pane.append(hdr);
@@ -1059,6 +1071,16 @@ function renderTalk(): HTMLElement {
   pane.append(composer);
 
   return pane;
+}
+
+function voiceQualityLabel(quality: string): string {
+  switch (quality) {
+    case 'excellent': return 'excelente';
+    case 'good': return 'boa';
+    case 'unstable': return 'instável';
+    case 'measuring': return 'medindo';
+    default: return '—';
+  }
 }
 
 function renderChannelInfoResizer(): HTMLElement {

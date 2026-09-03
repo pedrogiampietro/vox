@@ -327,7 +327,8 @@ Tudo por variável de ambiente:
 | `VOX_WT_PUBLISH_HASH` | `false` | só em desenvolvimento, com certificado próprio |
 | `VOX_VOICE_EDGE_HOST` | vazio | hostname público do edge regional; vazio = origem |
 | `VOX_VOICE_EDGE_PORT` | `9987` | porta UDP do edge anunciada no Welcome |
-| `VOX_EDGE_SECRET` | vazio | segredo do link privado edge → origem |
+| `VOX_VOICE_EDGE_SECRET` | vazio | segredo do link privado edge → origem |
+| `VOX_VOICE_EDGES` | vazio | candidatos `região=host:porta`, escolhidos pela rota mais rápida |
 
 Os dados permanentes vivem em `data/vox.db`, um SQLite transacional com tabelas de
 servidores e contas. Para facilitar inspeção e recuperação, o Vox mantém

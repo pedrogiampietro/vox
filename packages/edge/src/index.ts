@@ -16,6 +16,7 @@ import {
   Group,
   MAX_VOICE_PACKET,
   NO_CHANNEL,
+  VOICE_PROBE_MAGIC,
   VOICE_TOKEN_BYTES,
   decodeVoice,
   stampSender,
@@ -28,7 +29,7 @@ const EDGE_REJECT = 0xf2;
 loadEnv();
 
 const port = number('VOX_EDGE_WT_PORT', 9987);
-const host = string('VOX_EDGE_WT_HOST', '::');
+const host = string('VOX_EDGE_WT_HOST', '0.0.0.0');
 const certPath = string('VOX_EDGE_CERT', '');
 const keyPath = string('VOX_EDGE_KEY', '');
 const originUrl = string('VOX_EDGE_ORIGIN', 'wss://server-1.v0x.online/internal/edge');
@@ -268,6 +269,7 @@ async function serve(session: WTSession, router: EdgeRouter): Promise<void> {
   client.applyState(accepted);
   link.setClient(client);
   router.add(client);
+  void echoProbeStreams(session);
   await token.reply(1);
 
   void session.closed.then(() => client.close(), () => client.close());
@@ -311,6 +313,41 @@ async function acceptLoop(sessions: ReadableStream<unknown>, router: EdgeRouter)
   }
 }
 
+async function echoProbeStreams(session: WTSession): Promise<void> {
+  const streams = session.incomingBidirectionalStreams.getReader();
+  try {
+    for (;;) {
+      const next = await streams.read();
+      if (next.done || !next.value) return;
+      void echoProbeStream(next.value).catch(() => {});
+    }
+  } catch {
+    // A sessao fechou junto com o transporte principal.
+  } finally {
+    streams.releaseLock();
+  }
+}
+
+async function echoProbeStream(stream: {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+}): Promise<void> {
+  const reader = stream.readable.getReader();
+  const writer = stream.writable.getWriter();
+  try {
+    const first = await reader.read();
+    if (first.done || !first.value || first.value[0] !== VOICE_PROBE_MAGIC) return;
+    await writer.write(first.value);
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done || !chunk.value) return;
+      await writer.write(chunk.value);
+    }
+  } finally {
+    try { await writer.close(); } catch { /* cliente sumiu */ }
+  }
+}
+
 interface WTSession {
   ready: Promise<unknown>;
   closed: Promise<unknown>;
@@ -344,29 +381,33 @@ interface AcceptedState extends VoiceState {
 
 async function readToken(session: WTSession): Promise<TokenStream | null> {
   const streams = session.incomingBidirectionalStreams.getReader();
-  const first = await withTimeout(streams.read(), 5000);
-  if (first?.done || !first?.value) return null;
-  const stream = first.value;
-  const reader = stream.readable.getReader();
-  const token = new Uint8Array(VOICE_TOKEN_BYTES);
-  let filled = 0;
-  while (filled < token.length) {
-    const chunk = await withTimeout(reader.read(), 5000);
-    if (!chunk || chunk.done || !chunk.value) return null;
-    const take = Math.min(token.length - filled, chunk.value.length);
-    token.set(chunk.value.subarray(0, take), filled);
-    filled += take;
+  try {
+    const first = await withTimeout(streams.read(), 5000);
+    if (first?.done || !first?.value) return null;
+    const stream = first.value;
+    const reader = stream.readable.getReader();
+    const token = new Uint8Array(VOICE_TOKEN_BYTES);
+    let filled = 0;
+    while (filled < token.length) {
+      const chunk = await withTimeout(reader.read(), 5000);
+      if (!chunk || chunk.done || !chunk.value) return null;
+      const take = Math.min(token.length - filled, chunk.value.length);
+      token.set(chunk.value.subarray(0, take), filled);
+      filled += take;
+    }
+    return {
+      value: token,
+      async reply(byte) {
+        const writer = stream.writable.getWriter();
+        try {
+          await writer.write(new Uint8Array([byte]));
+          await writer.close();
+        } catch { /* cliente sumiu */ }
+      },
+    };
+  } finally {
+    streams.releaseLock();
   }
-  return {
-    value: token,
-    async reply(byte) {
-      const writer = stream.writable.getWriter();
-      try {
-        await writer.write(new Uint8Array([byte]));
-        await writer.close();
-      } catch { /* cliente sumiu */ }
-    },
-  };
 }
 
 function decodeAccepted(frame: Uint8Array): AcceptedState | null {

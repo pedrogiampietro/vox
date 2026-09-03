@@ -837,6 +837,23 @@ label.field {
   color: var(--amber);
 }
 
+.stat .voice-label,
+.stat .voice-region {
+  color: var(--text-dim);
+}
+
+.stat .voice-quality.excellent {
+  color: var(--green);
+}
+
+.stat .voice-quality.good {
+  color: var(--amber);
+}
+
+.stat .voice-quality.unstable {
+  color: var(--alert);
+}
+
 .claims-page,
 .stats-page {
   flex: 1;

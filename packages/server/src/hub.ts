@@ -38,7 +38,7 @@ import {
   VOICE_HEADER_SIZE,
   canonicalRespawnName,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, VoiceEdge } from '@vox/protocol';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
@@ -67,7 +67,7 @@ export interface HubDeps {
   forceSave(): void;
   claimVoiceKey(key: string, session: Session): void;
   releaseVoiceKey(key: string): void;
-  voiceEndpoint(hostname: string): { host: string; port: number; certHash: Uint8Array };
+  voiceEndpoint(hostname: string): { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] };
 }
 
 interface Channel {
@@ -802,6 +802,7 @@ export class Hub {
         voiceHost: voice.host,
         wtPort: voice.port,
         wtCertHash: voice.certHash,
+        voiceEdges: voice.edges ?? [{ host: voice.host, port: voice.port, region: voice.host, certHash: voice.certHash }],
       }),
     );
 

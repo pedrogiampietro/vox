@@ -13,8 +13,9 @@
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  * 13: Welcome passou a anunciar um hostname de voz separado (voice edge).
+ * 14: Welcome passou a anunciar candidatos de edge para seleção automática.
  */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -24,6 +25,18 @@ export const FINGERPRINT_CHARS = 64;
 
 /** Segredo que liga a sessao WebTransport a sessao de controle. */
 export const VOICE_TOKEN_BYTES = 16;
+
+/** Frame confiável, privado ao WebTransport, usado para medir RTT do edge. */
+export const VOICE_PROBE_MAGIC = 0x7e;
+export const VOICE_PROBE_BYTES = 13;
+
+/** Edge regional anunciado pelo servidor principal. */
+export interface VoiceEdge {
+  host: string;
+  port: number;
+  region: string;
+  certHash: Uint8Array;
+}
 
 /** Primeiro byte de todo frame, em qualquer transporte. */
 export enum FrameKind {

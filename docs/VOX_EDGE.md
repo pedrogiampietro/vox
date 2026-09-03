@@ -33,6 +33,8 @@ No `.env` da VPS principal, acrescente:
 VOX_VOICE_EDGE_HOST=voice-sp.v0x.online
 VOX_VOICE_EDGE_PORT=9987
 VOX_VOICE_EDGE_SECRET=COLOQUE_A_MESMA_CHAVE_NAS_DUAS_MAQUINAS
+# Opcional quando houver mais de um edge:
+# VOX_VOICE_EDGES=São Paulo=voice-sp.v0x.online:9987,Dallas=voice-dallas.v0x.online:9987
 ```
 
 Gere uma chave longa fora do Git:
@@ -43,6 +45,11 @@ openssl rand -hex 32
 
 O Caddy da origem já encaminha o caminho `/internal/edge` junto com os demais
 WebSockets. Depois de atualizar o `.env`, reinicie o `vox.service`.
+
+Quando houver mais de uma região, cada edge precisa de DNS, certificado,
+UDP/9987 e a mesma chave privada compartilhada. O cliente abre os candidatos
+em paralelo e mantém o primeiro handshake QUIC concluído; isso escolhe a menor
+latência de rota naquele momento, sem depender de uma base fixa de geolocalização.
 
 ## Instalação da VPS em São Paulo
 
@@ -132,7 +139,7 @@ até a origem.
 
 ## Fallback e rollback
 
-Se o edge ficar indisponível, remova temporariamente
+Se o edge ficar indisponível, remova temporariamente `VOX_VOICE_EDGES` e
 `VOX_VOICE_EDGE_HOST` do `.env` da origem e reinicie `vox.service`. O Vox volta
 a anunciar o QUIC local da origem; se ele também não estiver disponível, o
 cliente continua no WebSocket.

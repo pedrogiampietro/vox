@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import type { VoiceEdge } from '@vox/protocol';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const wtPort = num('VOX_WT_PORT', num('VOX_PORT', 9987));
@@ -44,6 +45,42 @@ function bool(name: string, fallback: boolean): boolean {
   if (raw === undefined) return fallback;
   return raw === '1' || raw.toLowerCase() === 'true';
 }
+
+/**
+ * Lista no formato `regiao=host:porta,regiao2=host:porta`.
+ * O formato simples deixa a configuração legível no .env e permite que o
+ * cliente escolha a primeira rota QUIC que responder.
+ */
+function parseVoiceEdges(raw: string, fallbackHost: string, fallbackPort: number): VoiceEdge[] {
+  const values = raw.split(',').map((item) => item.trim()).filter(Boolean);
+  if (values.length === 0 && fallbackHost) {
+    return [{ host: fallbackHost, port: fallbackPort, region: regionFromHost(fallbackHost), certHash: new Uint8Array(0) }];
+  }
+
+  const edges: VoiceEdge[] = [];
+  for (const value of values) {
+    const eq = value.indexOf('=');
+    const region = eq >= 0 ? value.slice(0, eq).trim() : '';
+    const endpoint = (eq >= 0 ? value.slice(eq + 1) : value).trim();
+    const colon = endpoint.lastIndexOf(':');
+    const host = (colon > 0 ? endpoint.slice(0, colon) : endpoint).trim();
+    const port = colon > 0 ? Number(endpoint.slice(colon + 1)) : fallbackPort;
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) continue;
+    edges.push({ host, port, region: region || regionFromHost(host), certHash: new Uint8Array(0) });
+  }
+  return edges;
+}
+
+function regionFromHost(host: string): string {
+  const value = host.toLowerCase();
+  if (value.includes('sp') || value.includes('sao-paulo') || value.includes('sao_paulo')) return 'São Paulo';
+  if (value.includes('dallas') || value.includes('dal')) return 'Dallas';
+  return host;
+}
+
+const voiceEdgeHost = str('VOX_VOICE_EDGE_HOST', '');
+const voiceEdgePort = num('VOX_VOICE_EDGE_PORT', 9987);
+const voiceEdges = parseVoiceEdges(str('VOX_VOICE_EDGES', ''), voiceEdgeHost, voiceEdgePort);
 
 export const config = {
   host: str('VOX_HOST', '0.0.0.0'),
@@ -125,11 +162,13 @@ export const config = {
   wtPublishHash: bool('VOX_WT_PUBLISH_HASH', false),
 
   /** Hostname publico do edge de voz. Vazio = QUIC na propria VPS. */
-  voiceEdgeHost: str('VOX_VOICE_EDGE_HOST', ''),
+  voiceEdgeHost,
   /** Porta UDP do edge anunciado no Welcome. */
-  voiceEdgePort: num('VOX_VOICE_EDGE_PORT', 9987),
+  voiceEdgePort,
   /** Segredo compartilhado usado pelo link privado edge -> origem. */
   voiceEdgeSecret: str('VOX_VOICE_EDGE_SECRET', ''),
+  /** Candidatos `regiao=host:porta` para seleção automática no cliente. */
+  voiceEdges,
 
   /**
    * Senha do painel de administracao. Vazia desliga o painel inteiro - e o

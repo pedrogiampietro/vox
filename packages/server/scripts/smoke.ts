@@ -36,6 +36,7 @@ interface Welcome {
   voiceHost: string;
   wtPort: number;
   wtCertHash: Uint8Array;
+  voiceEdges: { host: string; port: number; region: string; certHash: Uint8Array }[];
   serverId: number;
   group: Group;
 }
@@ -246,11 +247,13 @@ async function openVoiceLink(
 
   try {
     const controlUrl = new globalThis.URL(URL);
-    const voiceHost = welcome.voiceHost || controlUrl.hostname;
+    const edge = welcome.voiceEdges?.[0];
+    const voiceHost = edge?.host || welcome.voiceHost || controlUrl.hostname;
+    const voicePort = edge?.port || port;
     const wt = new WebTransport(
-      `https://${voiceHost}:${port}/vox`,
-      welcome.wtCertHash.length > 0
-        ? { serverCertificateHashes: [{ algorithm: 'sha-256', value: welcome.wtCertHash }] }
+      `https://${voiceHost}:${voicePort}/vox`,
+      (edge?.certHash ?? welcome.wtCertHash).length > 0
+        ? { serverCertificateHashes: [{ algorithm: 'sha-256', value: edge?.certHash ?? welcome.wtCertHash }] }
         : {},
     );
     await wt.ready;

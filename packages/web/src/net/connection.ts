@@ -10,23 +10,27 @@ import {
   FrameKind,
   Op,
   PROTOCOL_VERSION,
+  VOICE_PROBE_BYTES,
+  VOICE_PROBE_MAGIC,
   decodeServerMessage,
   decodeVoice,
   encodeClientMessage,
 } from '@vox/protocol';
-import type { ClientMessage, ServerMessage, VoicePacket } from '@vox/protocol';
+import type { ClientMessage, ServerMessage, VoiceEdge, VoicePacket } from '@vox/protocol';
 import type { Identity } from '../identity.js';
 
 export type LinkState = 'offline' | 'connecting' | 'online';
 
 /** Por onde a voz esta andando neste momento. */
 export type VoiceTransport = 'ws' | 'quic';
+export type VoiceQuality = 'unknown' | 'measuring' | 'excellent' | 'good' | 'unstable';
 
 export interface ConnectionHandlers {
   onState(state: LinkState, detail: string): void;
   onMessage(m: ServerMessage): void;
   onVoice(p: VoicePacket): void;
   onVoiceTransport?(transport: VoiceTransport): void;
+  onVoiceStats?(): void;
 }
 
 /**
@@ -87,6 +91,9 @@ export class Connection {
 
   private wt: WebTransport | null = null;
   private wtWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private wtProbeWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private wtProbeTimer: ReturnType<typeof setInterval> | null = null;
+  private wtProbeSequence = 0;
   private wtInflight = 0;
 
   /** WebSocket ate o WebTransport subir; 'quic' quando a voz migrou. */
@@ -94,6 +101,16 @@ export class Connection {
 
   /** Ida e volta ate o servidor, em ms. */
   rtt = 0;
+  /** Ida e volta do link de voz QUIC ate o edge escolhido, em ms. */
+  voiceRtt = 0;
+  /** Qualidade estimada do link de voz a partir do RTT e descartes locais. */
+  voiceQuality: VoiceQuality = 'unknown';
+  /** Host/regiao do edge que respondeu para esta sessao. */
+  voiceHost = '';
+  voiceRegion = '';
+  /** Datagramas de voz aceitos nos sentidos de envio e recebimento. */
+  voicePacketsSent = 0;
+  voicePacketsReceived = 0;
   /** Pacotes de voz descartados por congestionamento. */
   droppedVoice = 0;
 
@@ -111,6 +128,7 @@ export class Connection {
     this.closedByUser = false;
     this.retryAllowed = true;
     this.terminalReason = '';
+    this.resetVoiceMetrics();
     this.open();
   }
 
@@ -249,7 +267,16 @@ export class Connection {
       this.attempt = 0;
       this.everOnline = true;
       this.handlers.onState('online', msg.serverName);
-      void this.upgradeVoice(msg.voiceToken, msg.voiceHost || this.host, msg.wtPort, msg.wtCertHash);
+      const fallback: VoiceEdge = {
+        host: msg.voiceHost || this.host,
+        port: msg.wtPort,
+        region: regionFromHost(msg.voiceHost || this.host),
+        certHash: msg.wtCertHash,
+      };
+      const edges = msg.voiceEdges?.length > 0 ? msg.voiceEdges : [fallback];
+      this.voiceHost = edges[0]?.host ?? fallback.host;
+      this.voiceRegion = edges[0]?.region || regionFromHost(this.voiceHost);
+      void this.upgradeVoice(msg.voiceToken, edges);
     }
     this.handlers.onMessage(msg);
   }
@@ -291,6 +318,7 @@ export class Connection {
           this.dropVoiceChannel(generation);
         },
       );
+      this.voicePacketsSent++;
       return;
     }
 
@@ -310,25 +338,13 @@ export class Connection {
    * qualquer tropeco aqui deixa a voz no WebSocket, que ja funciona. O usuario
    * nunca fica sem audio por causa de uma otimizacao.
    */
-  private async upgradeVoice(
-    token: Uint8Array,
-    voiceHost: string,
-    port: number,
-    certHash: Uint8Array,
-  ): Promise<void> {
-    if (port === 0 || typeof WebTransport === 'undefined') return;
+  private async upgradeVoice(token: Uint8Array, edges: VoiceEdge[]): Promise<void> {
+    const candidates = edges.filter((edge) => edge.host && edge.port > 0);
+    if (candidates.length === 0 || typeof WebTransport === 'undefined') return;
     const generation = this.generation;
 
     try {
-      // Certificado proprio precisa do hash; com certificado valido, nao.
-      const init: WebTransportOptions = {};
-      if (certHash.length > 0) {
-        // Copia para um ArrayBuffer proprio: a API exige buffer nao compartilhado.
-        init.serverCertificateHashes = [
-          { algorithm: 'sha-256', value: Uint8Array.from(certHash) },
-        ];
-      }
-      const wt = new WebTransport(`https://${voiceHost}:${port}/vox`, init);
+      const { wt, edge } = await this.openFastestEdge(candidates);
       await wt.ready;
       if (generation !== this.generation) return wt.close();
 
@@ -349,13 +365,117 @@ export class Connection {
       this.wt = wt;
       this.wtWriter = datagrams.getWriter();
       this.wtInflight = 0;
+      this.voiceHost = edge.host;
+      this.voiceRegion = edge.region || regionFromHost(edge.host);
       this.voiceTransport = 'quic';
+      this.voiceQuality = 'measuring';
+      this.startVoiceProbe(wt, generation);
       this.handlers.onVoiceTransport?.('quic');
       void wt.closed.catch(() => {}).then(() => this.dropVoiceChannel(generation));
       void this.readDatagrams(wt, generation);
     } catch {
       this.dropVoiceChannel(generation);
     }
+  }
+
+  /** Abre todos os candidatos em paralelo e conserva a rota que responde primeiro. */
+  private async openFastestEdge(edges: VoiceEdge[]): Promise<{ wt: WebTransport; edge: VoiceEdge }> {
+    const transports: { wt: WebTransport; edge: VoiceEdge }[] = [];
+    for (const edge of edges) {
+      const init: WebTransportOptions = {};
+      if (edge.certHash.length > 0) {
+        init.serverCertificateHashes = [
+          { algorithm: 'sha-256', value: Uint8Array.from(edge.certHash) },
+        ];
+      }
+      try {
+        transports.push({ wt: new WebTransport(`https://${edge.host}:${edge.port}/vox`, init), edge });
+      } catch {
+        // Um candidato malformado nao impede os outros de serem testados.
+      }
+    }
+    if (transports.length === 0) throw new Error('nenhum edge de voz valido');
+
+    try {
+      const winner = await Promise.any(transports.map(async (candidate) => {
+        try {
+          await candidate.wt.ready;
+          return candidate;
+        } catch (err) {
+          candidate.wt.close();
+          throw err;
+        }
+      }));
+      for (const candidate of transports) {
+        if (candidate !== winner) candidate.wt.close();
+      }
+      return winner;
+    } catch (err) {
+      for (const candidate of transports) candidate.wt.close();
+      throw err;
+    }
+  }
+
+  private startVoiceProbe(wt: WebTransport, generation: number): void {
+    void wt.createBidirectionalStream().then((stream) => {
+      if (generation !== this.generation) return;
+      this.wtProbeWriter = stream.writable.getWriter();
+      void this.readVoiceProbes(stream.readable.getReader(), generation);
+      this.sendVoiceProbe(generation);
+      this.wtProbeTimer = setInterval(() => this.sendVoiceProbe(generation), 2000);
+    }).catch(() => {
+      // A falha no medidor nao derruba a voz QUIC.
+    });
+  }
+
+  private sendVoiceProbe(generation: number): void {
+    const writer = this.wtProbeWriter;
+    if (generation !== this.generation || !writer) return;
+    const payload = new Uint8Array(VOICE_PROBE_BYTES);
+    const view = new DataView(payload.buffer);
+    payload[0] = VOICE_PROBE_MAGIC;
+    view.setUint32(1, ++this.wtProbeSequence, true);
+    view.setFloat64(5, performance.now(), true);
+    void writer.write(payload).catch(() => {});
+  }
+
+  private async readVoiceProbes(
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    generation: number,
+  ): Promise<void> {
+    for (;;) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) return;
+        const value = chunk.value;
+        if (generation !== this.generation || value.length < VOICE_PROBE_BYTES || value[0] !== VOICE_PROBE_MAGIC) continue;
+        const sentAt = new DataView(value.buffer, value.byteOffset, value.byteLength).getFloat64(5, true);
+        const sample = performance.now() - sentAt;
+        if (!Number.isFinite(sample) || sample < 0 || sample > 60_000) continue;
+        this.voiceRtt = Math.max(1, Math.round(sample));
+        this.voiceQuality = this.qualityFromMetrics();
+        this.handlers.onVoiceStats?.();
+      } catch {
+        return;
+      }
+    }
+  }
+
+  private qualityFromMetrics(): VoiceQuality {
+    if (this.voiceTransport !== 'quic') return 'unknown';
+    if (this.voiceRtt === 0) return 'measuring';
+    if (this.droppedVoice > 0 || this.voiceRtt > 120) return 'unstable';
+    if (this.voiceRtt > 60) return 'good';
+    return 'excellent';
+  }
+
+  private resetVoiceMetrics(): void {
+    this.voiceRtt = 0;
+    this.voiceQuality = 'unknown';
+    this.voiceHost = '';
+    this.voiceRegion = '';
+    this.voicePacketsSent = 0;
+    this.voicePacketsReceived = 0;
   }
 
   private async readDatagrams(wt: WebTransport, generation: number): Promise<void> {
@@ -372,7 +492,10 @@ export class Connection {
       if (generation !== this.generation) return;
       if (!frame || frame[0] !== FrameKind.Voice) continue;
       const packet = decodeVoice(frame);
-      if (packet) this.handlers.onVoice(packet);
+      if (packet) {
+        this.voicePacketsReceived++;
+        this.handlers.onVoice(packet);
+      }
     }
     this.dropVoiceChannel(generation);
   }
@@ -382,6 +505,15 @@ export class Connection {
     if (generation !== this.generation) return;
     const changed = this.voiceTransport !== 'ws';
     this.voiceTransport = 'ws';
+    this.voiceRtt = 0;
+    this.voiceQuality = 'unknown';
+    if (this.wtProbeTimer !== null) {
+      clearInterval(this.wtProbeTimer);
+      this.wtProbeTimer = null;
+    }
+    const probeWriter = this.wtProbeWriter;
+    this.wtProbeWriter = null;
+    void probeWriter?.close().catch(() => {});
     this.wtWriter = null;
     this.wtInflight = 0;
     const wt = this.wt;
@@ -407,6 +539,14 @@ export class Connection {
     // Invalida qualquer upgrade de voz em andamento antes de soltar o socket.
     this.generation++;
     this.voiceTransport = 'ws';
+    this.resetVoiceMetrics();
+    if (this.wtProbeTimer !== null) {
+      clearInterval(this.wtProbeTimer);
+      this.wtProbeTimer = null;
+    }
+    const probeWriter = this.wtProbeWriter;
+    this.wtProbeWriter = null;
+    void probeWriter?.close().catch(() => {});
     this.wtWriter = null;
     this.wtInflight = 0;
     try {
@@ -457,6 +597,13 @@ function hostOf(wsUrl: string): string {
   } catch {
     return location.hostname;
   }
+}
+
+function regionFromHost(host: string): string {
+  const value = host.toLowerCase();
+  if (value.includes('sp') || value.includes('sao-paulo') || value.includes('sao_paulo')) return 'São Paulo';
+  if (value.includes('dallas') || value.includes('dal')) return 'Dallas';
+  return host;
 }
 
 function resolveUrl(address: string, serverId = 0): string {

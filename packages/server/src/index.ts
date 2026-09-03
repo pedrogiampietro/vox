@@ -142,13 +142,15 @@ pulse.unref();
  * nativo, o servidor sobe do mesmo jeito e a voz continua no WebSocket.
  */
 let voice: VoiceEndpoint | null = null;
-if (config.voiceEdgeHost) {
+if (config.voiceEdges.length > 0) {
+  const primaryEdge = config.voiceEdges[0]!;
   registry.setVoiceEndpointProvider(() => ({
-    host: config.voiceEdgeHost,
-    port: config.voiceEdgePort,
+    host: primaryEdge.host,
+    port: primaryEdge.port,
     certHash: new Uint8Array(0),
+    edges: config.voiceEdges,
   }));
-  console.log(`[vox] voz regional anunciada em ${config.voiceEdgeHost}:${config.voiceEdgePort}`);
+  console.log(`[vox] ${config.voiceEdges.length} edge(s) regional(is) anunciado(s); principal ${primaryEdge.host}:${primaryEdge.port}`);
 } else startVoiceTransport(registry)
   .then((endpoint) => {
     voice = endpoint;

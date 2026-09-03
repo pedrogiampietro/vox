@@ -11,7 +11,7 @@
  * diz de qual sessao - e portanto de qual servidor - o datagrama veio.
  */
 
-import { Group } from '@vox/protocol';
+import { Group, type VoiceEdge } from '@vox/protocol';
 import { Hub, type ServerSettings } from './hub.js';
 import { loadServers, saveServers, defaultChannels, DEFAULT_BOT_CONFIG, type StoredServer } from './persistence.js';
 import type { Session, VoiceSink } from './session.js';
@@ -29,16 +29,16 @@ export class Registry {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private nextServerId = 1;
 
-  private voiceInfo: { host: string; port: number; certHash: Uint8Array } = {
+  private voiceInfo: { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] } = {
     host: '',
     port: 0,
     certHash: new Uint8Array(0),
   };
 
   /** Retorna a porta do QUIC para o hostname da conexão de controle. */
-  voiceEndpoint: (hostname: string) => ({ host: string; port: number; certHash: Uint8Array }) = () => this.voiceInfo;
+  voiceEndpoint: (hostname: string) => ({ host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] }) = () => this.voiceInfo;
 
-  setVoiceEndpointProvider(provider: (hostname: string) => { host: string; port: number; certHash: Uint8Array }): void {
+  setVoiceEndpointProvider(provider: (hostname: string) => { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] }): void {
     this.voiceEndpoint = provider;
   }
 
