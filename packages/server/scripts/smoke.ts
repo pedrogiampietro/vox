@@ -33,6 +33,7 @@ import type { ChannelInfo, ClientInfo, ClientMessage, ServerMessage } from '@vox
 
 interface Welcome {
   voiceToken: Uint8Array;
+  voiceHost: string;
   wtPort: number;
   wtCertHash: Uint8Array;
   serverId: number;
@@ -245,8 +246,9 @@ async function openVoiceLink(
 
   try {
     const controlUrl = new globalThis.URL(URL);
+    const voiceHost = welcome.voiceHost || controlUrl.hostname;
     const wt = new WebTransport(
-      `https://${controlUrl.hostname}:${port}/vox`,
+      `https://${voiceHost}:${port}/vox`,
       welcome.wtCertHash.length > 0
         ? { serverCertificateHashes: [{ algorithm: 'sha-256', value: welcome.wtCertHash }] }
         : {},
