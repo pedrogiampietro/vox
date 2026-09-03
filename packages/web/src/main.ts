@@ -137,6 +137,13 @@ function render(): void {
   }
   syncConnectionModal();
   syncVoiceChannelView();
+  // O shell por trás do modal não precisa acompanhar cada evento do handshake.
+  // Mantê-lo intacto evita flashes enquanto canais e permissões chegam.
+  if (view === 'shell' && connectionModal && connectionModal.stage !== 'ready'
+      && document.querySelector('.connection-overlay')) {
+    syncConnectionOverlay();
+    return;
+  }
   const app = document.getElementById('app')!;
   const chatInput = app.querySelector('.composer input') as HTMLInputElement | null;
   const hadFocus = chatInput && document.activeElement === chatInput;
@@ -155,6 +162,7 @@ function render(): void {
       newInput.focus();
     }
   }
+  syncConnectionOverlay();
 }
 
 function renderAll(): void {
@@ -185,7 +193,6 @@ function renderShell(): HTMLElement {
   root.append(renderRail(), renderRooms(), renderTalk(), renderConsole());
   const dock = renderScreenDock();
   if (dock) root.append(dock);
-  if (connectionModal) root.append(renderConnectionModal(connectionModal));
   return root;
 }
 
@@ -227,6 +234,29 @@ function syncConnectionModal(): void {
     state.failedAt = state.stage;
     state.stage = 'error';
     state.detail = client.detail || 'não foi possível estabelecer a conexão';
+  }
+}
+
+/** Mantém o modal fora do #app para que renders de estado não reiniciem sua animação. */
+function syncConnectionOverlay(): void {
+  const existing = document.querySelector('.connection-overlay') as HTMLElement | null;
+  if (!connectionModal || view !== 'shell') {
+    existing?.remove();
+    return;
+  }
+
+  const stageKey = `${connectionModal.run}:${connectionModal.stage}`;
+  if (!existing || existing.dataset.stageKey !== stageKey) {
+    existing?.remove();
+    const overlay = renderConnectionModal(connectionModal);
+    overlay.dataset.stageKey = stageKey;
+    document.body.append(overlay);
+    return;
+  }
+
+  const detail = existing.querySelector('.connection-detail');
+  if (detail && detail.textContent !== connectionModal.detail) {
+    detail.textContent = connectionModal.detail;
   }
 }
 
