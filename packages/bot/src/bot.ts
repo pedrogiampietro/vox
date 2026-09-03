@@ -79,11 +79,23 @@ interface PlayerTag {
   guild: string;
 }
 
+interface GuildMemberSnap {
+  name: string;
+  level: number;
+  vocation: number;
+  isOnline: boolean;
+}
+
 export class RubinotBot {
   private deaths = new DeathTracker();
   private online: OnlineTracker;
   /** Nome (lower) -> guild + kind. Fonte unica pra decidir amigo/inimigo/tag. */
   private readonly tags = new Map<string, PlayerTag>();
+  /**
+   * Membros indexados por nome-lower a partir de syncGuild. Traz voc+level
+   * mesmo com o char offline — evita depender do endpoint publico do char.
+   */
+  private readonly guildMemberByName = new Map<string, GuildMemberSnap>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ac = new AbortController();
   private running = false;
@@ -245,7 +257,19 @@ export class RubinotBot {
         });
         continue;
       }
-      // Offline no world do bot. Tenta cache do fetchCharacter.
+      // Fallback 1: se e membro de alguma guild sincronizada, ja temos
+      // voc/level em cache local — sem HTTP extra.
+      const guildMember = this.guildMemberByName.get(nameLower);
+      if (guildMember) {
+        this.hub.updatePlayerInfo(nameLower, {
+          name: guildMember.name,
+          vocation: normalizeVocationNumber(guildMember.vocation),
+          level: guildMember.level,
+          online: guildMember.isOnline,
+        });
+        continue;
+      }
+      // Fallback 2: scraper da pagina publica (autenticada, fica pouco util).
       const cached = this.charCache.get(nameLower);
       const cacheAge = cached ? Date.now() - cached.fetchedAt : Infinity;
       // Cache: 4h se achou dados; 30min se pagina nao existia (evita refetch).
@@ -424,6 +448,8 @@ export class RubinotBot {
     for (const [key, tag] of this.tags) {
       if (tag.guild) this.tags.delete(key);
     }
+    // Snapshot de guild membros (level/voc) tambem e recarregado por guild.
+    this.guildMemberByName.clear();
 
     for (const g of this.cfg.friendGuilds) await this.syncGuild(g, 'friend');
     for (const g of this.cfg.enemyGuilds) await this.syncGuild(g, 'enemy');
@@ -439,6 +465,13 @@ export class RubinotBot {
         const existing = this.tags.get(key);
         if (existing?.kind === 'friend' && kind === 'enemy') continue;
         this.tags.set(key, { kind, guild: name });
+        // Guarda snapshot pra o refreshPlayerInfos usar mesmo com char offline.
+        this.guildMemberByName.set(key, {
+          name: m.name,
+          level: m.level,
+          vocation: m.vocation,
+          isOnline: m.isOnline,
+        });
         added++;
       }
       console.log(
@@ -454,6 +487,22 @@ function names(events: OnlineEvent[]): string {
   const list = events.slice(0, 8).map((ev) => ev.player);
   const extra = events.length - list.length;
   return extra > 0 ? `${list.join(', ')} +${extra}` : list.join(', ');
+}
+
+/**
+ * Guild API do Rubinot manda vocation como numero. Convencional Tibia:
+ * 1=Knight, 2=Paladin, 3=Sorcerer, 4=Druid, 5=Monk. Se Rubinot usar outra
+ * numeracao, ajusta aqui.
+ */
+function normalizeVocationNumber(n: number): string {
+  switch (n) {
+    case 1: return 'EK';
+    case 2: return 'RP';
+    case 3: return 'MS';
+    case 4: return 'ED';
+    case 5: return 'MK';
+    default: return '';
+  }
 }
 
 /** Rubinot manda voc como "Elite Knight"/"Master Sorcerer"/etc. Curte pra EK/ED/MS/RP/MK. */
