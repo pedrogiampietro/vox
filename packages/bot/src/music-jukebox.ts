@@ -242,17 +242,21 @@ async function resolveTrack(query: string): Promise<ResolvedTrack> {
   }
 
   // Busca por texto: tenta cada fonte na ordem configurada.
-  let lastError: unknown = null;
+  const attempts: string[] = [];
   for (const src of searchSources) {
     try {
       return await resolveViaSource(src, query);
     } catch (err) {
-      lastError = err;
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[jukebox] source ${src} falhou: ${msg.slice(0, 120)}`);
+      const short = trimError(err);
+      attempts.push(`${src}: ${short}`);
+      console.error(`[jukebox] source ${src} falhou: ${msg.slice(0, 240)}`);
     }
   }
-  throw lastError ?? new Error('todas as fontes de musica falharam');
+  // Se caiu tudo, joga um erro que enumera cada tentativa — o
+  // friendlyResolveError so ativa a mensagem de cookie se for esse mesmo o
+  // motivo. Senao, mostra "sc: <erro>; yt: <erro>".
+  throw new Error(attempts.join(' | ') || 'todas as fontes de musica falharam');
 }
 
 async function resolveViaUrl(url: string): Promise<ResolvedTrack> {
