@@ -152,7 +152,7 @@ export class VoiceRecorder {
       endedAt,
       durationMs: Math.max(0, performance.now() - this.startedAtMs),
       mimeType: recorder.mimeType || 'audio/webm',
-      signalPath: 'local-mic-pre-encoder-plus-remote-decoded-mix',
+      signalPath: 'local-mic-vad-gated-pre-encoder-plus-remote-decoded-mix',
       start: startTelemetry,
       end: cloneTelemetry(telemetry),
       delta: makeDelta(startTelemetry, telemetry),

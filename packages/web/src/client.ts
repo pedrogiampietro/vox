@@ -358,7 +358,7 @@ export class VoxClient {
       URL.revokeObjectURL(this.lastRecording.reportUrl);
     }
     this.lastRecording = result;
-    downloadBlob(result.audioBlob, recordingFilename(result.report.startedAt, 'webm'));
+    downloadBlob(result.audioBlob, recordingFilename(result.report.startedAt, audioExtension(result.report.mimeType)));
     downloadBlob(result.reportBlob, recordingFilename(result.report.startedAt, 'json'));
     this.onChange();
     return result;
@@ -964,4 +964,8 @@ function downloadBlob(blob: Blob, filename: string): void {
 function recordingFilename(startedAt: string, extension: string): string {
   const stamp = startedAt.replace(/[:.]/g, '-').replace(/[^0-9TZ-]/g, '');
   return `vox-channel-${stamp}.${extension}`;
+}
+
+function audioExtension(mimeType: string): string {
+  return mimeType.includes('ogg') ? 'ogg' : 'webm';
 }

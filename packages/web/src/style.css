@@ -2665,6 +2665,18 @@ label.field {
   text-decoration: underline;
 }
 
+.recording-indicator {
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  animation: recording-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recording-pulse {
+  50% { opacity: 0.45; }
+}
+
 .settings-footer {
   grid-column: 1 / -1;
   display: flex;

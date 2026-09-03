@@ -2361,6 +2361,10 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
       rebuild();
       return;
     }
+    if (!confirm('A gravação será salva localmente. Confirme que os participantes autorizaram a gravação.')) {
+      recordingBtn.disabled = false;
+      return;
+    }
     const ok = await client.startVoiceRecording();
     if (!ok) {
       recordingBtn.disabled = false;
