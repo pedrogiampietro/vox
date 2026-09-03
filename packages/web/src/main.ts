@@ -21,10 +21,13 @@ import {
   ChannelFlags,
   ClientFlags,
   DEFAULT_GROUP_DEFS,
+  DEFAULT_PERMISSIONS,
   Group,
   GROUP_NAMES,
   NO_CHANNEL,
   ChatScope,
+  PERMISSION_LABELS,
+  PermissionAction,
   RESPAWN_CATALOG,
   TIBIA_TEMPLATE,
   canonicalRespawnName,
@@ -1896,6 +1899,7 @@ function renderSettings(): HTMLElement {
     ...(client.myGroup >= Group.Owner
       ? [
           { id: 'groups', icon: '👥', label: 'Grupos' },
+          { id: 'permissions', icon: '🔐', label: 'Permissões' },
           { id: 'bot', icon: '🤖', label: 'Bot' },
         ]
       : []),
@@ -1927,6 +1931,7 @@ function renderSettings(): HTMLElement {
     else if (activeSection === 'playback') buildPlaybackSection(body);
     else if (activeSection === 'notifications') buildNotificationsSection(body);
     else if (activeSection === 'groups') buildGroupsSection(body, buildBody);
+    else if (activeSection === 'permissions') buildPermissionsSection(body);
     else if (activeSection === 'bot') buildBotSection(body, buildBody);
   }
 
@@ -2470,6 +2475,109 @@ async function applyTibiaTemplate(wipeFirst = false): Promise<void> {
       }
     }
   }
+}
+
+function buildPermissionsSection(body: HTMLElement): void {
+  body.append(text('h3', '', 'PERMISSÕES DO SERVIDOR'));
+  body.append(text('span', 'settings-hint', 'Grupo mínimo pra cada ação. Envio direto ao clicar no dropdown.'));
+
+  // Agrupa por categoria pra ficar organizado.
+  const groupings: { title: string; actions: PermissionAction[] }[] = [
+    {
+      title: 'CANAIS',
+      actions: [
+        PermissionAction.CreateTempChannel,
+        PermissionAction.CreatePermanentChannel,
+        PermissionAction.EditChannel,
+        PermissionAction.DeleteChannel,
+      ],
+    },
+    {
+      title: 'MODERAÇÃO',
+      actions: [
+        PermissionAction.Kick,
+        PermissionAction.Move,
+        PermissionAction.Ban,
+        PermissionAction.SetGroup,
+        PermissionAction.SetOtherDescription,
+      ],
+    },
+    {
+      title: 'COMANDOS DO BOT',
+      actions: [
+        PermissionAction.BotPoke,
+        PermissionAction.BotMassPoke,
+        PermissionAction.BotPush,
+        PermissionAction.BotMassPush,
+        PermissionAction.BotKick,
+        PermissionAction.BotMassKick,
+        PermissionAction.BotBan,
+        PermissionAction.BotBanList,
+        PermissionAction.BotUnban,
+        PermissionAction.BotAfk,
+        PermissionAction.BotMute,
+        PermissionAction.BotUnmute,
+        PermissionAction.BotModerate,
+        PermissionAction.BotVoice,
+        PermissionAction.BotDevoice,
+        PermissionAction.BotHunt,
+        PermissionAction.BotUnhunt,
+        PermissionAction.BotHunted,
+      ],
+    },
+  ];
+
+  const groupOptions = [
+    { value: Group.Guest, label: 'Visitante' },
+    { value: Group.Spy, label: 'Spy' },
+    { value: Group.Member, label: 'Membro' },
+    { value: Group.Elite, label: 'Elite' },
+    { value: Group.Support, label: 'Suporte' },
+    { value: Group.Moderator, label: 'Moderador' },
+    { value: Group.Admin, label: 'Admin' },
+    { value: Group.Owner, label: 'Leader' },
+  ];
+
+  for (const g of groupings) {
+    const h = text('h4', '', g.title);
+    h.style.cssText = 'margin:14px 0 4px;font-size:11px;color:var(--text-dim);letter-spacing:0.05em;';
+    body.append(h);
+    const table = $('div', 'perm-table');
+    for (const action of g.actions) {
+      const row = $('div', 'perm-row');
+      const label = text('span', 'perm-label', PERMISSION_LABELS[action]);
+      const select = $('select') as HTMLSelectElement;
+      const current = client.permissionFor(action);
+      for (const opt of groupOptions) {
+        const o = $('option') as HTMLOptionElement;
+        o.value = String(opt.value);
+        const isDefault = opt.value === DEFAULT_PERMISSIONS[action];
+        o.textContent = isDefault ? `${opt.label} (padrão)` : opt.label;
+        if (opt.value === current) o.selected = true;
+        select.append(o);
+      }
+      select.addEventListener('change', () => {
+        client.setPermission(action, Number(select.value) as Group);
+      });
+      row.append(label, select);
+      table.append(row);
+    }
+    body.append(table);
+  }
+
+  const resetRow = $('div', '');
+  resetRow.style.cssText = 'margin-top:16px;';
+  const resetBtn = $('button', 'ghost');
+  resetBtn.textContent = 'restaurar padrões';
+  resetBtn.addEventListener('click', () => {
+    if (!confirm('reset TODAS as permissões aos padrões?')) return;
+    for (const action of Object.keys(DEFAULT_PERMISSIONS)) {
+      const a = Number(action) as PermissionAction;
+      client.setPermission(a, DEFAULT_PERMISSIONS[a]);
+    }
+  });
+  resetRow.append(resetBtn);
+  body.append(resetRow);
 }
 
 function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {

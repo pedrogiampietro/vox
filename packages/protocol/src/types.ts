@@ -1,6 +1,7 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 12: matriz de permissoes por acao configuravel pelo owner.
  * 11: PlayerInfo (voc/level/online) por fingerprint via bot Rubinot.
  * 10: 8 tiers de grupo (Visitante..Leader) e descricao por fingerprint.
  * 9: sinalizacao WebRTC para compartilhamento de tela/janela.
@@ -12,7 +13,7 @@
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -57,6 +58,7 @@ export enum Op {
   ChatRead = 0x77,
   ScreenSignal = 0x78,
   SetClientDescription = 0x79,
+  SetPermission = 0x7a,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -79,6 +81,7 @@ export enum Op {
   ChatReadDeliver = 0xc3,
   ScreenSignalDeliver = 0xc4,
   PlayerInfoBatch = 0xc5,
+  Permissions = 0xc6,
 }
 
 export enum BotControlAction {
@@ -378,3 +381,105 @@ export const TIBIA_TEMPLATE: readonly TemplateCategory[] = [
 
 /** Raiz da arvore de canais / "nenhum canal". */
 export const NO_CHANNEL = 0;
+
+/**
+ * Todas as acoes que podem ser gate por grupo. Owner ajusta o grupo minimo
+ * pra cada uma via Op.SetPermission. Ordem numerica importa (serializacao).
+ */
+export enum PermissionAction {
+  CreateTempChannel = 0,
+  CreatePermanentChannel = 1,
+  EditChannel = 2,
+  DeleteChannel = 3,
+  Kick = 4,
+  Move = 5,
+  Ban = 6,
+  SetGroup = 7,
+  SetOtherDescription = 8,
+  BotPoke = 20,
+  BotMassPoke = 21,
+  BotPush = 22,
+  BotMassPush = 23,
+  BotKick = 24,
+  BotMassKick = 25,
+  BotBan = 26,
+  BotBanList = 27,
+  BotUnban = 28,
+  BotAfk = 29,
+  BotMute = 30,
+  BotUnmute = 31,
+  BotModerate = 32,
+  BotVoice = 33,
+  BotDevoice = 34,
+  BotHunt = 35,
+  BotUnhunt = 36,
+  BotHunted = 37,
+}
+
+/** Rotulos user-friendly (usados no dropdown do painel). */
+export const PERMISSION_LABELS: Record<PermissionAction, string> = {
+  [PermissionAction.CreateTempChannel]: 'Criar canal temporário',
+  [PermissionAction.CreatePermanentChannel]: 'Criar canal permanente',
+  [PermissionAction.EditChannel]: 'Editar canal',
+  [PermissionAction.DeleteChannel]: 'Deletar canal',
+  [PermissionAction.Kick]: 'Expulsar (kick)',
+  [PermissionAction.Move]: 'Mover usuário',
+  [PermissionAction.Ban]: 'Banir',
+  [PermissionAction.SetGroup]: 'Alterar grupo de outros',
+  [PermissionAction.SetOtherDescription]: 'Editar descrição de outros',
+  [PermissionAction.BotPoke]: 'Bot: poke',
+  [PermissionAction.BotMassPoke]: 'Bot: masspoke',
+  [PermissionAction.BotPush]: 'Bot: push',
+  [PermissionAction.BotMassPush]: 'Bot: masspush',
+  [PermissionAction.BotKick]: 'Bot: kick',
+  [PermissionAction.BotMassKick]: 'Bot: masskick',
+  [PermissionAction.BotBan]: 'Bot: ban',
+  [PermissionAction.BotBanList]: 'Bot: banlist',
+  [PermissionAction.BotUnban]: 'Bot: unban',
+  [PermissionAction.BotAfk]: 'Bot: afk toggle',
+  [PermissionAction.BotMute]: 'Bot: mute',
+  [PermissionAction.BotUnmute]: 'Bot: unmute',
+  [PermissionAction.BotModerate]: 'Bot: moderate canal',
+  [PermissionAction.BotVoice]: 'Bot: voice',
+  [PermissionAction.BotDevoice]: 'Bot: devoice',
+  [PermissionAction.BotHunt]: 'Bot: hunt',
+  [PermissionAction.BotUnhunt]: 'Bot: unhunt',
+  [PermissionAction.BotHunted]: 'Bot: ver hunted list',
+};
+
+/** Padroes conservadores. Owner pode restringir/afrouxar via UI. */
+export const DEFAULT_PERMISSIONS: Record<PermissionAction, Group> = {
+  [PermissionAction.CreateTempChannel]: Group.Elite,
+  [PermissionAction.CreatePermanentChannel]: Group.Moderator,
+  [PermissionAction.EditChannel]: Group.Moderator,
+  [PermissionAction.DeleteChannel]: Group.Moderator,
+  [PermissionAction.Kick]: Group.Moderator,
+  [PermissionAction.Move]: Group.Moderator,
+  [PermissionAction.Ban]: Group.Admin,
+  [PermissionAction.SetGroup]: Group.Admin,
+  [PermissionAction.SetOtherDescription]: Group.Moderator,
+  [PermissionAction.BotPoke]: Group.Guest,
+  [PermissionAction.BotMassPoke]: Group.Moderator,
+  [PermissionAction.BotPush]: Group.Moderator,
+  [PermissionAction.BotMassPush]: Group.Admin,
+  [PermissionAction.BotKick]: Group.Moderator,
+  [PermissionAction.BotMassKick]: Group.Admin,
+  [PermissionAction.BotBan]: Group.Admin,
+  [PermissionAction.BotBanList]: Group.Admin,
+  [PermissionAction.BotUnban]: Group.Admin,
+  [PermissionAction.BotAfk]: Group.Admin,
+  [PermissionAction.BotMute]: Group.Moderator,
+  [PermissionAction.BotUnmute]: Group.Moderator,
+  [PermissionAction.BotModerate]: Group.Moderator,
+  [PermissionAction.BotVoice]: Group.Moderator,
+  [PermissionAction.BotDevoice]: Group.Moderator,
+  [PermissionAction.BotHunt]: Group.Moderator,
+  [PermissionAction.BotUnhunt]: Group.Moderator,
+  [PermissionAction.BotHunted]: Group.Guest,
+};
+
+/** Entrada serializada de permissao no wire. */
+export interface PermissionEntry {
+  action: PermissionAction;
+  minGroup: Group;
+}

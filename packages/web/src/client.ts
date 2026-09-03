@@ -4,8 +4,8 @@
  * daqui - nao conhece protocolo nem Web Audio.
  */
 
-import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, FailureCode, Group, NO_CHANNEL, Op } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, FailureCode, Group, NO_CHANNEL, Op, PermissionAction } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer } from './audio/mixer.js';
@@ -53,6 +53,8 @@ export class VoxClient {
   botState: BotStateInfo | null = null;
   /** fingerprint -> info do char Tibia (vocation/level/online), via bot Rubinot. */
   readonly playerInfos = new Map<string, PlayerInfo>();
+  /** Overrides atuais das permissoes. Falta = default. */
+  readonly permissions = new Map<PermissionAction, Group>();
   /** peerId -> maior stamp da minha DM outgoing que este peer confirmou ler. */
   readonly dmReadStamps = new Map<number, number>();
   /** peerId -> maior stamp por qual ja mandei ChatRead, evita reenviar. */
@@ -232,6 +234,7 @@ export class VoxClient {
     this.clients.clear();
     this.claims.clear();
     this.playerInfos.clear();
+    this.permissions.clear();
     this.dmTabs.clear();
     this.dmReadStamps.clear();
     this.dmReadSent.clear();
@@ -525,6 +528,15 @@ export class VoxClient {
     this.connection.send({ t: Op.SetClientDescription, fingerprint, description });
   }
 
+  setPermission(action: PermissionAction, minGroup: Group): void {
+    this.connection.send({ t: Op.SetPermission, action, minGroup });
+  }
+
+  /** Grupo minimo pra `action`. Consulta override do server; senao default. */
+  permissionFor(action: PermissionAction): Group {
+    return this.permissions.get(action) ?? DEFAULT_PERMISSIONS[action];
+  }
+
   toggleMic(): void {
     this.setFlags(this.flags ^ ClientFlags.MutedMic);
   }
@@ -784,6 +796,11 @@ export class VoxClient {
 
       case Op.PlayerInfoBatch:
         for (const info of m.infos) this.playerInfos.set(info.fingerprint, info);
+        break;
+
+      case Op.Permissions:
+        this.permissions.clear();
+        for (const e of m.entries) this.permissions.set(e.action, e.minGroup);
         break;
 
       case Op.ScreenSignalDeliver:

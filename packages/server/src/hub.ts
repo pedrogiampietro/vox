@@ -17,6 +17,7 @@ import {
   ChatScope,
   ClientFlags,
   DEFAULT_GROUP_DEFS,
+  DEFAULT_PERMISSIONS,
   FailureCode,
   FrameKind,
   GROUP_NAMES,
@@ -24,6 +25,7 @@ import {
   NO_CHANNEL,
   Op,
   PROTOCOL_VERSION,
+  PermissionAction,
   RemoveReason,
   VOICE_TOKEN_BYTES,
   decodeClientMessage,
@@ -36,7 +38,7 @@ import {
   VOICE_HEADER_SIZE,
   canonicalRespawnName,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
@@ -72,16 +74,7 @@ interface Channel {
   members: Set<Session>;
 }
 
-/** Quem pode o que. Um lugar so, para nao espalhar regra pelo arquivo. */
-const REQUIRED = {
-  createChannel: Group.Guest,
-  editChannel: Group.Moderator,
-  deleteChannel: Group.Moderator,
-  kick: Group.Moderator,
-  move: Group.Moderator,
-  ban: Group.Admin,
-  setGroup: Group.Admin,
-} as const;
+// Permissoes agora vem de hub.permissionFor(action). Owner ajusta via UI.
 
 export class Hub {
   private readonly channels = new Map<number, Channel>();
@@ -96,6 +89,8 @@ export class Hub {
   private readonly descriptions = new Map<string, string>();
   /** Cache do bot Rubinot: nome do char (lower) -> info recente. */
   private readonly playerInfoByName = new Map<string, PlayerInfo>();
+  /** Overrides sobre DEFAULT_PERMISSIONS. Ausencia = usar default. */
+  private readonly permissions = new Map<PermissionAction, Group>();
 
   afkEnabled = config.afkEnabled;
 
@@ -119,7 +114,7 @@ export class Hub {
 
   constructor(
     public settings: ServerSettings,
-    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig' | 'descriptions'>,
+    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig' | 'descriptions' | 'permissions'>,
     private readonly deps: HubDeps,
   ) {
     for (const c of stored.channels) {
@@ -134,6 +129,34 @@ export class Hub {
     for (const [fp, desc] of Object.entries(stored.descriptions ?? {})) {
       if (typeof desc === 'string' && desc) this.descriptions.set(fp, desc);
     }
+    for (const [k, v] of Object.entries(stored.permissions ?? {})) {
+      const action = Number(k) as PermissionAction;
+      if (typeof v === 'number') this.permissions.set(action, v as Group);
+    }
+  }
+
+  /** Grupo minimo pra executar `action`. Vem do override, senao do default. */
+  permissionFor(action: PermissionAction): Group {
+    return this.permissions.get(action) ?? DEFAULT_PERMISSIONS[action];
+  }
+
+  /** Lista completa (action, minGroup) pra broadcast/UI. */
+  permissionList(): PermissionEntry[] {
+    return (Object.keys(DEFAULT_PERMISSIONS) as unknown as string[])
+      .map((k) => Number(k) as PermissionAction)
+      .filter((a) => !Number.isNaN(a) && a in DEFAULT_PERMISSIONS)
+      .map((action) => ({ action, minGroup: this.permissionFor(action) }));
+  }
+
+  setPermission(action: PermissionAction, minGroup: Group): void {
+    if (!(action in DEFAULT_PERMISSIONS)) return;
+    if (minGroup === DEFAULT_PERMISSIONS[action]) {
+      this.permissions.delete(action);
+    } else {
+      this.permissions.set(action, minGroup);
+    }
+    this.deps.onChanged();
+    this.broadcast({ t: Op.Permissions, entries: this.permissionList() });
   }
 
   // ----------------------------------------------------------- inspecao --
@@ -277,6 +300,7 @@ export class Hub {
       claims: [...this.claims.values()],
       botConfig: { ...this.botConfig, huntedNames: botHunted },
       descriptions: Object.fromEntries(this.descriptions),
+      permissions: Object.fromEntries(this.permissions),
     };
   }
 
@@ -482,17 +506,17 @@ export class Hub {
         break;
 
       case Op.CreateChannel:
-        if (!this.allow(s, REQUIRED.createChannel)) break;
+        if (!this.allow(s, this.permissionFor(PermissionAction.CreateTempChannel))) break;
         this.createChannel(s, m.name, m.parentId, m.maxClients, m.password);
         break;
 
       case Op.DeleteChannel:
-        if (!this.allow(s, REQUIRED.deleteChannel)) break;
+        if (!this.allow(s, this.permissionFor(PermissionAction.DeleteChannel))) break;
         this.deleteChannel(s, m.channelId);
         break;
 
       case Op.EditChannel: {
-        if (!this.allow(s, REQUIRED.editChannel)) break;
+        if (!this.allow(s, this.permissionFor(PermissionAction.EditChannel))) break;
         const ch = this.channels.get(m.channelId);
         if (!ch) return this.fail(s, FailureCode.ChannelNotFound, 'canal inexistente');
         ch.info.name = clean(m.name, 64) || ch.info.name;
@@ -508,13 +532,13 @@ export class Hub {
         break;
 
       case Op.KickClient: {
-        const target = this.targetFor(s, m.clientId, REQUIRED.kick);
+        const target = this.targetFor(s, m.clientId, this.permissionFor(PermissionAction.Kick));
         if (target) this.expel(target, RemoveReason.Kicked, clean(m.reason, 120) || 'expulso');
         break;
       }
 
       case Op.BanClient: {
-        const target = this.targetFor(s, m.clientId, REQUIRED.ban);
+        const target = this.targetFor(s, m.clientId, this.permissionFor(PermissionAction.Ban));
         if (target) this.banSession(target, m.minutes, clean(m.reason, 120) || 'banido');
         break;
       }
@@ -526,7 +550,7 @@ export class Hub {
       }
 
       case Op.SetClientGroup: {
-        const target = this.targetFor(s, m.clientId, REQUIRED.setGroup);
+        const target = this.targetFor(s, m.clientId, this.permissionFor(PermissionAction.SetGroup));
         if (!target) break;
         // Nunca promove acima do proprio nivel.
         if (m.group > s.group) {
@@ -629,11 +653,19 @@ export class Hub {
         this.routeScreenSignal(s, m.targetId, m.kind, m.data);
         break;
 
+      case Op.SetPermission: {
+        if (s.group < Group.Owner) {
+          return this.fail(s, FailureCode.NotPermitted, 'apenas donos configuram permissoes');
+        }
+        this.setPermission(m.action, m.minGroup);
+        break;
+      }
+
       case Op.SetClientDescription: {
-        // Voce pode editar a sua propria. Moderator+ edita a de qualquer um.
+        // Sua propria descricao voce sempre edita. A de outros depende de permissao.
         const isSelf = m.fingerprint === s.fingerprint;
-        if (!isSelf && s.group < Group.Moderator) {
-          return this.fail(s, FailureCode.NotPermitted, 'so quem modera edita descricao alheia');
+        if (!isSelf && s.group < this.permissionFor(PermissionAction.SetOtherDescription)) {
+          return this.fail(s, FailureCode.NotPermitted, 'permissao insuficiente para editar descricao alheia');
         }
         const desc = clean(m.description, 200);
         const fp = clean(m.fingerprint, 128);
@@ -759,6 +791,7 @@ export class Hub {
       }),
     );
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
+    s.send(encodeServerMessage({ t: Op.Permissions, entries: this.permissionList() }));
     if (s.group >= Group.Owner) {
       s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
     }
@@ -864,7 +897,7 @@ export class Hub {
 
   /** Move permite mesmo nivel: Owner move Owner, Admin move Admin. */
   private targetForMove(actor: Session, clientId: number): Session | null {
-    if (!this.allow(actor, REQUIRED.move)) return null;
+    if (!this.allow(actor, this.permissionFor(PermissionAction.Move))) return null;
     const target = this.sessions.get(clientId);
     if (!target) {
       this.fail(actor, FailureCode.Unknown, 'usuario nao esta online');
@@ -990,7 +1023,9 @@ export class Hub {
 
     // Canal de convidado e sempre temporario: some quando esvazia. So quem
     // modera cria canal que fica.
-    const permanent = s.group >= Group.Moderator ? ChannelFlags.Permanent : ChannelFlags.None;
+    const permanent = s.group >= this.permissionFor(PermissionAction.CreatePermanentChannel)
+      ? ChannelFlags.Permanent
+      : ChannelFlags.None;
     const info: ChannelInfo = {
       id: this.allocChannelId(),
       parentId,
@@ -1593,28 +1628,30 @@ export class Hub {
   }
 
   private getRequiredGroupForBotCommand(cmd: string): Group {
-    switch (cmd) {
-      case 'owner': return Group.Guest;
-      case 'poke': return Group.Guest;
-      case 'masspoke': return Group.Moderator;
-      case 'push': return Group.Moderator;
-      case 'masspush': return Group.Admin;
-      case 'kick': return Group.Moderator;
-      case 'masskick': return Group.Admin;
-      case 'ban': return Group.Admin;
-      case 'banlist': return Group.Admin;
-      case 'unban': return Group.Admin;
-      case 'afk': return Group.Admin;
-      case 'mute': return Group.Moderator;
-      case 'unmute': return Group.Moderator;
-      case 'moderate': return Group.Moderator;
-      case 'voice': return Group.Moderator;
-      case 'devoice': return Group.Moderator;
-      case 'hunt': return Group.Moderator;
-      case 'unhunt': return Group.Moderator;
-      case 'hunted': return Group.Guest;
-      default: return Group.Owner;
-    }
+    const map: Record<string, PermissionAction> = {
+      poke: PermissionAction.BotPoke,
+      masspoke: PermissionAction.BotMassPoke,
+      push: PermissionAction.BotPush,
+      masspush: PermissionAction.BotMassPush,
+      kick: PermissionAction.BotKick,
+      masskick: PermissionAction.BotMassKick,
+      ban: PermissionAction.BotBan,
+      banlist: PermissionAction.BotBanList,
+      unban: PermissionAction.BotUnban,
+      afk: PermissionAction.BotAfk,
+      mute: PermissionAction.BotMute,
+      unmute: PermissionAction.BotUnmute,
+      moderate: PermissionAction.BotModerate,
+      voice: PermissionAction.BotVoice,
+      devoice: PermissionAction.BotDevoice,
+      hunt: PermissionAction.BotHunt,
+      unhunt: PermissionAction.BotUnhunt,
+      hunted: PermissionAction.BotHunted,
+    };
+    // /owner e caso especial: qualquer um pode digitar (a senha e que autoriza).
+    if (cmd === 'owner') return Group.Guest;
+    const action = map[cmd];
+    return action !== undefined ? this.permissionFor(action) : Group.Owner;
   }
 
   private findClientByNick(nick: string): Session | undefined {

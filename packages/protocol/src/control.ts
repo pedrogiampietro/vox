@@ -7,8 +7,8 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, RespQueueEntry } from './types.js';
-import { BotControlAction, ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, RespQueueEntry } from './types.js';
+import { BotControlAction, ChatScope, FailureCode, FrameKind, Group, Op, PermissionAction, RemoveReason } from './types.js';
 
 export type ClientMessage =
   | {
@@ -61,7 +61,8 @@ export type ClientMessage =
   | { t: Op.BotControl; action: BotControlAction; name: string }
   | { t: Op.ChatRead; targetId: number; upToStamp: number }
   | { t: Op.ScreenSignal; targetId: number; kind: string; data: string }
-  | { t: Op.SetClientDescription; fingerprint: string; description: string };
+  | { t: Op.SetClientDescription; fingerprint: string; description: string }
+  | { t: Op.SetPermission; action: PermissionAction; minGroup: Group };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -110,6 +111,7 @@ export type ServerMessage =
   | { t: Op.BotState; state: BotStateInfo }
   | { t: Op.ChatReadDeliver; readerId: number; upToStamp: number }
   | { t: Op.PlayerInfoBatch; infos: PlayerInfo[] }
+  | { t: Op.Permissions; entries: PermissionEntry[] }
   | { t: Op.ScreenSignalDeliver; senderId: number; targetId: number; kind: string; data: string };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
@@ -367,6 +369,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.SetClientDescription:
       w.str(m.fingerprint).str(m.description);
       break;
+    case Op.SetPermission:
+      w.u8(m.action).u8(m.minGroup);
+      break;
   }
   return w.finish();
 }
@@ -454,6 +459,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, targetId: r.u16(), kind: r.str(), data: r.str() };
     case Op.SetClientDescription:
       return { t, fingerprint: r.str(), description: r.str() };
+    case Op.SetPermission:
+      return { t, action: r.u8() as PermissionAction, minGroup: r.u8() as Group };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -531,6 +538,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.PlayerInfoBatch:
       w.list(m.infos, writePlayerInfo);
       break;
+    case Op.Permissions:
+      w.list(m.entries, (ww, e) => ww.u8(e.action).u8(e.minGroup));
+      break;
   }
   return w.finish();
 }
@@ -597,6 +607,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, senderId: r.u16(), targetId: r.u16(), kind: r.str(), data: r.str() };
     case Op.PlayerInfoBatch:
       return { t, infos: r.list(readPlayerInfo) };
+    case Op.Permissions:
+      return { t, entries: r.list((rr) => ({ action: rr.u8() as PermissionAction, minGroup: rr.u8() as Group })) };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }
