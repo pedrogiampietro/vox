@@ -59,6 +59,8 @@ let selectedChannelId = 0;
 let selectedClientId = 0;
 let selectedTool: 'statistics' | 'claims' | null = null;
 let lastVoiceChannelId = 0;
+const CHANNEL_INFO_HEIGHT_KEY = 'vox.channel-info-height';
+let channelInfoHeight = loadChannelInfoHeight();
 const collapsedChannels = new Set<number>();
 const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist']);
 
@@ -272,6 +274,16 @@ function syncVoiceChannelView(): void {
   selectedClientId = 0;
   selectedTool = null;
   client.activeDmTab = null;
+}
+
+function loadChannelInfoHeight(): number | null {
+  try {
+    const raw = window.localStorage.getItem(CHANNEL_INFO_HEIGHT_KEY);
+    const value = raw ? Number(raw) : NaN;
+    return Number.isFinite(value) && value >= 160 ? Math.round(value) : null;
+  } catch {
+    return null;
+  }
 }
 
 function renderChannelTree(parent: HTMLElement, parentId: number, depth: number): void {
@@ -693,7 +705,12 @@ function renderTalk(): HTMLElement {
   const selCh = selectedChannelId ? client.channels.get(selectedChannelId) : null;
   const selCl = selectedClientId ? client.clients.get(selectedClientId) : null;
   if (selCh) {
-    pane.append(renderChannelInfoPanel(selCh));
+    const infoPanel = renderChannelInfoPanel(selCh);
+    if (channelInfoHeight !== null) {
+      infoPanel.style.height = `${channelInfoHeight}px`;
+      infoPanel.style.maxHeight = 'none';
+    }
+    pane.append(infoPanel, renderChannelInfoResizer());
   } else if (selCl) {
     pane.append(renderClientInfoPanel(selCl));
   }
@@ -812,6 +829,55 @@ function renderTalk(): HTMLElement {
   pane.append(composer);
 
   return pane;
+}
+
+function renderChannelInfoResizer(): HTMLElement {
+  const handle = $('div', 'channel-info-resizer');
+  handle.title = 'arraste para aumentar ou diminuir a descrição';
+  handle.setAttribute('role', 'separator');
+  handle.setAttribute('aria-label', 'redimensionar descrição do canal');
+  handle.setAttribute('aria-orientation', 'horizontal');
+
+  handle.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    const panel = handle.previousElementSibling as HTMLElement | null;
+    if (!panel) return;
+
+    const startY = event.clientY;
+    const startHeight = panel.getBoundingClientRect().height;
+    const talk = handle.parentElement?.getBoundingClientRect();
+    const minHeight = 160;
+    const maxHeight = Math.max(minHeight, (talk?.height ?? window.innerHeight) - 104);
+    handle.classList.add('dragging');
+
+    const move = (moveEvent: PointerEvent): void => {
+      const next = Math.round(Math.min(maxHeight, Math.max(minHeight, startHeight + moveEvent.clientY - startY)));
+      channelInfoHeight = next;
+      panel.style.height = `${next}px`;
+      panel.style.maxHeight = 'none';
+    };
+    const stop = (): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      handle.classList.remove('dragging');
+      if (channelInfoHeight !== null) {
+        try { window.localStorage.setItem(CHANNEL_INFO_HEIGHT_KEY, String(channelInfoHeight)); } catch {}
+      }
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop, { once: true });
+    window.addEventListener('pointercancel', stop, { once: true });
+  });
+
+  handle.addEventListener('dblclick', () => {
+    channelInfoHeight = null;
+    try { window.localStorage.removeItem(CHANNEL_INFO_HEIGHT_KEY); } catch {}
+    render();
+  });
+
+  return handle;
 }
 
 function appendChannelTopic(target: HTMLElement, topic: string): void {

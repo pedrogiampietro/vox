@@ -1865,6 +1865,41 @@ label.field {
   color: #ff8585;
 }
 
+.channel-info-resizer {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 10px;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+  background: var(--ink-800);
+  border-bottom: 1px solid var(--line);
+}
+
+.channel-info-resizer::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  width: 44px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transform: translateX(-50%);
+  transition: background var(--dur) var(--ease), width var(--dur) var(--ease);
+}
+
+.channel-info-resizer:hover,
+.channel-info-resizer.dragging {
+  background: var(--ink-700);
+}
+
+.channel-info-resizer:hover::before,
+.channel-info-resizer.dragging::before {
+  width: 64px;
+  background: var(--amber);
+}
+
 .channel-stats {
   display: flex;
   gap: 16px;
