@@ -17,6 +17,7 @@
 import { webcrypto } from 'node:crypto';
 import { WebSocket } from 'ws';
 import {
+  ChannelFlags,
   ChatScope,
   FailureCode,
   FrameKind,
@@ -243,8 +244,9 @@ async function openVoiceLink(
   }
 
   try {
+    const controlUrl = new globalThis.URL(URL);
     const wt = new WebTransport(
-      `https://127.0.0.1:${port}/vox`,
+      `https://${controlUrl.hostname}:${port}/vox`,
       welcome.wtCertHash.length > 0
         ? { serverCertificateHashes: [{ algorithm: 'sha-256', value: welcome.wtCertHash }] }
         : {},
@@ -383,7 +385,9 @@ async function main(): Promise<void> {
 
   // --- isolamento entre canais --------------------------------------------
 
-  const other = alice.channelNamed('Sala 1');
+  const other = [...alice.channels.values()].find(
+    (channel) => channel.id !== alice.channelId && (channel.flags & ChannelFlags.Password) === 0,
+  );
   check('existe um segundo canal para o teste', other !== undefined);
   if (other) {
     alice.send({ t: Op.JoinChannel, channelId: other.id, password: '' });
