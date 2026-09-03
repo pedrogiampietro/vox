@@ -15,7 +15,8 @@
  */
 
 import { createHash, randomBytes } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { basename, dirname, extname, join } from 'node:path';
 import { MAX_VOICE_PACKET, VOICE_TOKEN_BYTES } from '@vox/protocol';
 import { config } from './config.js';
 import type { Registry } from './registry.js';
@@ -25,7 +26,14 @@ export interface VoiceEndpoint {
   port: number;
   /** SHA-256 do certificado, publicado so em desenvolvimento. */
   certHash: Uint8Array;
+  /** Cria sob demanda o listener do hostname usado no WebSocket. */
+  endpointFor(hostname: string): VoiceEndpointInfo;
   stop(): Promise<void>;
+}
+
+export interface VoiceEndpointInfo {
+  port: number;
+  certHash: Uint8Array;
 }
 
 /** Sessao sem token valido nesse tempo e descartada. */
@@ -62,9 +70,39 @@ interface WTSession {
   }>;
 }
 
-export async function startVoiceTransport(registry: Registry): Promise<VoiceEndpoint | null> {
-  if (!config.wtCert || !config.wtKey) return null;
+interface CertificatePair {
+  host: string;
+  certPath: string;
+  keyPath: string;
+}
 
+interface Http3ServerLike {
+  ready: Promise<unknown>;
+  startServer(): void;
+  stopServer(): void;
+  updateCert(cert: string, privKey: string, http2only: boolean): void;
+  sessionStream(path: string): ReadableStream<unknown>;
+}
+
+type Http3ServerConstructor = new (init: {
+  port: number;
+  host: string;
+  secret: string;
+  cert: string;
+  privKey: string;
+  defaultDatagramsReadableMode: 'bytes';
+}) => Http3ServerLike;
+
+interface ActiveEndpoint extends VoiceEndpointInfo {
+  host: string;
+  certPath: string;
+  keyPath: string;
+  cert: string;
+  server: Http3ServerLike;
+  watcher: ReturnType<typeof setInterval>;
+}
+
+export async function startVoiceTransport(registry: Registry): Promise<VoiceEndpoint | null> {
   let Http3Server: typeof import('@fails-components/webtransport').Http3Server;
   try {
     ({ Http3Server } = await import('@fails-components/webtransport'));
@@ -73,68 +111,240 @@ export async function startVoiceTransport(registry: Registry): Promise<VoiceEndp
     return null;
   }
 
-  let cert: string;
-  let privKey: string;
-  try {
-    cert = readFileSync(config.wtCert, 'utf8');
-    privKey = readFileSync(config.wtKey, 'utf8');
-  } catch {
+  const certDir = certificateDirectory();
+  const initial = findInitialCertificate(certDir);
+  if (!initial) {
     // Caso comum no primeiro boot atras de um proxy: o certificado ainda nao
     // foi emitido. Nao e erro, e so cedo demais.
     console.warn(
-      `[vox] certificado do WebTransport ainda nao existe em ${config.wtCert};` +
-        ' a voz segue no WebSocket. Reinicie o servidor apos a emissao.',
+      `[vox] nenhum certificado do WebTransport encontrado${certDir ? ` em ${certDir}` : ''};` +
+        ' a voz segue no WebSocket ate o certificado ser emitido.',
     );
     return null;
   }
 
-  const server = new Http3Server({
-    port: config.wtPort,
-    host: config.wtHost,
-    secret: randomBytes(32).toString('hex'),
-    cert,
-    privKey,
-    defaultDatagramsReadableMode: 'bytes',
-  });
-
-  server.startServer();
-  await server.ready;
-
-  void acceptLoop(server.sessionStream('/vox'), registry);
-  const watcher = watchCertificate(server);
+  const manager = new VoiceTransportManager(Http3Server, registry, certDir);
+  const first = manager.start(initial, config.wtPort);
+  try {
+    await first.server.ready;
+  } catch (err) {
+    await manager.stop();
+    throw err;
+  }
 
   return {
-    port: config.wtPort,
-    certHash: config.wtPublishHash ? certificateHash(cert) : new Uint8Array(0),
-    async stop() {
-      clearInterval(watcher);
-      server.stopServer();
-    },
+    port: first.port,
+    certHash: first.certHash,
+    endpointFor: (hostname) => manager.endpointFor(hostname),
+    stop: () => manager.stop(),
   };
 }
 
-/** Recarrega o certificado quando o arquivo muda, sem derrubar o servidor. */
-function watchCertificate(server: {
-  updateCert(cert: string, privKey: string, http2only: boolean): void;
-}): ReturnType<typeof setInterval> {
-  let seen = mtimeOf(config.wtCert);
+class VoiceTransportManager {
+  private readonly endpoints = new Map<string, ActiveEndpoint>();
+  private readonly usedPorts = new Set<number>();
+
+  constructor(
+    private readonly Http3Server: Http3ServerConstructor,
+    private readonly registry: Registry,
+    private readonly certDir: string,
+  ) {}
+
+  start(pair: CertificatePair, port: number): ActiveEndpoint {
+    this.usedPorts.add(port);
+    return this.create(pair, port);
+  }
+
+  /**
+   * O WebSocket ja passou pelo Caddy, portanto neste ponto o certificado do
+   * hostname normalmente ja existe. Se nao existir, devolvemos 0 e a voz
+   * continua no WebSocket; a proxima conexao tenta novamente.
+   */
+  endpointFor(hostname: string): VoiceEndpointInfo {
+    const host = normalizeHostname(hostname);
+    const existing = this.endpoints.get(host);
+    if (existing) return infoOf(existing);
+
+    const pair = certificatePairFor(host, this.certDir) ?? legacyCertificatePair(host, this.certDir);
+    if (!pair) {
+      if (host) {
+        console.warn(`[vox] certificado QUIC de ${host} ainda nao existe; voz segue no WebSocket`);
+      }
+      return emptyEndpoint();
+    }
+
+    const port = this.nextPort();
+    if (port === 0) {
+      console.error(
+        `[vox] intervalo UDP do WebTransport esgotado (${config.wtPort}-${config.wtPortMax});` +
+          ` aumente VOX_WT_PORT_MAX para habilitar ${host}`,
+      );
+      return emptyEndpoint();
+    }
+
+    try {
+      return infoOf(this.create(pair, port));
+    } catch (err) {
+      this.usedPorts.delete(port);
+      console.error(`[vox] falha ao iniciar WebTransport para ${host}:`, String(err));
+      return emptyEndpoint();
+    }
+  }
+
+  private create(pair: CertificatePair, port: number): ActiveEndpoint {
+    const cert = readFileSync(pair.certPath, 'utf8');
+    const privKey = readFileSync(pair.keyPath, 'utf8');
+    const server = new this.Http3Server({
+      port,
+      host: config.wtHost,
+      secret: randomBytes(32).toString('hex'),
+      cert,
+      privKey,
+      defaultDatagramsReadableMode: 'bytes',
+    });
+    const endpoint = {
+      host: pair.host,
+      port,
+      certPath: pair.certPath,
+      keyPath: pair.keyPath,
+      cert,
+      server,
+      watcher: undefined as unknown as ReturnType<typeof setInterval>,
+      certHash: config.wtPublishHash ? certificateHash(cert) : new Uint8Array(0),
+    } satisfies ActiveEndpoint;
+    this.endpoints.set(pair.host, endpoint);
+    server.startServer();
+    void server.ready.catch((err) => {
+      if (this.endpoints.get(pair.host) === endpoint) {
+        this.endpoints.delete(pair.host);
+        this.usedPorts.delete(port);
+        clearInterval(endpoint.watcher);
+      }
+      console.error(`[vox] WebTransport de ${pair.host} não ficou disponível:`, String(err));
+    });
+    void acceptLoop(server.sessionStream('/vox'), this.registry);
+    endpoint.watcher = watchCertificate(endpoint);
+    console.log(`[vox] voz por WebTransport para ${pair.host} em udp/${port} (${config.wtHost})`);
+    return endpoint;
+  }
+
+  private nextPort(): number {
+    const first = Math.max(1, Math.min(65535, config.wtPort));
+    const last = Math.max(first, Math.min(65535, config.wtPortMax));
+    for (let port = first; port <= last; port++) {
+      if (!this.usedPorts.has(port)) {
+        this.usedPorts.add(port);
+        return port;
+      }
+    }
+    return 0;
+  }
+
+  async stop(): Promise<void> {
+    for (const endpoint of this.endpoints.values()) {
+      clearInterval(endpoint.watcher);
+      try {
+        endpoint.server.stopServer();
+      } catch {
+        // O addon pode ainda estar inicializando quando o processo encerra.
+      }
+    }
+    this.endpoints.clear();
+    this.usedPorts.clear();
+  }
+}
+
+function emptyEndpoint(): VoiceEndpointInfo {
+  return { port: 0, certHash: new Uint8Array(0) };
+}
+
+function infoOf(endpoint: ActiveEndpoint): VoiceEndpointInfo {
+  return {
+    port: endpoint.port,
+    certHash: endpoint.certHash,
+  };
+}
+
+function watchCertificate(endpoint: ActiveEndpoint): ReturnType<typeof setInterval> {
+  let seen = certificateMtime(endpoint);
   const timer = setInterval(() => {
-    const now = mtimeOf(config.wtCert);
+    const now = certificateMtime(endpoint);
     if (now === seen) return;
     seen = now;
     try {
-      server.updateCert(
-        readFileSync(config.wtCert, 'utf8'),
-        readFileSync(config.wtKey, 'utf8'),
-        false,
-      );
-      console.log('[vox] certificado do WebTransport recarregado');
+      const cert = readFileSync(endpoint.certPath, 'utf8');
+      endpoint.server.updateCert(cert, readFileSync(endpoint.keyPath, 'utf8'), false);
+      endpoint.cert = cert;
+      endpoint.certHash = config.wtPublishHash ? certificateHash(cert) : new Uint8Array(0);
+      console.log(`[vox] certificado QUIC de ${endpoint.host} recarregado`);
     } catch (err) {
-      console.error('[vox] falha ao recarregar o certificado:', err);
+      console.error(`[vox] falha ao recarregar certificado QUIC de ${endpoint.host}:`, err);
     }
   }, CERT_WATCH_MS);
   timer.unref();
   return timer;
+}
+
+function certificateMtime(endpoint: Pick<ActiveEndpoint, 'certPath' | 'keyPath'>): number {
+  return Math.max(mtimeOf(endpoint.certPath), mtimeOf(endpoint.keyPath));
+}
+
+function certificateDirectory(): string {
+  if (config.wtCertDir) return config.wtCertDir;
+  if (!config.wtCert) return '';
+  const host = hostFromCertificatePath(config.wtCert);
+  return host ? dirname(dirname(config.wtCert)) : '';
+}
+
+function findInitialCertificate(certDir: string): CertificatePair | null {
+  if (config.wtCert && config.wtKey && existsSync(config.wtCert) && existsSync(config.wtKey)) {
+    return {
+      host: hostFromCertificatePath(config.wtCert),
+      certPath: config.wtCert,
+      keyPath: config.wtKey,
+    };
+  }
+  if (!certDir || !existsSync(certDir)) return null;
+  try {
+    for (const entry of readdirSync(certDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const pair = certificatePairFor(entry.name, certDir);
+      if (pair) return pair;
+    }
+  } catch {
+    // O Caddy pode ainda estar criando o armazenamento no primeiro boot.
+  }
+  return null;
+}
+
+function certificatePairFor(hostname: string, certDir: string): CertificatePair | null {
+  const host = normalizeHostname(hostname);
+  if (!certDir || !host || !isHostname(host)) return null;
+  const certPath = join(certDir, host, `${host}.crt`);
+  const keyPath = join(certDir, host, `${host}.key`);
+  return existsSync(certPath) && existsSync(keyPath) ? { host, certPath, keyPath } : null;
+}
+
+/** Compatibilidade com instalações que usam um certificado fora do Caddy. */
+function legacyCertificatePair(host: string, certDir: string): CertificatePair | null {
+  if (certDir || !config.wtCert || !config.wtKey || !existsSync(config.wtCert) || !existsSync(config.wtKey)) {
+    return null;
+  }
+  return { host, certPath: config.wtCert, keyPath: config.wtKey };
+}
+
+function hostFromCertificatePath(path: string): string {
+  const host = basename(dirname(path)).toLowerCase();
+  const filename = basename(path, extname(path)).toLowerCase();
+  return host === filename && isHostname(host) ? host : '';
+}
+
+function normalizeHostname(hostname: string): string {
+  return hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+}
+
+function isHostname(hostname: string): boolean {
+  return hostname.length <= 253 && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(hostname);
 }
 
 function mtimeOf(path: string): number {

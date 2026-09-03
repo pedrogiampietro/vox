@@ -147,7 +147,7 @@ startVoiceTransport(registry)
       console.log('[vox] voz no WebSocket (sem WebTransport: falta certificado UDP)');
       return;
     }
-    registry.voiceEndpoint = { port: endpoint.port, certHash: endpoint.certHash };
+    registry.setVoiceEndpointProvider(endpoint.endpointFor);
     console.log(`[vox] voz por WebTransport em udp/${endpoint.port} (${config.wtHost})`);
     if (endpoint.certHash.length > 0) {
       console.log('[vox] publicando o hash do certificado (modo desenvolvimento)');

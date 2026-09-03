@@ -14,6 +14,8 @@ export interface PeerSocket {
   send(data: Uint8Array): void;
   close(reason: string): void;
   readonly remote: string;
+  /** Hostname usado no WebSocket; determina o certificado/porta do QUIC. */
+  readonly hostname?: string;
 }
 
 /** Balde de tokens com janela de 1s - barato e suficiente contra flood. */
@@ -84,9 +86,13 @@ export class Session {
     voiceRate: number,
     controlRate: number,
   ) {
+    /** Hostname usado no controle, normalizado para procurar o certificado. */
+    this.hostname = socket.hostname ?? '';
     this.voiceLimit = new RateLimiter(voiceRate);
     this.controlLimit = new RateLimiter(controlRate);
   }
+
+  readonly hostname: string;
 
   get live(): boolean {
     return this.stage === 'live';

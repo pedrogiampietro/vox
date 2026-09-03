@@ -23,7 +23,7 @@ declare module '@fails-components/webtransport' {
     readonly closed: Promise<unknown>;
     startServer(): void;
     stopServer(): void;
-    updateCert(cert: string, privKey: string, http2only: boolean): void;
+    updateCert(cert: string | string[], privKey: string | string[], http2only: boolean): void;
     sessionStream(path: string): ReadableStream<unknown>;
   }
 

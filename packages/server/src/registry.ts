@@ -2,10 +2,10 @@
  * O conjunto de servidores virtuais.
  *
  * Um processo hospeda varios servidores independentes - canais, usuarios e
- * grupos proprios - mas todos na mesma porta. O TS3 usa uma porta UDP por
+ * grupos proprios - mas todos na mesma porta TCP. O TS3 usa uma porta UDP por
  * servidor; aqui o servidor virtual e escolhido no caminho do WebSocket
- * (`/vox/3`), o que mantem um certificado so, uma regra de firewall so, e uma
- * origem so para o navegador.
+ * (`/vox/3`), e a voz QUIC usa listeners automaticos por hostname dentro de
+ * um intervalo UDP reservado.
  *
  * O canal de voz por QUIC continua unico: o segredo de 16 bytes do Welcome ja
  * diz de qual sessao - e portanto de qual servidor - o datagrama veio.
@@ -29,10 +29,17 @@ export class Registry {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private nextServerId = 1;
 
-  voiceEndpoint: { port: number; certHash: Uint8Array } = {
+  private voiceInfo: { port: number; certHash: Uint8Array } = {
     port: 0,
     certHash: new Uint8Array(0),
   };
+
+  /** Retorna a porta do QUIC para o hostname da conexão de controle. */
+  voiceEndpoint: (hostname: string) => ({ port: number; certHash: Uint8Array }) = () => this.voiceInfo;
+
+  setVoiceEndpointProvider(provider: (hostname: string) => { port: number; certHash: Uint8Array }): void {
+    this.voiceEndpoint = provider;
+  }
 
   constructor() {
     for (const stored of loadServers()) this.attach(stored);
@@ -54,7 +61,7 @@ export class Registry {
       forceSave: () => this.saveNow(),
       claimVoiceKey: (key, session) => this.byVoiceKey.set(key, session),
       releaseVoiceKey: (key) => this.byVoiceKey.delete(key),
-      voiceEndpoint: () => this.voiceEndpoint,
+      voiceEndpoint: (hostname) => this.voiceEndpoint(hostname),
     });
     this.hubs.set(stored.id, hub);
     if (stored.id >= this.nextServerId) this.nextServerId = stored.id + 1;

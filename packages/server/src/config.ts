@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const wtPort = num('VOX_WT_PORT', num('VOX_PORT', 9987));
+
 for (const base of [join(process.cwd(), '.env'), join(__dirname, '..', '..', '..', '.env')]) {
   try {
     const env = readFileSync(base, 'utf8');
@@ -95,7 +97,9 @@ export const config = {
    * WebTransport (voz em datagramas sobre QUIC). Porta UDP - pode ser a mesma
    * da porta TCP, sao espacos separados.
    */
-  wtPort: num('VOX_WT_PORT', num('VOX_PORT', 9987)),
+  wtPort,
+  /** Ultima porta do intervalo reservado para os listeners por hostname. */
+  wtPortMax: num('VOX_WT_PORT_MAX', wtPort + 99),
   /**
    * Endereco do socket QUIC. "0.0.0.0" so escuta IPv4, e como quase todo host
    * moderno resolve para IPv6 primeiro (inclusive "localhost"), o cliente bate
@@ -108,6 +112,11 @@ export const config = {
   /** Certificado do QUIC. Vazio herda o do TLS; sem nenhum, sem WebTransport. */
   wtCert: str('VOX_WT_CERT', '') || str('VOX_TLS_CERT', ''),
   wtKey: str('VOX_WT_KEY', '') || str('VOX_TLS_KEY', ''),
+  /**
+   * Raiz do armazenamento de certificados do Caddy. Quando vazio, o Vox
+   * tenta descobrir esta raiz a partir do caminho de VOX_WT_CERT.
+   */
+  wtCertDir: str('VOX_WT_CERT_DIR', ''),
   /**
    * Publica o SHA-256 do certificado no Welcome, para o navegador aceitar um
    * certificado autoassinado via serverCertificateHashes. So em

@@ -49,6 +49,10 @@ export function attachWebSocket(
     if (!hub) return reject(socket, 404, 'servidor virtual inexistente');
 
     const ip = clientIp(req);
+    const hostname = requestHostname(req);
+    // Se for um hostname novo, isso dispara a criação do listener QUIC antes
+    // de o cliente terminar o handshake do WebSocket e receber o Welcome.
+    registry.voiceEndpoint(hostname);
     const open = openPerIp.get(ip) ?? 0;
     if (config.maxPerIp > 0 && open >= config.maxPerIp) {
       return reject(socket, 429, 'limite de conexoes por IP');
@@ -56,7 +60,7 @@ export function attachWebSocket(
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       openPerIp.set(ip, open + 1);
-      serve(ws, hub, ip, () => {
+      serve(ws, hub, ip, hostname, () => {
         const left = (openPerIp.get(ip) ?? 1) - 1;
         if (left <= 0) openPerIp.delete(ip);
         else openPerIp.set(ip, left);
@@ -67,11 +71,12 @@ export function attachWebSocket(
   return wss;
 }
 
-function serve(ws: WebSocket, hub: Hub, ip: string, onClose: () => void): void {
+function serve(ws: WebSocket, hub: Hub, ip: string, hostname: string, onClose: () => void): void {
   ws.binaryType = 'nodebuffer';
 
   const peer: PeerSocket = {
     remote: ip,
+    hostname,
     send(data) {
       if (ws.readyState === ws.OPEN) ws.send(data);
     },
@@ -102,6 +107,12 @@ function serve(ws: WebSocket, hub: Hub, ip: string, onClose: () => void): void {
 
   ws.once('close', release);
   ws.once('error', release);
+}
+
+function requestHostname(req: IncomingMessage): string {
+  const raw = String(req.headers.host ?? '').trim().toLowerCase();
+  if (raw.startsWith('[')) return raw.slice(1, raw.indexOf(']'));
+  return raw.split(':')[0] ?? '';
 }
 
 /** Recusa antes do upgrade: o cliente recebe um status HTTP de verdade. */

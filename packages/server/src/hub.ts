@@ -67,7 +67,7 @@ export interface HubDeps {
   forceSave(): void;
   claimVoiceKey(key: string, session: Session): void;
   releaseVoiceKey(key: string): void;
-  voiceEndpoint(): { port: number; certHash: Uint8Array };
+  voiceEndpoint(hostname: string): { port: number; certHash: Uint8Array };
 }
 
 interface Channel {
@@ -782,7 +782,7 @@ export class Hub {
     s.voiceKey = Buffer.from(token).toString('hex');
     this.deps.claimVoiceKey(s.voiceKey, s);
 
-    const voice = this.deps.voiceEndpoint();
+    const voice = this.deps.voiceEndpoint(s.hostname);
     s.send(
       encodeServerMessage({
         t: Op.Welcome,
