@@ -61,8 +61,10 @@ export interface ServerSettings {
 }
 
 export interface HubDeps {
-  /** Avisa que algo persistente mudou (canais, grupos, banimentos). */
+  /** Avisa que algo persistente mudou (canais, grupos, banimentos). Debounce ~2s. */
   onChanged(): void;
+  /** Forca gravacao imediata (sem debounce). Para mudancas onde uma perda de 2s doi. */
+  forceSave(): void;
   claimVoiceKey(key: string, session: Session): void;
   releaseVoiceKey(key: string): void;
   voiceEndpoint(): { port: number; certHash: Uint8Array };
@@ -187,11 +189,8 @@ export class Hub {
   trackedMains(): Map<string, string[]> {
     const out = new Map<string, string[]>();
     for (const [fp, desc] of this.descriptions) {
-      const m = /main\s*:\s*(.+)/i.exec(desc);
-      if (!m) continue;
-      const raw = (m[1] || '').trim();
-      if (!raw) continue;
-      const key = raw.toLowerCase();
+      const key = extractMain(desc);
+      if (!key) continue;
       const arr = out.get(key);
       if (arr) arr.push(fp);
       else out.set(key, [fp]);
@@ -670,12 +669,34 @@ export class Hub {
         const desc = clean(m.description, 200);
         const fp = clean(m.fingerprint, 128);
         if (!fp) return this.fail(s, FailureCode.Malformed, 'fingerprint invalido');
+
+        // Captura o Main antigo pra saber se precisamos limpar cache do player info.
+        const prevDesc = this.descriptions.get(fp) ?? '';
+        const prevMain = extractMain(prevDesc);
+
         if (desc) this.descriptions.set(fp, desc);
         else this.descriptions.delete(fp);
-        this.deps.onChanged();
+        // Save imediato: sem debounce, evita perder descricao se o server
+        // reiniciar nos 2s seguintes (deploy, crash, etc.).
+        this.deps.forceSave();
+
         // Reannounce todos com esse fingerprint (pode ter varias sessoes).
         for (const other of this.sessions.values()) {
           if (other.fingerprint === fp) this.broadcast({ t: Op.ClientAdd, client: this.describe(other) });
+        }
+
+        // Cache do PlayerInfo eh por nome. Se o Main mudou, o info antigo pra
+        // este fingerprint fica orfao — envia um "clear" pros clientes.
+        const newMain = extractMain(desc);
+        if (prevMain && prevMain !== newMain) {
+          // Se ninguem mais tem esse Main, purga do cache do hub.
+          const mains = this.trackedMains();
+          if (!mains.has(prevMain)) this.playerInfoByName.delete(prevMain);
+          // Manda pro cliente uma PlayerInfo vazia pra ele apagar a linha.
+          this.broadcast({
+            t: Op.PlayerInfoBatch,
+            infos: [{ fingerprint: fp, name: '', vocation: '', level: 0, online: false, updatedAt: Date.now() }],
+          });
         }
         break;
       }
@@ -1793,5 +1814,11 @@ export class Hub {
     s.socket.close(message);
     this.drop(s);
   }
+}
+
+/** Extrai "<nome>" de "Main: <nome>" na descricao. Vazio se nao ha main. */
+function extractMain(desc: string): string {
+  const m = /main\s*:\s*(.+)/i.exec(desc);
+  return (m?.[1] || '').trim().toLowerCase();
 }
 

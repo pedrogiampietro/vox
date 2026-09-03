@@ -32,7 +32,7 @@ import {
   TIBIA_TEMPLATE,
   canonicalRespawnName,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
 import {
   listFavorites,
   probe,
@@ -372,6 +372,27 @@ function renderToolRow(tool: 'statistics' | 'claims', label: string, count: stri
   return row;
 }
 
+/** Extrai "Main: <nome>" lower-case da descricao. Vazio se nao ha main. */
+function currentMainOf(c: ClientInfo): string {
+  const m = /main\s*:\s*(.+)/i.exec(c.description || '');
+  return (m?.[1] || '').trim().toLowerCase();
+}
+
+/**
+ * Retorna o PlayerInfo cacheado apenas se ele corresponde ao Main atual
+ * da descricao. Isso evita mostrar dados velhos quando o usuario troca de
+ * char antes do bot ter tempo de atualizar.
+ */
+function playerInfoFor(c: ClientInfo): PlayerInfo | undefined {
+  if (!c.fingerprint) return undefined;
+  const pi = client.playerInfos.get(c.fingerprint);
+  if (!pi) return undefined;
+  const wanted = currentMainOf(c);
+  if (!wanted) return undefined;
+  if (pi.name.toLowerCase() !== wanted) return undefined;
+  return pi;
+}
+
 function renderPeer(c: ClientInfo): HTMLElement {
   const row = $('div', 'peer');
   if (c.id === client.selfId) row.classList.add('me');
@@ -448,7 +469,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
   }
 
   // Char do Tibia (Main: ...) — icone da vocacao + level + online dot.
-  const pInfo = c.fingerprint ? client.playerInfos.get(c.fingerprint) : undefined;
+  const pInfo = playerInfoFor(c);
   if (pInfo && (pInfo.vocation || pInfo.level > 0 || pInfo.name)) {
     if (pInfo.vocation) {
       const vocIcon = $('img') as HTMLImageElement;
@@ -932,8 +953,9 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     addRow('Descrição:', c.description);
   }
 
-  // Info do Main via bot Rubinot.
-  const pi = c.fingerprint ? client.playerInfos.get(c.fingerprint) : undefined;
+  // Info do Main via bot Rubinot. So mostra se o nome bate com o Main atual
+  // da descricao — evita mostrar dados velhos quando o usuario troca o Main.
+  const pi = playerInfoFor(c);
   if (pi && pi.name) {
     const label = document.createElement('span');
     label.className = 'client-info-value';

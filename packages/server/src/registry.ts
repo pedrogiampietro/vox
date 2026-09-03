@@ -51,6 +51,7 @@ export class Registry {
     };
     const hub = new Hub(settings, stored, {
       onChanged: () => this.scheduleSave(),
+      forceSave: () => this.saveNow(),
       claimVoiceKey: (key, session) => this.byVoiceKey.set(key, session),
       releaseVoiceKey: (key) => this.byVoiceKey.delete(key),
       voiceEndpoint: () => this.voiceEndpoint,
