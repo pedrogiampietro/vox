@@ -203,3 +203,60 @@ export async function fetchGuild(
   );
   return raw.guild;
 }
+
+export interface RubinotCharacter {
+  name: string;
+  level: number;
+  vocation: string;
+  world: string;
+  /** Best-effort: HTML da pagina de char nem sempre marca isso claramente. */
+  online: boolean;
+}
+
+/**
+ * Scrape da pagina publica de personagem (nao ha endpoint JSON pra char
+ * individual). Retorna null se a pagina nao existe ou nao foi possivel
+ * extrair dados minimos (level ou vocation).
+ */
+export async function fetchCharacter(
+  name: string,
+  signal?: AbortSignal,
+): Promise<RubinotCharacter | null> {
+  const client = await getClient();
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+  const url = `${BASE}/?subtopic=characters&name=${encodeURIComponent(name)}`;
+  const res = await client.get(url, {
+    ja3: JA3,
+    userAgent: UA,
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'accept-language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      referer: `${BASE}/`,
+    },
+    timeout: 15,
+  });
+  if (res.status < 200 || res.status >= 300) return null;
+  const html = typeof res.body === 'string' ? res.body : String(res.body);
+
+  // Tenta varios formatos comuns de tabela vertical: <td>Label:</td><td>value</td>.
+  // Aceita espacos, atributos no <td>, tags aninhadas simples.
+  const pick = (label: string): string => {
+    const re = new RegExp(
+      `${label}\\s*:?\\s*</td>\\s*<td[^>]*>\\s*(?:<[^>]+>\\s*)*([^<]+?)\\s*(?:<|$)`,
+      'i',
+    );
+    const m = re.exec(html);
+    return (m?.[1] || '').trim();
+  };
+
+  const parsedName = pick('Name') || name;
+  const level = Number(pick('Level')) || 0;
+  const vocation = pick('Vocation');
+  const world = pick('World');
+  // Online: procura literal "Online" ou "Status: Online" na secao antes de Last Login.
+  const beforeLastLogin = html.split(/last\s*login/i)[0] ?? html;
+  const online = /\bonline\b/i.test(beforeLastLogin) && !/\boffline\b/i.test(beforeLastLogin);
+
+  if (!level && !vocation) return null;
+  return { name: parsedName, level, vocation, world, online };
+}

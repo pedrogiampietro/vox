@@ -12,7 +12,7 @@
 import type { Hub } from '../../server/src/hub.js';
 import { DeathTracker, type DeathEvent } from './trackers/deaths.js';
 import { OnlineTracker, type OnlineEvent } from './trackers/online.js';
-import { fetchGuild } from './scrapers/rubinot.js';
+import { fetchCharacter, fetchGuild, type RubinotCharacter } from './scrapers/rubinot.js';
 
 // ---------------------------------------------------------------- config --
 
@@ -213,9 +213,16 @@ export class RubinotBot {
     }
   }
 
+  /** Cache de scraping do char individual (fetchCharacter). */
+  private readonly charCache = new Map<string, { info: RubinotCharacter; fetchedAt: number }>();
+  /** Fila de nomes pra buscar via fetchCharacter (throttle 1 por tick). */
+  private readonly charFetchQueue: string[] = [];
+
   /**
    * Percorre os "Main: <nome>" registrados via descricao dos usuarios e
-   * atualiza voc/level/online usando o snapshot do OnlineTracker.
+   * atualiza voc/level/online. Fonte primaria: worldOnline (rapido, sem
+   * request extra). Fallback: pagina publica do char (fetchCharacter), com
+   * cache TTL pra nao spammar Rubinot.
    */
   private refreshPlayerInfos(): void {
     const mains = this.hub.trackedMains();
@@ -236,12 +243,57 @@ export class RubinotBot {
           level: player.level,
           online: true,
         });
-      } else {
-        this.hub.updatePlayerInfo(nameLower, {
-          name: nameLower,
-          online: false,
-        });
+        continue;
       }
+      // Offline no world do bot. Tenta cache do fetchCharacter.
+      const cached = this.charCache.get(nameLower);
+      const cacheAge = cached ? Date.now() - cached.fetchedAt : Infinity;
+      // Cache: 4h se achou dados; 30min se pagina nao existia (evita refetch).
+      const ttl = cached && (cached.info.level > 0 || cached.info.vocation)
+        ? 4 * 60 * 60 * 1000
+        : 30 * 60 * 1000;
+      if (cached && cacheAge < ttl) {
+        this.hub.updatePlayerInfo(nameLower, {
+          name: cached.info.name,
+          vocation: normalizeVocation(cached.info.vocation),
+          level: cached.info.level,
+          online: false, // esta offline no world do bot, independente do que a pagina diga
+        });
+        continue;
+      }
+      // Sem cache ou expirado — enfileira pra buscar (1 request por tick).
+      if (!this.charFetchQueue.includes(nameLower)) this.charFetchQueue.push(nameLower);
+      // Enquanto nao busca, mantem o que tinha (name em lower como fallback).
+      this.hub.updatePlayerInfo(nameLower, { name: nameLower, online: false });
+    }
+
+    // Pop 1 da fila e busca em paralelo — nao bloqueia o tick.
+    const next = this.charFetchQueue.shift();
+    if (next) void this.fetchOfflineChar(next);
+  }
+
+  private async fetchOfflineChar(nameLower: string): Promise<void> {
+    try {
+      const info = await fetchCharacter(nameLower, this.ac.signal);
+      if (!info) {
+        // Pagina nao existe / sem dados. Cache "vazio" pra evitar refetch imediato.
+        this.charCache.set(nameLower, {
+          info: { name: nameLower, level: 0, vocation: '', world: '', online: false },
+          fetchedAt: Date.now(),
+        });
+        return;
+      }
+      this.charCache.set(nameLower, { info, fetchedAt: Date.now() });
+      // Aplica na hora — nao espera o proximo tick.
+      this.hub.updatePlayerInfo(nameLower, {
+        name: info.name,
+        vocation: normalizeVocation(info.vocation),
+        level: info.level,
+        online: false,
+      });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      console.error(`[bot] fetchCharacter falhou para "${nameLower}":`, (err as Error).message);
     }
   }
 
