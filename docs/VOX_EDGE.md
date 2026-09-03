@@ -32,7 +32,7 @@ No `.env` da VPS principal, acrescente:
 ```ini
 VOX_VOICE_EDGE_HOST=voice-sp.v0x.online
 VOX_VOICE_EDGE_PORT=9987
-VOX_EDGE_SECRET=COLOQUE_A_MESMA_CHAVE_NAS_DUAS_MAQUINAS
+VOX_VOICE_EDGE_SECRET=COLOQUE_A_MESMA_CHAVE_NAS_DUAS_MAQUINAS
 ```
 
 Gere uma chave longa fora do Git:
