@@ -36,7 +36,7 @@ import {
   VOICE_HEADER_SIZE,
   canonicalRespawnName,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
@@ -94,6 +94,8 @@ export class Hub {
   private groupDefs: GroupDef[];
   private bans: StoredBan[] = [];
   private readonly descriptions = new Map<string, string>();
+  /** Cache do bot Rubinot: nome do char (lower) -> info recente. */
+  private readonly playerInfoByName = new Map<string, PlayerInfo>();
 
   afkEnabled = config.afkEnabled;
 
@@ -150,6 +152,74 @@ export class Hub {
 
   clientList(): ClientInfo[] {
     return [...this.sessions.values()].map((s) => this.describe(s));
+  }
+
+  // -------------------------------------------------- player info (Rubinot) --
+
+  /**
+   * Extrai "Main: <nome>" das descricoes armazenadas. Retorna map de
+   * nome-lowercase -> fingerprints[]. O bot Rubinot itera essa lista pra
+   * saber quais chars procurar no worldOnline.
+   */
+  trackedMains(): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const [fp, desc] of this.descriptions) {
+      const m = /main\s*:\s*(.+)/i.exec(desc);
+      if (!m) continue;
+      const raw = (m[1] || '').trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase();
+      const arr = out.get(key);
+      if (arr) arr.push(fp);
+      else out.set(key, [fp]);
+    }
+    return out;
+  }
+
+  /**
+   * Merge de player info (bot chama a cada poll). Aciona broadcast quando algo
+   * mudou (level/vocation/online) para os clientes reagirem sem re-fetch.
+   */
+  updatePlayerInfo(nameLower: string, patch: Partial<PlayerInfo> & { name: string }): void {
+    const now = Date.now();
+    const prev = this.playerInfoByName.get(nameLower);
+    // Encontra fingerprints com esse main.
+    const mains = this.trackedMains();
+    const fingerprints = mains.get(nameLower) ?? [];
+    if (fingerprints.length === 0) {
+      // Ninguem mais tem esse Main: X — descarta.
+      this.playerInfoByName.delete(nameLower);
+      return;
+    }
+    const merged: PlayerInfo = {
+      fingerprint: fingerprints[0]!, // representativo; broadcast repassa por nome
+      name: patch.name,
+      vocation: patch.vocation ?? prev?.vocation ?? '',
+      level: patch.level ?? prev?.level ?? 0,
+      online: patch.online ?? prev?.online ?? false,
+      updatedAt: now,
+    };
+    const unchanged = prev
+      && prev.vocation === merged.vocation
+      && prev.level === merged.level
+      && prev.online === merged.online
+      && prev.name === merged.name;
+    this.playerInfoByName.set(nameLower, merged);
+    if (unchanged) return;
+    // Broadcast por fingerprint (multiplo se varios usuarios tem o mesmo main).
+    const infos: PlayerInfo[] = fingerprints.map((fp) => ({ ...merged, fingerprint: fp }));
+    this.broadcast({ t: Op.PlayerInfoBatch, infos });
+  }
+
+  /** Snapshot pra sessao recem-conectada. */
+  playerInfoList(): PlayerInfo[] {
+    const mains = this.trackedMains();
+    const out: PlayerInfo[] = [];
+    for (const [name, info] of this.playerInfoByName) {
+      const fps = mains.get(name) ?? [];
+      for (const fp of fps) out.push({ ...info, fingerprint: fp });
+    }
+    return out;
   }
 
   private describe(s: Session): ClientInfo {
@@ -691,6 +761,10 @@ export class Hub {
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
     if (s.group >= Group.Owner) {
       s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
+    }
+    const playerInfos = this.playerInfoList();
+    if (playerInfos.length > 0) {
+      s.send(encodeServerMessage({ t: Op.PlayerInfoBatch, infos: playerInfos }));
     }
     this.broadcast({ t: Op.ClientAdd, client: this.describe(s) }, s);
   }

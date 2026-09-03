@@ -5,7 +5,7 @@
  */
 
 import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, FailureCode, Group, NO_CHANNEL, Op } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer } from './audio/mixer.js';
@@ -51,6 +51,8 @@ export class VoxClient {
   readonly clients = new Map<number, ClientInfo>();
   readonly claims = new Map<number, RespClaimInfo>();
   botState: BotStateInfo | null = null;
+  /** fingerprint -> info do char Tibia (vocation/level/online), via bot Rubinot. */
+  readonly playerInfos = new Map<string, PlayerInfo>();
   /** peerId -> maior stamp da minha DM outgoing que este peer confirmou ler. */
   readonly dmReadStamps = new Map<number, number>();
   /** peerId -> maior stamp por qual ja mandei ChatRead, evita reenviar. */
@@ -229,6 +231,7 @@ export class VoxClient {
     this.channels.clear();
     this.clients.clear();
     this.claims.clear();
+    this.playerInfos.clear();
     this.dmTabs.clear();
     this.dmReadStamps.clear();
     this.dmReadSent.clear();
@@ -778,6 +781,10 @@ export class VoxClient {
         if (m.upToStamp > prev) this.dmReadStamps.set(m.readerId, m.upToStamp);
         break;
       }
+
+      case Op.PlayerInfoBatch:
+        for (const info of m.infos) this.playerInfos.set(info.fingerprint, info);
+        break;
 
       case Op.ScreenSignalDeliver:
         void this.screen.handleSignal(m.senderId, m.targetId, m.kind, m.data);

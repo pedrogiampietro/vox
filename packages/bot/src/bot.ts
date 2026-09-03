@@ -206,9 +206,42 @@ export class RubinotBot {
       for (const ev of deathEvents) this.onDeath(ev);
       for (const ev of onlineEvents) this.onOnline(ev);
       this.flushPresenceSummary(false);
+      this.refreshPlayerInfos();
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       console.error('[bot] erro no poll:', err);
+    }
+  }
+
+  /**
+   * Percorre os "Main: <nome>" registrados via descricao dos usuarios e
+   * atualiza voc/level/online usando o snapshot do OnlineTracker.
+   */
+  private refreshPlayerInfos(): void {
+    const mains = this.hub.trackedMains();
+    if (mains.size === 0) return;
+
+    // Indice por nome-lower dos jogadores atualmente online (world do bot).
+    const onlineByLower = new Map<string, { name: string; level: number; vocation: string }>();
+    for (const [name, snap] of this.online.entries()) {
+      onlineByLower.set(name.toLowerCase(), { name, ...snap });
+    }
+
+    for (const [nameLower] of mains) {
+      const player = onlineByLower.get(nameLower);
+      if (player) {
+        this.hub.updatePlayerInfo(nameLower, {
+          name: player.name,
+          vocation: normalizeVocation(player.vocation),
+          level: player.level,
+          online: true,
+        });
+      } else {
+        this.hub.updatePlayerInfo(nameLower, {
+          name: nameLower,
+          online: false,
+        });
+      }
     }
   }
 
@@ -369,4 +402,20 @@ function names(events: OnlineEvent[]): string {
   const list = events.slice(0, 8).map((ev) => ev.player);
   const extra = events.length - list.length;
   return extra > 0 ? `${list.join(', ')} +${extra}` : list.join(', ');
+}
+
+/** Rubinot manda voc como "Elite Knight"/"Master Sorcerer"/etc. Curte pra EK/ED/MS/RP/MK. */
+function normalizeVocation(v: string): string {
+  const lower = v.toLowerCase();
+  if (lower.includes('elite knight')) return 'EK';
+  if (lower.includes('elder druid')) return 'ED';
+  if (lower.includes('master sorcerer')) return 'MS';
+  if (lower.includes('royal paladin')) return 'RP';
+  if (lower.includes('monk')) return 'MK';
+  // Vocacoes base (baixo level, sem promocao) mapeiam pro icone da promovida.
+  if (lower.includes('knight')) return 'EK';
+  if (lower.includes('druid')) return 'ED';
+  if (lower.includes('sorcerer')) return 'MS';
+  if (lower.includes('paladin')) return 'RP';
+  return '';
 }

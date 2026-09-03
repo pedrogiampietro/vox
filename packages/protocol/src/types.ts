@@ -1,6 +1,7 @@
 /** Constantes e formatos compartilhados entre servidor e cliente. */
 
 /**
+ * 11: PlayerInfo (voc/level/online) por fingerprint via bot Rubinot.
  * 10: 8 tiers de grupo (Visitante..Leader) e descricao por fingerprint.
  * 9: sinalizacao WebRTC para compartilhamento de tela/janela.
  * 8: read receipts para mensagens privadas.
@@ -11,7 +12,7 @@
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -77,6 +78,7 @@ export enum Op {
   BotState = 0xc2,
   ChatReadDeliver = 0xc3,
   ScreenSignalDeliver = 0xc4,
+  PlayerInfoBatch = 0xc5,
 }
 
 export enum BotControlAction {
@@ -269,6 +271,25 @@ export interface RespClaimInfo {
 export interface RespQueueEntry {
   clientId: number;
   name: string;
+}
+
+/**
+ * Info do personagem Tibia associado a uma descricao "Main: <nome>".
+ * Preenchido pelo bot Rubinot; retido em cache (level/vocation persistem
+ * mesmo quando offline).
+ */
+export interface PlayerInfo {
+  /** Identidade do dono no Vox. */
+  fingerprint: string;
+  /** Nome do char no jogo (case original). */
+  name: string;
+  /** EK / ED / MS / RP / MK (ou vazio se desconhecido). */
+  vocation: string;
+  /** Level atual (0 = desconhecido). */
+  level: number;
+  online: boolean;
+  /** Timestamp da ultima atualizacao. 0 = nunca resolvido. */
+  updatedAt: number;
 }
 
 export const DEFAULT_GROUP_DEFS: GroupDef[] = [

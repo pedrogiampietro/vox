@@ -833,6 +833,79 @@ label.field {
   font-size: 12px;
 }
 
+/* ============================================================= player info ==
+ * Badges de char Tibia (vocacao, level, online/offline) preenchidos pelo bot
+ * Rubinot a partir da descricao "Main: <nome>".
+ */
+.peer-voc {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.peer-level {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.peer-online {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.peer-online.on {
+  background: #5ec27a;
+  box-shadow: 0 0 4px rgba(94, 194, 122, 0.6);
+}
+
+.peer-online.off {
+  background: #4a4a4a;
+}
+
+.player-voc-fallback {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(232, 163, 61, 0.14);
+  color: #e8a33d;
+}
+
+.player-level-badge {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.player-online-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.player-online-dot.on {
+  background: #5ec27a;
+  box-shadow: 0 0 6px rgba(94, 194, 122, 0.7);
+}
+
+.player-online-dot.off {
+  background: #4a4a4a;
+}
+
 .client-desc-edit {
   display: grid;
   grid-template-columns: 1fr auto;

@@ -85,4 +85,9 @@ export class OnlineTracker {
   get onlinePlayers(): string[] {
     return [...this.prev.keys()];
   }
+
+  /** Iterador dos jogadores conhecidos com level+vocation, pra lookup externo. */
+  entries(): Iterable<[string, PlayerSnapshot]> {
+    return this.prev.entries();
+  }
 }

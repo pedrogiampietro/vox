@@ -444,6 +444,28 @@ function renderPeer(c: ClientInfo): HTMLElement {
     row.append(badge);
   }
 
+  // Char do Tibia (Main: ...) — icone da vocacao + level + online dot.
+  const pInfo = c.fingerprint ? client.playerInfos.get(c.fingerprint) : undefined;
+  if (pInfo && (pInfo.vocation || pInfo.level > 0 || pInfo.name)) {
+    if (pInfo.vocation) {
+      const vocIcon = $('img') as HTMLImageElement;
+      vocIcon.src = `/icons/${pInfo.vocation.toLowerCase()}.png`;
+      vocIcon.alt = pInfo.vocation;
+      vocIcon.title = `${pInfo.name} (${pInfo.vocation})`;
+      vocIcon.className = 'peer-voc';
+      vocIcon.onerror = () => vocIcon.remove();
+      row.append(vocIcon);
+    }
+    if (pInfo.level > 0) {
+      const lvl = text('span', 'peer-level', String(pInfo.level));
+      lvl.title = `level ${pInfo.level}`;
+      row.append(lvl);
+    }
+    const status = text('span', `peer-online ${pInfo.online ? 'on' : 'off'}`, '');
+    status.title = pInfo.online ? 'online no Tibia' : 'offline no Tibia';
+    row.append(status);
+  }
+
   // flags
   const peerChannel = client.channels.get(c.channelId);
   const channelModerated = peerChannel ? (peerChannel.flags & ChannelFlags.Moderated) !== 0 : false;
@@ -905,6 +927,35 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
   // description (Main: X, notas...)
   if (c.description) {
     addRow('Descrição:', c.description);
+  }
+
+  // Info do Main via bot Rubinot.
+  const pi = c.fingerprint ? client.playerInfos.get(c.fingerprint) : undefined;
+  if (pi && pi.name) {
+    const label = document.createElement('span');
+    label.className = 'client-info-value';
+    label.style.display = 'inline-flex';
+    label.style.alignItems = 'center';
+    label.style.gap = '6px';
+    if (pi.vocation) {
+      const vi = document.createElement('img');
+      vi.src = `/icons/${pi.vocation.toLowerCase()}.png`;
+      vi.alt = pi.vocation;
+      vi.title = pi.vocation;
+      vi.style.cssText = 'width:16px;height:16px;object-fit:contain;';
+      vi.onerror = () => { vi.replaceWith(text('span', 'player-voc-fallback', pi.vocation)); };
+      label.append(vi);
+    }
+    if (pi.level > 0) {
+      label.append(text('span', 'player-level-badge', String(pi.level)));
+    }
+    const dot = document.createElement('span');
+    dot.className = `player-online-dot ${pi.online ? 'on' : 'off'}`;
+    dot.title = pi.online ? 'online' : 'offline';
+    label.append(dot, document.createTextNode(pi.name));
+    const row = $('div', 'client-info-row');
+    row.append(text('span', 'client-info-label', 'Char:'), label);
+    info.append(row);
   }
 
   // fingerprint / ID (only visible to owners)

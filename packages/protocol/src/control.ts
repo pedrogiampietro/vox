@@ -7,7 +7,7 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespQueueEntry } from './types.js';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, RespQueueEntry } from './types.js';
 import { BotControlAction, ChatScope, FailureCode, FrameKind, Group, Op, RemoveReason } from './types.js';
 
 export type ClientMessage =
@@ -109,6 +109,7 @@ export type ServerMessage =
   | { t: Op.RespClaims; claims: RespClaimInfo[] }
   | { t: Op.BotState; state: BotStateInfo }
   | { t: Op.ChatReadDeliver; readerId: number; upToStamp: number }
+  | { t: Op.PlayerInfoBatch; infos: PlayerInfo[] }
   | { t: Op.ScreenSignalDeliver; senderId: number; targetId: number; kind: string; data: string };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
@@ -193,6 +194,27 @@ function readRespClaim(r: Reader): RespClaimInfo {
     claimedAt: r.f64(),
     expiresAt: r.f64(),
     queue: r.list(readRespQueueEntry),
+  };
+}
+
+function writePlayerInfo(w: Writer, p: PlayerInfo): void {
+  w
+    .str(p.fingerprint)
+    .str(p.name)
+    .str(p.vocation || '')
+    .u16(p.level)
+    .u8(p.online ? 1 : 0)
+    .f64(p.updatedAt || 0);
+}
+
+function readPlayerInfo(r: Reader): PlayerInfo {
+  return {
+    fingerprint: r.str(),
+    name: r.str(),
+    vocation: r.str(),
+    level: r.u16(),
+    online: r.u8() === 1,
+    updatedAt: r.f64(),
   };
 }
 
@@ -506,6 +528,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.ScreenSignalDeliver:
       w.u16(m.senderId).u16(m.targetId).str(m.kind).str(m.data);
       break;
+    case Op.PlayerInfoBatch:
+      w.list(m.infos, writePlayerInfo);
+      break;
   }
   return w.finish();
 }
@@ -570,6 +595,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, readerId: r.u16(), upToStamp: r.f64() };
     case Op.ScreenSignalDeliver:
       return { t, senderId: r.u16(), targetId: r.u16(), kind: r.str(), data: r.str() };
+    case Op.PlayerInfoBatch:
+      return { t, infos: r.list(readPlayerInfo) };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }
