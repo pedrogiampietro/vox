@@ -21,6 +21,10 @@ comportamento do TCP.
 
 O painel e o controle continuam no WebSocket. QUIC é usado somente para voz.
 
+Para distribuir a voz por uma região diferente da origem, consulte o
+[runbook do edge regional](VOX_EDGE.md). O edge é opcional: sem
+`VOX_VOICE_EDGE_HOST`, o processo usa o WebTransport da própria VPS.
+
 ## Requisitos da nova máquina
 
 - Debian/Ubuntu 64-bit com Node.js 22 ou superior;

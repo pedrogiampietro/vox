@@ -1,0 +1,21 @@
+{
+  "name": "@vox/edge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node dist/edge.mjs"
+  },
+  "dependencies": {
+    "@vox/protocol": "*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13"
+  },
+  "optionalDependencies": {
+    "@fails-components/webtransport": "^1.6.7",
+    "@fails-components/webtransport-transport-http3-quiche": "^1.6.7"
+  }
+}

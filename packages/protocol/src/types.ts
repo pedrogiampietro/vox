@@ -12,8 +12,9 @@
  * 4: claims de respawn por servidor.
  * 3: servidores virtuais, identidade por chave publica e grupos.
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
+ * 13: Welcome passou a anunciar um hostname de voz separado (voice edge).
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;

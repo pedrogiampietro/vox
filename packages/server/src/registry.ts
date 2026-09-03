@@ -29,15 +29,16 @@ export class Registry {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private nextServerId = 1;
 
-  private voiceInfo: { port: number; certHash: Uint8Array } = {
+  private voiceInfo: { host: string; port: number; certHash: Uint8Array } = {
+    host: '',
     port: 0,
     certHash: new Uint8Array(0),
   };
 
   /** Retorna a porta do QUIC para o hostname da conexão de controle. */
-  voiceEndpoint: (hostname: string) => ({ port: number; certHash: Uint8Array }) = () => this.voiceInfo;
+  voiceEndpoint: (hostname: string) => ({ host: string; port: number; certHash: Uint8Array }) = () => this.voiceInfo;
 
-  setVoiceEndpointProvider(provider: (hostname: string) => { port: number; certHash: Uint8Array }): void {
+  setVoiceEndpointProvider(provider: (hostname: string) => { host: string; port: number; certHash: Uint8Array }): void {
     this.voiceEndpoint = provider;
   }
 
@@ -189,6 +190,11 @@ export class Registry {
   /** Encontra o Hub de uma sessao, para o transporte de voz entregar o frame. */
   hubOf(session: Session): Hub | undefined {
     return this.hubs.get(session.serverId);
+  }
+
+  /** Liga o link privado de um edge a uma sessao autenticada. */
+  bindEdgeVoice(token: Uint8Array, sink: VoiceSink): Session | null {
+    return this.bindVoice(token, sink);
   }
 
   // ------------------------------------------------------------ rotina --

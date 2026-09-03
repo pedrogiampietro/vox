@@ -124,6 +124,13 @@ export const config = {
    */
   wtPublishHash: bool('VOX_WT_PUBLISH_HASH', false),
 
+  /** Hostname publico do edge de voz. Vazio = QUIC na propria VPS. */
+  voiceEdgeHost: str('VOX_VOICE_EDGE_HOST', ''),
+  /** Porta UDP do edge anunciado no Welcome. */
+  voiceEdgePort: num('VOX_VOICE_EDGE_PORT', 9987),
+  /** Segredo compartilhado usado pelo link privado edge -> origem. */
+  voiceEdgeSecret: str('VOX_VOICE_EDGE_SECRET', ''),
+
   /**
    * Senha do painel de administracao. Vazia desliga o painel inteiro - e o
    * padrao, porque um painel aberto e pior que nenhum painel.

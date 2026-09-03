@@ -21,6 +21,7 @@ import type { Registry } from './registry.js';
 import type { PeerSocket } from './session.js';
 
 const ROUTE = /^\/vox(?:\/(\d+))?\/?$/;
+const EDGE_ROUTE = '/internal/edge';
 
 export function attachWebSocket(
   server: HttpServer | HttpsServer,
@@ -40,6 +41,7 @@ export function attachWebSocket(
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    if (path === EDGE_ROUTE) return;
     const route = ROUTE.exec(path);
     if (!route) return reject(socket, 404, 'rota desconhecida');
 

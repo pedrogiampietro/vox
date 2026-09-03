@@ -32,6 +32,7 @@ export interface VoiceEndpoint {
 }
 
 export interface VoiceEndpointInfo {
+  host: string;
   port: number;
   certHash: Uint8Array;
 }
@@ -255,11 +256,12 @@ class VoiceTransportManager {
 }
 
 function emptyEndpoint(): VoiceEndpointInfo {
-  return { port: 0, certHash: new Uint8Array(0) };
+  return { host: '', port: 0, certHash: new Uint8Array(0) };
 }
 
 function infoOf(endpoint: ActiveEndpoint): VoiceEndpointInfo {
   return {
+    host: endpoint.host,
     port: endpoint.port,
     certHash: endpoint.certHash,
   };

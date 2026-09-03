@@ -249,7 +249,7 @@ export class Connection {
       this.attempt = 0;
       this.everOnline = true;
       this.handlers.onState('online', msg.serverName);
-      void this.upgradeVoice(msg.voiceToken, msg.wtPort, msg.wtCertHash);
+      void this.upgradeVoice(msg.voiceToken, msg.voiceHost || this.host, msg.wtPort, msg.wtCertHash);
     }
     this.handlers.onMessage(msg);
   }
@@ -312,6 +312,7 @@ export class Connection {
    */
   private async upgradeVoice(
     token: Uint8Array,
+    voiceHost: string,
     port: number,
     certHash: Uint8Array,
   ): Promise<void> {
@@ -327,7 +328,7 @@ export class Connection {
           { algorithm: 'sha-256', value: Uint8Array.from(certHash) },
         ];
       }
-      const wt = new WebTransport(`https://${this.host}:${port}/vox`, init);
+      const wt = new WebTransport(`https://${voiceHost}:${port}/vox`, init);
       await wt.ready;
       if (generation !== this.generation) return wt.close();
 

@@ -15,6 +15,7 @@ import { adminEnabled, config, tlsEnabled } from './config.js';
 import { AdminApi } from './admin-api.js';
 import { Registry } from './registry.js';
 import { attachWebSocket } from './transport-ws.js';
+import { attachEdgeWebSocket } from './edge-relay.js';
 import { startVoiceTransport, type VoiceEndpoint } from './transport-wt.js';
 import { RubinotBot, botConfigFromEnv } from '../../bot/src/bot.js';
 import { shutdownRubinotClient } from '../../bot/src/scrapers/rubinot.js';
@@ -127,6 +128,7 @@ const server = tlsEnabled
   : createHttpServer(handle);
 
 attachWebSocket(server, registry);
+attachEdgeWebSocket(server, registry);
 
 // ----------------------------------------------------------- manutencao --
 
@@ -140,7 +142,14 @@ pulse.unref();
  * nativo, o servidor sobe do mesmo jeito e a voz continua no WebSocket.
  */
 let voice: VoiceEndpoint | null = null;
-startVoiceTransport(registry)
+if (config.voiceEdgeHost) {
+  registry.setVoiceEndpointProvider(() => ({
+    host: config.voiceEdgeHost,
+    port: config.voiceEdgePort,
+    certHash: new Uint8Array(0),
+  }));
+  console.log(`[vox] voz regional anunciada em ${config.voiceEdgeHost}:${config.voiceEdgePort}`);
+} else startVoiceTransport(registry)
   .then((endpoint) => {
     voice = endpoint;
     if (!endpoint) {

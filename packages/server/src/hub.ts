@@ -46,7 +46,7 @@ import { fingerprintOf, looksLikePublicKey, verifyChallenge } from './identity.j
 import type { StoredBan, StoredBotConfig, StoredChannel, StoredRespClaim, StoredServer } from './persistence.js';
 import { DEFAULT_BOT_CONFIG } from './persistence.js';
 import type { BotConfig } from '../../bot/src/bot.js';
-import { Session, type PeerSocket, type VoiceSink } from './session.js';
+import { Session, type PeerSocket, type VoiceSink, type VoiceState } from './session.js';
 import { clean, clamp } from './util.js';
 
 export interface ServerSettings {
@@ -67,7 +67,7 @@ export interface HubDeps {
   forceSave(): void;
   claimVoiceKey(key: string, session: Session): void;
   releaseVoiceKey(key: string): void;
-  voiceEndpoint(hostname: string): { port: number; certHash: Uint8Array };
+  voiceEndpoint(hostname: string): { host: string; port: number; certHash: Uint8Array };
 }
 
 interface Channel {
@@ -487,6 +487,7 @@ export class Hub {
         flags = (flags & ~ClientFlags.HasVoice) | (s.flags & ClientFlags.HasVoice);
         if (flags !== s.flags) {
           s.flags = flags;
+          this.syncVoiceState(s);
           this.broadcast({ t: Op.ClientState, clientId: s.id, flags });
           this.checkAfkOnMute(s);
         }
@@ -782,6 +783,12 @@ export class Hub {
     s.voiceKey = Buffer.from(token).toString('hex');
     this.deps.claimVoiceKey(s.voiceKey, s);
 
+    const home = this.defaultChannel();
+    if (home) {
+      home.members.add(s);
+      s.channelId = home.info.id;
+    }
+
     const voice = this.deps.voiceEndpoint(s.hostname);
     s.send(
       encodeServerMessage({
@@ -792,16 +799,11 @@ export class Hub {
         motd: this.settings.motd,
         group: s.group,
         voiceToken: token,
+        voiceHost: voice.host,
         wtPort: voice.port,
         wtCertHash: voice.certHash,
       }),
     );
-
-    const home = this.defaultChannel();
-    if (home) {
-      home.members.add(s);
-      s.channelId = home.info.id;
-    }
 
     s.send(
       encodeServerMessage({
@@ -874,6 +876,7 @@ export class Hub {
     if (group === Group.Guest) this.groups.delete(target.fingerprint);
     else this.groups.set(target.fingerprint, group);
     target.group = group;
+    this.syncVoiceState(target);
     this.deps.onChanged();
     // ClientAdd tambem serve de atualizacao: o cliente indexa por id.
     this.broadcast({ t: Op.ClientAdd, client: this.describe(target) });
@@ -886,6 +889,7 @@ export class Hub {
     for (const s of this.sessions.values()) {
       if (s.fingerprint !== fingerprint) continue;
       s.group = group;
+      this.syncVoiceState(s);
       this.broadcast({ t: Op.ClientAdd, client: this.describe(s) });
     }
     this.deps.onChanged();
@@ -987,7 +991,22 @@ export class Hub {
     const ch = this.channels.get(channelId)!;
     ch.members.add(target);
     target.channelId = channelId;
+    this.syncVoiceState(target);
     this.broadcast({ t: Op.ClientMove, clientId: target.id, channelId });
+  }
+
+  /** Estado minimo que um edge precisa para encaminhar voz localmente. */
+  voiceState(s: Session): VoiceState {
+    return {
+      channelId: s.channelId,
+      channelFlags: this.channels.get(s.channelId)?.info.flags ?? 0,
+      clientFlags: s.flags,
+      group: s.group,
+    };
+  }
+
+  private syncVoiceState(s: Session): void {
+    s.voice?.updateState?.(this.voiceState(s));
   }
 
   /** Usado pelo painel, que ja se autenticou por fora. */
@@ -1015,6 +1034,7 @@ export class Hub {
     }
     target.members.add(s);
     s.channelId = channelId;
+    this.syncVoiceState(s);
     this.broadcast({ t: Op.ClientMove, clientId: s.id, channelId });
   }
 
@@ -1024,6 +1044,7 @@ export class Hub {
     if (!old) return;
     old.members.delete(s);
     s.channelId = NO_CHANNEL;
+    this.syncVoiceState(s);
     if (old.members.size === 0 && !(old.info.flags & ChannelFlags.Permanent)) {
       this.channels.delete(old.info.id);
       this.broadcast({ t: Op.ChannelRemove, channelId: old.info.id });
@@ -1074,6 +1095,7 @@ export class Hub {
       if (home) {
         home.members.add(member);
         member.channelId = home.info.id;
+        this.syncVoiceState(member);
         this.broadcast({ t: Op.ClientMove, clientId: member.id, channelId: home.info.id });
       }
     }
@@ -1523,6 +1545,7 @@ export class Hub {
         const target = this.findClientByNick(targetNick);
         if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
         target.flags |= ClientFlags.MutedMic;
+        this.syncVoiceState(target);
         this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
         this.sendBotResult(s, true, `${target.nickname} silenciado`);
         break;
@@ -1534,6 +1557,7 @@ export class Hub {
         const target = this.findClientByNick(targetNick);
         if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
         target.flags &= ~ClientFlags.MutedMic;
+        this.syncVoiceState(target);
         this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
         this.sendBotResult(s, true, `${target.nickname} desilenciado`);
         break;
@@ -1548,12 +1572,14 @@ export class Hub {
           for (const m of channel.members) {
             if (m.flags & ClientFlags.HasVoice) {
               m.flags &= ~ClientFlags.HasVoice;
+              this.syncVoiceState(m);
               this.broadcast({ t: Op.ClientState, clientId: m.id, flags: m.flags });
             }
           }
         } else {
           channel.info.flags |= ChannelFlags.Moderated;
         }
+        for (const m of channel.members) this.syncVoiceState(m);
         this.broadcast({ t: Op.ChannelUpdate, channel: channel.info });
         this.sendBotResult(s, true, wasModerated
           ? `canal ${channel.info.name} desmoderando`
@@ -1568,6 +1594,7 @@ export class Hub {
         if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
         if (target.flags & ClientFlags.HasVoice) return this.sendBotResult(s, false, `${target.nickname} ja tem voice`);
         target.flags |= ClientFlags.HasVoice;
+        this.syncVoiceState(target);
         this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
         this.sendBotResult(s, true, `${target.nickname} agora pode falar`);
         break;
@@ -1580,6 +1607,7 @@ export class Hub {
         if (!target) return this.sendBotResult(s, false, 'usuario nao encontrado');
         if (!(target.flags & ClientFlags.HasVoice)) return this.sendBotResult(s, false, `${target.nickname} nao tem voice`);
         target.flags &= ~ClientFlags.HasVoice;
+        this.syncVoiceState(target);
         this.broadcast({ t: Op.ClientState, clientId: target.id, flags: target.flags });
         this.sendBotResult(s, true, `${target.nickname} perdeu a permissao de falar`);
         break;

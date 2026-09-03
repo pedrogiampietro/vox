@@ -7,6 +7,15 @@ import { Group, NO_CHANNEL } from '@vox/protocol';
 export interface VoiceSink {
   send(frame: Uint8Array): void;
   close(): void;
+  /** Atualiza o estado necessario para o edge fazer o encaminhamento local. */
+  updateState?(state: VoiceState): void;
+}
+
+export interface VoiceState {
+  channelId: number;
+  channelFlags: number;
+  clientFlags: number;
+  group: number;
 }
 
 /** O que o Hub precisa de um transporte, seja WebSocket, WebTransport ou UDP. */

@@ -77,6 +77,8 @@ export type ServerMessage =
       group: Group;
       /** Prova a identidade da sessao ao abrir o canal de voz separado. */
       voiceToken: Uint8Array;
+      /** Hostname do servidor de voz; vazio = usar o host do controle. */
+      voiceHost: string;
       /** Porta UDP do WebTransport; 0 quando o servidor nao oferece. */
       wtPort: number;
       /**
@@ -482,6 +484,7 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
         .str(m.motd)
         .u8(m.group)
         .bytes(m.voiceToken)
+        .str(m.voiceHost)
         .u16(m.wtPort)
         .bytes(m.wtCertHash);
       break;
@@ -561,6 +564,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         motd: r.str(),
         group: r.u8() as Group,
         voiceToken: r.bytes(),
+        voiceHost: r.str(),
         wtPort: r.u16(),
         wtCertHash: r.bytes(),
       };
