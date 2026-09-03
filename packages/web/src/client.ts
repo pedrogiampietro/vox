@@ -846,7 +846,12 @@ export class VoxClient {
             this.play('message');
             if (this.notificationsEnabled) notifications.privateMessage(m.senderName, m.text);
           } else {
-            this.unread++;
+            const channelChatFocused = this.activeDmTab === null;
+            const visibleInCurrentChat = channelChatFocused && (
+              m.scope === ChatScope.Server ||
+              m.targetId === this.self?.channelId
+            );
+            if (!visibleInCurrentChat) this.unread++;
             this.play('message');
             if (this.notificationsEnabled && m.scope === ChatScope.Channel) {
               const myNick = this.self?.nickname?.toLowerCase();
