@@ -218,22 +218,27 @@ class VoxConnection {
       }
       void this.handle(msg);
     });
-    ws.on('error', (err) => console.error(`[jukebox] ${this.nickname}: ${err.message}`));
-    ws.on('close', () => {
+    ws.on('error', (err) => console.error(`[jukebox] ${this.nickname}: error ${err.message}`));
+    ws.on('close', (code, reason) => {
+      const why = reason?.toString() || '(sem motivo)';
+      console.error(`[jukebox] ${this.nickname}: ws close code=${code} reason="${why}"`);
       if (this.heartbeat) clearInterval(this.heartbeat);
       this.heartbeat = null;
       if (!this.closed) {
-        console.error(`[jukebox] ${this.nickname}: websocket fechou; encerrando processo para systemd reiniciar limpo`);
+        console.error(`[jukebox] ${this.nickname}: encerrando processo para systemd reiniciar limpo`);
         process.exit(1);
       }
     });
-    // Heartbeat: server drops us after ~30s idle. 15s deixa duas janelas de
-    // tolerancia antes do timeout.
+    // Heartbeat: server drops us after ~30s idle. 10s garante margem antes do
+    // timeout. Nao usamos unref pra o timer sozinho segurar o loop caso o ws
+    // fique num estado esquisito e a gente ainda queira reagir.
     this.heartbeat = setInterval(() => {
+      const state = this.ws?.readyState;
       this.send({ t: Op.Ping, stamp: Date.now() });
-    }, 15_000);
-    this.heartbeat.unref();
+      console.log(`[jukebox] ${this.nickname}: ping (ws state=${state})`);
+    }, 10_000);
     await this.ready;
+    console.log(`[jukebox] ${this.nickname}: heartbeat armado (10s), self=${this.selfId}`);
   }
 
   private async handle(msg: ServerMessage): Promise<void> {
