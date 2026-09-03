@@ -2361,15 +2361,45 @@ async function ensureChannel(name: string, parentId = NO_CHANNEL): Promise<numbe
   throw new Error(`timeout criando canal "${name}"`);
 }
 
+/** Normaliza nome do grupo para slug de arquivo: minusculo, sem acento, sem espaco. */
+function iconSlug(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+/** URL do icone esperada em /root/icons/<slug>.png (servido em /icons/<slug>.png). */
+function defaultGroupIconUrl(groupName: string): string {
+  return `/icons/${iconSlug(groupName)}.png`;
+}
+
 /**
- * Aplica o template Tibia: renomeia os 8 grupos e monta a arvore de canais
- * (categorias como canais-pai com os canais reais dentro). Idempotente:
- * canais ja existentes com o mesmo pai sao reaproveitados.
+ * Aplica o template Tibia: renomeia os 8 grupos, seta URLs de icones em
+ * /icons/<slug>.png e monta a arvore de canais (categorias como canais-pai
+ * com os canais reais dentro). Idempotente: canais ja existentes com o
+ * mesmo pai sao reaproveitados. Se `wipeFirst`, apaga primeiro todos os
+ * canais que o usuario pode remover (menos o default).
  */
-async function applyTibiaTemplate(): Promise<void> {
-  // 1) Grupos: usa DEFAULT_GROUP_DEFS como fonte.
+async function applyTibiaTemplate(wipeFirst = false): Promise<void> {
+  if (wipeFirst) {
+    // Apaga canais nao-default. O server pula o default e o AFK auto-criado.
+    const toDelete = [...client.channels.values()]
+      .filter((c) => (c.flags & ChannelFlags.Default) === 0)
+      .sort((a, b) => (a.parentId === NO_CHANNEL ? 1 : 0) - (b.parentId === NO_CHANNEL ? 1 : 0));
+    for (const c of toDelete) {
+      client.deleteChannel(c.id);
+      await new Promise<void>((r) => setTimeout(r, 30));
+    }
+    // Espera as remocoes propagarem antes de comecar a criar.
+    await new Promise<void>((r) => setTimeout(r, 300));
+  }
+
+  // 1) Grupos: usa DEFAULT_GROUP_DEFS como fonte + seta icone de /icons.
   for (const def of DEFAULT_GROUP_DEFS) {
-    client.setGroupDef(def.id, def.name, def.icon, def.color);
+    const icon = def.icon || defaultGroupIconUrl(def.name);
+    client.setGroupDef(def.id, def.name, icon, def.color);
   }
 
   // 2) Categorias como canais-pai; canais reais como filhos.
@@ -2401,24 +2431,39 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
   tplBox.append(text('span', 'settings-hint', 'renomeia os 8 grupos e cria as categorias CHANELS / HUNT’S / PRIVATE com os canais padrão dentro. Roda idempotente: se já existir mesmo nome + mesmo pai, reaproveita.'));
 
   const tplRow = $('div', 'tibia-template-row');
-  const applyBtn = $('button', 'primary') as HTMLButtonElement;
-  applyBtn.textContent = 'aplicar template Tibia';
-  applyBtn.addEventListener('click', async () => {
-    if (!confirm('isso vai renomear os 8 grupos e criar as categorias CHANELS, HUNT’S e PRIVATE com os canais padrão dentro. continuar?')) return;
-    applyBtn.disabled = true;
-    applyBtn.textContent = 'aplicando...';
+
+  const runTemplate = async (btn: HTMLButtonElement, wipe: boolean, label: string): Promise<void> => {
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = wipe ? 'apagando + criando...' : 'aplicando...';
     try {
-      await applyTibiaTemplate();
+      await applyTibiaTemplate(wipe);
     } catch (err) {
       console.error(err);
+      alert(`falha: ${String(err)}`);
     } finally {
-      applyBtn.disabled = false;
-      applyBtn.textContent = 'aplicar template Tibia';
+      btn.disabled = false;
+      btn.textContent = prev ?? label;
       setTimeout(rebuild, 200);
     }
+  };
+
+  const applyBtn = $('button', 'primary') as HTMLButtonElement;
+  applyBtn.textContent = 'aplicar template Tibia';
+  applyBtn.addEventListener('click', () => {
+    if (!confirm('isso vai renomear os 8 grupos, setar ícones em /icons/<nome>.png e criar as categorias CHANELS, HUNT’S e PRIVATE com os canais padrão dentro. continuar?')) return;
+    void runTemplate(applyBtn, false, 'aplicar template Tibia');
   });
 
-  tplRow.append(applyBtn);
+  const wipeBtn = $('button', 'ghost danger') as HTMLButtonElement;
+  wipeBtn.textContent = 'recriar do zero';
+  wipeBtn.title = 'apaga todos os canais não-padrão antes de recriar tudo';
+  wipeBtn.addEventListener('click', () => {
+    if (!confirm('DESTRUTIVO: isso vai APAGAR todos os canais (menos o default) e recriar a árvore Tibia do zero. tem certeza?')) return;
+    void runTemplate(wipeBtn, true, 'recriar do zero');
+  });
+
+  tplRow.append(applyBtn, wipeBtn);
   tplBox.append(tplRow);
   body.append(tplBox);
   body.append($('hr'));
