@@ -1,0 +1,3 @@
+voice-sp.v0x.online {
+    respond "vox edge" 200
+}
