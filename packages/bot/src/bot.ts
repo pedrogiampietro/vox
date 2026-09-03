@@ -86,6 +86,42 @@ interface GuildMemberSnap {
   isOnline: boolean;
 }
 
+interface LevelUpRecord {
+  at: number;
+  player: string;
+  previousLevel: number;
+  level: number;
+  vocation: string;
+  kind: 'friend' | 'enemy';
+}
+
+interface DeathRecord {
+  at: number;
+  kind: 'death' | 'kill';
+  victim: string;
+  level: number;
+  killer: string;
+  trackedKind: 'friend' | 'enemy';
+}
+
+const INFO_CHANNEL_NAMES = {
+  hunted: 'Hunted List Online',
+  levelUp: 'UP Level',
+  deathList: 'DeathList',
+} as const;
+
+const VOCATION_ORDER = ['ED', 'EK', 'MS', 'RP', 'MK', ''] as const;
+const VOCATION_LABELS: Record<string, string> = {
+  ED: 'Elder Druid',
+  EK: 'Elite Knight',
+  MS: 'Master Sorcerer',
+  RP: 'Royal Paladin',
+  MK: 'Monk',
+  '': 'Vocation desconhecida',
+};
+const REPORT_TIME_ZONE = 'America/Sao_Paulo';
+const MAX_REPORT_ROWS = 120;
+
 export class RubinotBot {
   private deaths = new DeathTracker();
   private online: OnlineTracker;
@@ -102,6 +138,10 @@ export class RubinotBot {
   private readonly pendingLogins: OnlineEvent[] = [];
   private readonly pendingLogouts: OnlineEvent[] = [];
   private nextPresenceSummaryAt = 0;
+  private infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0 };
+  private readonly levelUpLog: LevelUpRecord[] = [];
+  private readonly deathLog: DeathRecord[] = [];
+  private reportDay = '';
 
   constructor(
     private readonly hub: Hub,
@@ -140,12 +180,19 @@ export class RubinotBot {
 
     // Cria o canal de notificacoes ja no start, mesmo antes do primeiro evento,
     // para os usuarios encontrarem a sala pronta.
-    this.hub.ensureChannel(this.cfg.channelName);
+    const botChannelId = this.hub.ensureChannel(this.cfg.channelName);
+    this.infoChannelIds = {
+      hunted: this.hub.ensureChannel(INFO_CHANNEL_NAMES.hunted, botChannelId),
+      levelUp: this.hub.ensureChannel(INFO_CHANNEL_NAMES.levelUp, botChannelId),
+      deathList: this.hub.ensureChannel(INFO_CHANNEL_NAMES.deathList, botChannelId),
+    };
 
     await this.syncAllGuilds();
 
     await this.deaths.poll(this.ac.signal);
     await this.online.poll(this.ac.signal);
+    this.refreshPlayerInfos();
+    this.refreshInfoChannels();
     this.running = true;
     const enemies = this.enemiesList.length;
     const friends = this.friendsList.length;
@@ -180,6 +227,10 @@ export class RubinotBot {
     this.pendingLogins.length = 0;
     this.pendingLogouts.length = 0;
     this.nextPresenceSummaryAt = 0;
+    this.infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0 };
+    this.levelUpLog.length = 0;
+    this.deathLog.length = 0;
+    this.reportDay = '';
     if (newCfg.enabled && newCfg.world) {
       await this.start();
     }
@@ -191,6 +242,7 @@ export class RubinotBot {
     // Nao rebaixa quem ja e amigo (via guild) para inimigo manual.
     if (existing?.kind === 'friend') return;
     this.tags.set(key, { kind: 'enemy', guild: '' });
+    this.refreshInfoChannels();
   }
 
   removeHunted(name: string): void {
@@ -199,6 +251,7 @@ export class RubinotBot {
     // Nome vindo de guild nao e removido pela lista manual.
     if (!existing || existing.guild) return;
     this.tags.delete(key);
+    this.refreshInfoChannels();
   }
 
   /** Lista combinada, para clientes antigos e persistencia. */
@@ -216,9 +269,13 @@ export class RubinotBot {
       ]);
 
       for (const ev of deathEvents) this.onDeath(ev);
-      for (const ev of onlineEvents) this.onOnline(ev);
+      for (const ev of onlineEvents) {
+        if (ev.type === 'levelup') this.recordLevelUp(ev);
+        this.onOnline(ev);
+      }
       this.flushPresenceSummary(false);
       this.refreshPlayerInfos();
+      this.refreshInfoChannels();
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       console.error('[bot] erro no poll:', err);
@@ -340,6 +397,8 @@ export class RubinotBot {
 
     if (!victim && !killer) return;
 
+    this.recordDeath(ev, victim, killer);
+
     // Cada linha pode ser sobre a morte da vitima ou sobre o kill do outro:
     // enviamos ate as duas mensagens quando ambos os lados estao rastreados,
     // respeitando o toggle de cada uma.
@@ -365,6 +424,136 @@ export class RubinotBot {
         );
       }
     }
+  }
+
+  private recordLevelUp(ev: OnlineEvent): void {
+    const tag = this.tagOf(ev.player);
+    if (ev.type !== 'levelup' || !tag || ev.previousLevel === undefined) return;
+    this.rollReportDay();
+    this.levelUpLog.unshift({
+      at: Date.now(),
+      player: ev.player,
+      previousLevel: ev.previousLevel,
+      level: ev.level,
+      vocation: normalizeVocation(ev.vocation ?? ''),
+      kind: tag.kind,
+    });
+    if (this.levelUpLog.length > MAX_REPORT_ROWS) this.levelUpLog.length = MAX_REPORT_ROWS;
+  }
+
+  private recordDeath(
+    ev: DeathEvent,
+    victim: PlayerTag | null,
+    killer: PlayerTag | null,
+  ): void {
+    this.rollReportDay();
+    const tracked = victim ?? killer;
+    if (!tracked) return;
+    this.deathLog.unshift({
+      at: eventTimeMs(ev.timestamp),
+      kind: victim ? 'death' : 'kill',
+      victim: ev.victim,
+      level: ev.level,
+      killer: ev.killedBy,
+      trackedKind: tracked.kind,
+    });
+    if (this.deathLog.length > MAX_REPORT_ROWS) this.deathLog.length = MAX_REPORT_ROWS;
+  }
+
+  private rollReportDay(): void {
+    const today = formatDateTime(Date.now()).slice(0, 10);
+    if (this.reportDay === today) return;
+    this.reportDay = today;
+    this.levelUpLog.length = 0;
+    this.deathLog.length = 0;
+  }
+
+  private refreshInfoChannels(): void {
+    if (!this.infoChannelIds.hunted) return;
+    this.rollReportDay();
+    const now = Date.now();
+    this.hub.setChannelTopic(this.infoChannelIds.hunted, this.renderHuntedOnline(now));
+    this.hub.setChannelTopic(this.infoChannelIds.levelUp, this.renderLevelUps(now));
+    this.hub.setChannelTopic(this.infoChannelIds.deathList, this.renderDeathList(now));
+  }
+
+  private renderHuntedOnline(now: number): string {
+    const grouped = new Map<string, { name: string; level: number }[]>();
+    for (const [name, player] of this.online.entries()) {
+      const tag = this.tagOf(name);
+      if (!tag || tag.kind !== 'enemy') continue;
+      const vocation = normalizeVocation(player.vocation);
+      const list = grouped.get(vocation) ?? [];
+      list.push({ name, level: player.level });
+      grouped.set(vocation, list);
+    }
+
+    const total = [...grouped.values()].reduce((sum, list) => sum + list.length, 0);
+    const lines = [
+      `HUNTED LIST ONLINE (${total})`,
+      `Atualizado ${formatDateTime(now)} (BR)`,
+      '',
+    ];
+    for (const vocation of VOCATION_ORDER) {
+      const list = grouped.get(vocation);
+      if (!list || list.length === 0) continue;
+      list.sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
+      lines.push(`${VOCATION_LABELS[vocation]} (${list.length})`);
+      for (const player of list) lines.push(`${String(player.level).padStart(4, ' ')} ${player.name}`);
+      lines.push('');
+    }
+    if (total === 0) lines.push('Nenhum hunted online neste momento.');
+    return lines.join('\n').trimEnd();
+  }
+
+  private renderLevelUps(now: number): string {
+    const friends = this.levelUpLog.filter((entry) => entry.kind === 'friend');
+    const hunted = this.levelUpLog.filter((entry) => entry.kind === 'enemy');
+    const topFriend = highestLevel(friends);
+    const topHunted = highestLevel(hunted);
+    const lines = [
+      'UP LEVEL',
+      `Atualizado ${formatDateTime(now)} (BR)`,
+      '',
+      `FRIENDS UP TODAY: ${friends.length}`,
+      `Top Friend UP Today: ${topFriend ? `${topFriend.player} (${topFriend.level})` : '—'}`,
+      '',
+      `HUNTEDS UP TODAY: ${hunted.length}`,
+      `Top Hunted UP Today: ${topHunted ? `${topHunted.player} (${topHunted.level})` : '—'}`,
+      '',
+      'REGISTROS MAIS RECENTES',
+    ];
+    if (this.levelUpLog.length === 0) {
+      lines.push('Nenhum level up registrado hoje.');
+      return lines.join('\n');
+    }
+    for (const entry of this.levelUpLog.slice(0, MAX_REPORT_ROWS)) {
+      const side = entry.kind === 'friend' ? 'FRIEND' : 'HUNTED';
+      const vocation = entry.vocation ? ` ${entry.vocation}` : '';
+      lines.push(`[${formatTime(entry.at)}] ${side} ${entry.player}${vocation} - ${entry.previousLevel} -> ${entry.level}`);
+    }
+    return lines.join('\n');
+  }
+
+  private renderDeathList(now: number): string {
+    const lines = [
+      'DEATH LIST',
+      `Atualizado ${formatDateTime(now)} (BR)`,
+      '',
+    ];
+    if (this.deathLog.length === 0) {
+      lines.push('Nenhuma morte registrada hoje.');
+      return lines.join('\n');
+    }
+    for (const entry of this.deathLog.slice(0, MAX_REPORT_ROWS)) {
+      const side = entry.trackedKind === 'friend' ? 'FRIEND' : 'HUNTED';
+      if (entry.kind === 'death') {
+        lines.push(`[${formatTime(entry.at)}] ${side} ${entry.victim} (lvl ${entry.level}) morreu para ${entry.killer}`);
+      } else {
+        lines.push(`[${formatTime(entry.at)}] ${side} ${entry.killer} matou ${entry.victim} (lvl ${entry.level})`);
+      }
+    }
+    return lines.join('\n');
   }
 
   private onOnline(ev: OnlineEvent): void {
@@ -521,4 +710,39 @@ function normalizeVocation(v: string): string {
   if (lower.includes('sorcerer')) return 'MS';
   if (lower.includes('paladin')) return 'RP';
   return '';
+}
+
+function highestLevel(entries: LevelUpRecord[]): LevelUpRecord | undefined {
+  return entries.reduce<LevelUpRecord | undefined>(
+    (highest, entry) => !highest || entry.level > highest.level ? entry : highest,
+    undefined,
+  );
+}
+
+function formatDateTime(stamp: number): string {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: REPORT_TIME_ZONE,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(stamp)).replace(', ', ' - ');
+}
+
+function formatTime(stamp: number): string {
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: REPORT_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(stamp));
+}
+
+/** A API pode enviar epoch em segundos ou milissegundos. */
+function eventTimeMs(timestamp: number): number {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return Date.now();
+  return timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
 }

@@ -1828,6 +1828,10 @@ label.field {
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.5;
+  font-family: var(--mono);
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: min(52vh, 560px);
   padding: 6px 10px;
   background: var(--ink-900);
   border-radius: var(--r);

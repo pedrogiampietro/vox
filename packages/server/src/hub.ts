@@ -1767,10 +1767,12 @@ export class Hub {
   }
 
   /** Encontra canal pelo nome (primeiro match, case-insensitive). */
-  findChannelByName(name: string): number | undefined {
+  findChannelByName(name: string, parentId: number | null = null): number | undefined {
     const lower = name.toLowerCase();
     for (const [id, ch] of this.channels) {
-      if (ch.info.name.toLowerCase() === lower) return id;
+      if (ch.info.name.toLowerCase() !== lower) continue;
+      if (parentId !== null && ch.info.parentId !== parentId) continue;
+      return id;
     }
     return undefined;
   }
@@ -1779,13 +1781,13 @@ export class Hub {
    * Garante que um canal com o nome dado exista. Se nao existir, cria um canal
    * permanente na raiz (para o bot postar notificacoes).
    */
-  ensureChannel(name: string): number {
-    const existing = this.findChannelByName(name);
+  ensureChannel(name: string, parentId = NO_CHANNEL): number {
+    const existing = this.findChannelByName(name, parentId);
     if (existing !== undefined) return existing;
     const label = clean(name, 64) || 'bot';
     const info: ChannelInfo = {
       id: this.allocChannelId(),
-      parentId: NO_CHANNEL,
+      parentId,
       order: this.channels.size,
       name: label,
       topic: '',
@@ -1796,6 +1798,17 @@ export class Hub {
     this.broadcast({ t: Op.ChannelAdd, channel: info });
     this.deps.onChanged();
     return info.id;
+  }
+
+  /** Atualiza a descrição de um canal gerenciado internamente pelo bot. */
+  setChannelTopic(channelId: number, topic: string): void {
+    const ch = this.channels.get(channelId);
+    if (!ch) return;
+    const next = cleanMultilineTopic(topic, 12_000);
+    if (ch.info.topic === next) return;
+    ch.info.topic = next;
+    this.broadcast({ t: Op.ChannelUpdate, channel: ch.info });
+    this.deps.onChanged();
   }
 
   private broadcast(m: ServerMessage, except?: Session): void {
@@ -1820,5 +1833,28 @@ export class Hub {
 function extractMain(desc: string): string {
   const m = /main\s*:\s*(.+)/i.exec(desc);
   return (m?.[1] || '').trim().toLowerCase();
+}
+
+/** Limpa descrição de relatório sem destruir as quebras de linha do bot. */
+function cleanMultilineTopic(value: string, max: number): string {
+  let out = '';
+  for (const ch of value) {
+    if (ch === '\n') {
+      out += ch;
+      continue;
+    }
+    const c = ch.codePointAt(0)!;
+    const junk =
+      c < 0x20 ||
+      (c >= 0x7f && c <= 0x9f) ||
+      c === 0xad ||
+      (c >= 0x200b && c <= 0x200f) ||
+      c === 0x2028 ||
+      c === 0x2029 ||
+      c === 0x2060 ||
+      c === 0xfeff;
+    if (!junk) out += ch;
+  }
+  return out.trim().slice(0, max);
 }
 

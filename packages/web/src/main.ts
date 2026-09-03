@@ -59,6 +59,7 @@ let selectedChannelId = 0;
 let selectedClientId = 0;
 let selectedTool: 'statistics' | 'claims' | null = null;
 const collapsedChannels = new Set<number>();
+const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist']);
 
 // ---- drag-to-move state ----
 let dragClientId = 0;
@@ -376,7 +377,7 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
 }
 
 function isBotChannel(ch: ChannelInfo): boolean {
-  return ch.name.toLowerCase() === 'bot';
+  return BOT_CHANNEL_NAMES.has(ch.name.toLowerCase());
 }
 
 function renderSectionHeader(label: string, count: number, extraClass = ''): HTMLElement {
