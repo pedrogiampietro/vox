@@ -64,6 +64,7 @@ export class Microphone {
   private source: MediaStreamAudioSourceNode | null = null;
   private worklet: AudioWorkletNode | null = null;
   private encoder: AudioEncoder | null = null;
+  private encoderGeneration = 0;
 
   private seq = 0;
   private timestamp = 0;
@@ -106,7 +107,7 @@ export class Microphone {
 
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        ...(settings.deviceId ? { deviceId: { exact: settings.deviceId } } : {}),
+        ...(this.settings.deviceId ? { deviceId: { exact: this.settings.deviceId } } : {}),
         channelCount: 1,
         sampleRate: { ideal: 48_000 },
         sampleSize: { ideal: 16 },
@@ -117,8 +118,11 @@ export class Microphone {
       video: false,
     });
 
+    const generation = ++this.encoderGeneration;
     const encoder = new AudioEncoder({
-      output: (chunk) => this.onEncoded(chunk),
+      output: (chunk) => {
+        if (generation === this.encoderGeneration) this.onEncoded(chunk);
+      },
       error: (err) => console.error('[vox] encoder:', err),
     });
     this.encoder = encoder;
@@ -168,6 +172,12 @@ export class Microphone {
   calibrateThreshold(durationMs = 1500): Promise<number | null> {
     if (!this.stream || !this.worklet) return Promise.resolve(null);
     if (this.calibration) return Promise.resolve(null);
+
+    // A calibracao sempre comeca uma nova janela de deteccao; isso evita que
+    // um estado de fala anterior prolongue a primeira transmissao depois dela.
+    this.vadLevel = 0;
+    this.hangoverUntil = 0;
+    this.wasTransmitting = false;
 
     return new Promise((resolve) => {
       const calibration: Calibration = {
@@ -303,6 +313,9 @@ export class Microphone {
     }
     if (this.encoder) {
       const enc = this.encoder;
+      // Invalida callbacks do encoder antigo antes do flush/close. Uma troca
+      // de dispositivo nunca deve injetar audio atrasado na nova captura.
+      this.encoderGeneration++;
       this.encoder = null;
       try {
         if (enc.state === 'configured') await enc.flush();

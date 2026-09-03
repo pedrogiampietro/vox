@@ -371,7 +371,10 @@ quer de um protocolo binário.
 - Árvore de canais, entrar/criar/editar/remover, canais temporários e permanentes
 - Chat de canal, de servidor e privado
 - Mudo de microfone e de som, com estado replicado para todos
-- Voz Opus 48 kHz mono, ativação por voz (com hangover) ou push-to-talk
+- Voz Opus 48 kHz mono a 48 kbps por padrão, com FEC para perdas curtas,
+  ativação por voz com histerese/hangover ou push-to-talk
+- Calibração do ruído ambiente, teste do dispositivo selecionado e pré-buffer
+  de reprodução para reduzir cortes perceptíveis
 - Voz em datagramas QUIC quando disponível, com queda automática para WebSocket
 - Indicador de quem está falando, medidor de entrada, volume de saída
 - Volume por usuário e mudo local
