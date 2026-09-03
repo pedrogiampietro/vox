@@ -2142,22 +2142,6 @@ function renderConsole(): HTMLElement {
   sndBtn.addEventListener('click', () => client.setSoundsEnabled(!client.soundsEnabled));
   bar.append(sndBtn);
 
-  // link state
-  const state = text('span', 'mono', client.link === 'online' ? 'conectado' : client.link);
-  state.title = client.link === 'online' ? 'conexão com o servidor ativa' : `estado da conexão: ${client.link}`;
-  if (client.link === 'online') state.style.color = 'var(--signal)';
-  else if (client.link === 'connecting') state.style.color = 'var(--amber)';
-  else state.style.color = 'var(--text-faint)';
-  bar.append(state);
-
-  // unread badge
-  if (client.unread > 0) {
-    const badge = text('span', 'badge', String(client.unread));
-    badge.title = `${client.unread} mensagem(ns) de chat não lida(s)`;
-    badge.setAttribute('aria-label', badge.title);
-    bar.append(badge);
-  }
-
   return bar;
 }
 
