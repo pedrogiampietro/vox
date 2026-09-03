@@ -1838,6 +1838,33 @@ label.field {
   border-left: 2px solid var(--amber-dim);
 }
 
+.channel-desc-line {
+  min-height: 1.5em;
+}
+
+.channel-desc-line.report-friend {
+  color: #c9f3d5;
+}
+
+.channel-desc-line.report-hunted {
+  color: #ffd0d0;
+}
+
+.channel-desc-line .report-side {
+  display: inline-block;
+  margin: 0 4px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.channel-desc-line.report-friend .report-side {
+  color: #67e69b;
+}
+
+.channel-desc-line.report-hunted .report-side {
+  color: #ff8585;
+}
+
 .channel-stats {
   display: flex;
   gap: 16px;

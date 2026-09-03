@@ -58,6 +58,7 @@ let settingsOpen = false;
 let selectedChannelId = 0;
 let selectedClientId = 0;
 let selectedTool: 'statistics' | 'claims' | null = null;
+let lastVoiceChannelId = 0;
 const collapsedChannels = new Set<number>();
 const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist']);
 
@@ -117,6 +118,7 @@ function render(): void {
     renderPending = true;
     return;
   }
+  syncVoiceChannelView();
   const app = document.getElementById('app')!;
   const chatInput = app.querySelector('.composer input') as HTMLInputElement | null;
   const hadFocus = chatInput && document.activeElement === chatInput;
@@ -257,6 +259,19 @@ function renderRooms(): HTMLElement {
   foot.append(footActions, text('span', 'rooms-footer-hint', 'duplo clique para entrar'));
   pane.append(foot);
   return pane;
+}
+
+/** Ao entrar em outro canal, abre automaticamente o chat daquele canal. */
+function syncVoiceChannelView(): void {
+  const voiceChannelId = client.self?.channelId ?? 0;
+  if (voiceChannelId === lastVoiceChannelId) return;
+  lastVoiceChannelId = voiceChannelId;
+  if (!voiceChannelId) return;
+
+  selectedChannelId = voiceChannelId;
+  selectedClientId = 0;
+  selectedTool = null;
+  client.activeDmTab = null;
 }
 
 function renderChannelTree(parent: HTMLElement, parentId: number, depth: number): void {
@@ -686,7 +701,8 @@ function renderTalk(): HTMLElement {
   // chat tabs
   const tabs = $('div', 'chat-tabs');
   const channelTab = $('button', 'chat-tab');
-  channelTab.textContent = '# canal';
+  const currentChannel = client.self ? client.channels.get(client.self.channelId) : null;
+  channelTab.textContent = `# ${currentChannel?.name ?? 'canal'}`;
   if (client.activeDmTab === null) channelTab.classList.add('active');
   if (client.unread > 0 && client.activeDmTab !== null) {
     const badge = text('span', 'tab-badge', String(client.unread));
@@ -726,7 +742,7 @@ function renderTalk(): HTMLElement {
   const dmPeerId = client.activeDmTab;
   const messages = isDmView
     ? client.dmMessages(client.activeDmTab!)
-    : client.channelMessages();
+    : client.channelMessages(client.self?.channelId ?? 0);
 
   const log = $('div', isDmView ? 'log dm-log' : 'log');
   const readStamp = dmPeerId !== null ? (client.dmReadStamps.get(dmPeerId) ?? 0) : 0;
@@ -798,6 +814,34 @@ function renderTalk(): HTMLElement {
   return pane;
 }
 
+function appendChannelTopic(target: HTMLElement, topic: string): void {
+  for (const line of topic.split(/\r?\n/)) {
+    const row = $('div', 'channel-desc-line');
+    if (!line) {
+      row.textContent = '\u00a0';
+      target.append(row);
+      continue;
+    }
+
+    const side = /\b(FRIENDS?|HUNTEDS?)\b/i.exec(line);
+    if (!side || side.index === undefined) {
+      row.textContent = line;
+      target.append(row);
+      continue;
+    }
+
+    const sideName = side[1] ?? '';
+    const kind = sideName.toLowerCase().startsWith('friend') ? 'friend' : 'hunted';
+    row.classList.add(`report-${kind}`);
+    row.append(
+      document.createTextNode(line.slice(0, side.index)),
+      text('span', 'report-side', sideName),
+      document.createTextNode(line.slice(side.index + sideName.length)),
+    );
+    target.append(row);
+  }
+}
+
 function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
   const panel = $('div', 'channel-info');
   const members = client.membersOf(ch.id);
@@ -833,7 +877,7 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
   // description / topic
   if (ch.topic) {
     const desc = $('div', 'channel-desc');
-    desc.textContent = ch.topic;
+    appendChannelTopic(desc, ch.topic);
     panel.append(desc);
   }
 

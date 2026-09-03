@@ -1329,11 +1329,16 @@ export class Hub {
     const body = clean(text, MAX_CHAT_TEXT);
     if (!body) return;
 
+    // Mensagens de canal sempre pertencem ao canal em que o remetente esta.
+    // O targetId enviado pelo cliente e ignorado nesse escopo: assim cada
+    // conversa pode ser filtrada corretamente no historico do cliente.
+    const routedTargetId = scope === ChatScope.Channel ? s.channelId : targetId;
+
     const frame = encodeServerMessage({
       t: Op.ChatDeliver,
       scope,
       senderId: s.id,
-      targetId,
+      targetId: routedTargetId,
       senderName: s.nickname,
       text: body,
       stamp: Date.now(),

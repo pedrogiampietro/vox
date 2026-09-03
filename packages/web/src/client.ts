@@ -704,8 +704,11 @@ export class VoxClient {
     this.onChange();
   }
 
-  channelMessages(): ChatLine[] {
-    return this.chat.filter((m) => m.scope !== ChatScope.Private);
+  channelMessages(channelId = this.self?.channelId ?? 0): ChatLine[] {
+    return this.chat.filter((m) =>
+      m.scope === ChatScope.Server ||
+      (m.scope === ChatScope.Channel && m.targetId === channelId),
+    );
   }
 
   dmMessages(otherId: number): ChatLine[] {

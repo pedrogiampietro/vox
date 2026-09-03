@@ -72,7 +72,7 @@ class TestClient {
 
   readonly channels = new Map<number, ChannelInfo>();
   readonly clients = new Map<number, ClientInfo>();
-  readonly chat: { senderId: number; text: string }[] = [];
+  readonly chat: { senderId: number; scope: ChatScope; targetId: number; text: string }[] = [];
   readonly voice: HeardVoice[] = [];
   readonly failures: { code: FailureCode; message: string }[] = [];
   id = 0;
@@ -141,7 +141,7 @@ class TestClient {
         break;
       }
       case Op.ChatDeliver:
-        this.chat.push({ senderId: m.senderId, text: m.text });
+        this.chat.push({ senderId: m.senderId, scope: m.scope, targetId: m.targetId, text: m.text });
         break;
     }
   }
@@ -402,6 +402,31 @@ async function main(): Promise<void> {
     alice.sendVoice(43, payload);
     await wait(400);
     check('voz nao vaza para outro canal', bob.voice.length === before);
+
+    const channelLine = `mensagem privada do canal ${RUN}`;
+    alice.send({ t: Op.ChatSend, scope: ChatScope.Channel, targetId: 0, text: channelLine });
+    const ownChannelMessage = await until('alice recebe a mensagem do proprio canal', () =>
+      alice.chat.some((c) => c.senderId === alice.id && c.scope === ChatScope.Channel
+        && c.targetId === other.id && c.text === channelLine),
+    );
+    check('mensagem de canal volta com o id correto', ownChannelMessage);
+    await wait(250);
+    check('mensagem de canal nao vaza para outro canal',
+      !bob.chat.some((c) => c.text === channelLine));
+
+    bob.send({ t: Op.JoinChannel, channelId: other.id, password: '' });
+    const bobMoved = await until(
+      'alice ve bob entrar no mesmo canal',
+      () => alice.clients.get(bob.id)?.channelId === other.id,
+    );
+    check('bob entra no canal da alice', bobMoved);
+    const sharedChannelLine = `mensagem compartilhada ${RUN}`;
+    bob.send({ t: Op.ChatSend, scope: ChatScope.Channel, targetId: 0, text: sharedChannelLine });
+    const sharedChannelMessage = await until('alice recebe a mensagem do canal compartilhado', () =>
+      alice.chat.some((c) => c.senderId === bob.id && c.scope === ChatScope.Channel
+        && c.targetId === other.id && c.text === sharedChannelLine),
+    );
+    check('mensagem chega apenas aos membros do canal', sharedChannelMessage);
   }
 
   // --- chat ----------------------------------------------------------------
