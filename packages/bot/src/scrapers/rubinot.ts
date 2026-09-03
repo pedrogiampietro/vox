@@ -224,7 +224,7 @@ export async function fetchCharacter(
 ): Promise<RubinotCharacter | null> {
   const client = await getClient();
   if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-  const url = `${BASE}/?subtopic=characters&name=${encodeURIComponent(name)}`;
+  const url = `${BASE}/characters?name=${encodeURIComponent(name)}`;
   const res = await client.get(url, {
     ja3: JA3,
     userAgent: UA,
