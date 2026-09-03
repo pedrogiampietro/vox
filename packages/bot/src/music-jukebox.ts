@@ -231,8 +231,17 @@ function searchPrefix(source: SearchSource): string {
 }
 
 async function resolveTrack(query: string): Promise<ResolvedTrack> {
-  if (looksDirect(query)) return { source: 'direct', input: query, title: query };
+  // Arquivo local ou URL de arquivo (mp3/ogg/opus/m4a/wav/flac) vao direto pro
+  // ffmpeg — nao precisa de yt-dlp.
+  if (looksDirectAudioFile(query)) return { source: 'direct', input: query, title: query };
 
+  // URL de site (youtube, soundcloud, bandcamp, etc.): passa para o yt-dlp
+  // sem prefixo de busca. yt-dlp identifica o extractor pelo dominio.
+  if (/^https?:\/\//i.test(query)) {
+    return await resolveViaUrl(query);
+  }
+
+  // Busca por texto: tenta cada fonte na ordem configurada.
   let lastError: unknown = null;
   for (const src of searchSources) {
     try {
@@ -240,11 +249,23 @@ async function resolveTrack(query: string): Promise<ResolvedTrack> {
     } catch (err) {
       lastError = err;
       const msg = err instanceof Error ? err.message : String(err);
-      // Se caiu bot-check no YouTube, so tenta o proximo (nao adianta insistir).
       console.error(`[jukebox] source ${src} falhou: ${msg.slice(0, 120)}`);
     }
   }
   throw lastError ?? new Error('todas as fontes de musica falharam');
+}
+
+async function resolveViaUrl(url: string): Promise<ResolvedTrack> {
+  const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
+  const lines = await runCapture(ytdlpBin, [
+    '--no-playlist',
+    '-f', 'bestaudio',
+    '--print', '%(title)s',
+    ...extra,
+    url,
+  ]);
+  const title = lines.map((l) => l.trim()).find(Boolean) || url;
+  return { source: 'ytdlp', input: url, title };
 }
 
 async function resolveViaSource(source: SearchSource, query: string): Promise<ResolvedTrack> {
@@ -275,10 +296,17 @@ function splitArgs(input: string): string[] {
   return out;
 }
 
-function looksDirect(value: string): boolean {
-  if (/^https?:\/\//i.test(value)) return true;
+/**
+ * Arquivo local ou URL diretamente reproduzivel por ffmpeg (mp3/ogg/opus/etc).
+ * URL de pagina (youtube/soundcloud/etc) NAO conta — vai por yt-dlp.
+ */
+function looksDirectAudioFile(value: string): boolean {
+  const audioExt = /\.(mp3|ogg|opus|m4a|aac|wav|flac|webm|mp4)(\?|#|$)/i;
+  if (/^https?:\/\//i.test(value)) return audioExt.test(value);
   if (/^[a-z]:[\\/]/i.test(value)) return existsSync(value);
-  return value.includes('/') || value.includes('\\');
+  // Path que existe no disco.
+  if (value.includes('/') || value.includes('\\')) return existsSync(value);
+  return false;
 }
 
 function runCapture(command: string, args: string[]): Promise<string[]> {
