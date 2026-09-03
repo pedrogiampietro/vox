@@ -122,6 +122,7 @@ export class VoxClient {
       },
       onMessage: (m) => this.apply(m),
       onVoice: (p) => this.mixer?.push(p),
+      onVoiceTransport: () => this.onChange(),
     });
     this.microphone = new Microphone((frame) => this.connection.sendVoice(frame));
     this.screen = new ScreenShare(

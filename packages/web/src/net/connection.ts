@@ -26,6 +26,7 @@ export interface ConnectionHandlers {
   onState(state: LinkState, detail: string): void;
   onMessage(m: ServerMessage): void;
   onVoice(p: VoicePacket): void;
+  onVoiceTransport?(transport: VoiceTransport): void;
 }
 
 /**
@@ -333,6 +334,7 @@ export class Connection {
       this.wtWriter = datagrams.getWriter();
       this.wtInflight = 0;
       this.voiceTransport = 'quic';
+      this.handlers.onVoiceTransport?.('quic');
       void wt.closed.catch(() => {}).then(() => this.dropVoiceChannel(generation));
       void this.readDatagrams(wt, generation);
     } catch {
@@ -362,6 +364,7 @@ export class Connection {
   /** Volta a voz para o WebSocket. Ignora avisos de uma conexao ja substituida. */
   private dropVoiceChannel(generation: number): void {
     if (generation !== this.generation) return;
+    const changed = this.voiceTransport !== 'ws';
     this.voiceTransport = 'ws';
     this.wtWriter = null;
     this.wtInflight = 0;
@@ -372,6 +375,7 @@ export class Connection {
     } catch {
       // ja fechada
     }
+    if (changed) this.handlers.onVoiceTransport?.('ws');
   }
 
   /** Saida deliberada do usuario: cancela qualquer tentativa pendente. */
