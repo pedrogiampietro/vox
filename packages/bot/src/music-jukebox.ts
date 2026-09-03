@@ -137,11 +137,17 @@ async function pumpQueue(): Promise<void> {
   try {
     track = await resolveTrack(current.query);
   } catch (err) {
-    const msg = `nao consegui resolver "${current.query}": ${trimError(err)}`;
+    const raw = trimError(err);
+    const friendly = friendlyResolveError(current.query, raw);
     if (current.viaDm) {
-      controller.send({ t: Op.ChatSend, scope: ChatScope.Private, targetId: current.requestedBy, text: msg });
+      controller.send({ t: Op.ChatSend, scope: ChatScope.Private, targetId: current.requestedBy, text: friendly });
     } else {
-      announce(msg);
+      announce(friendly);
+    }
+    // Cookie-check: se caiu bot check do YouTube, avisa TAMBEM no canal `bot`
+    // pra o dono ver mesmo se ninguem estava na aba.
+    if (isCookieExpiredError(raw)) {
+      warnCookiesExpired();
     }
     current = null;
     void pumpQueue();
@@ -173,6 +179,31 @@ async function pumpQueue(): Promise<void> {
 
 function announce(text: string): void {
   controller.send({ t: Op.ChatSend, scope: ChatScope.Channel, targetId: 0, text });
+}
+
+/** Detecta o erro classico "Sign in to confirm you're not a bot". */
+function isCookieExpiredError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return lower.includes("sign in to confirm you") ||
+    lower.includes('use --cookies-from-browser or --cookies') ||
+    lower.includes('cookies') && lower.includes('expired');
+}
+
+function friendlyResolveError(query: string, raw: string): string {
+  if (isCookieExpiredError(raw)) {
+    return `nao consegui resolver "${query}": cookies do YouTube expiraram. avise o owner pra atualizar /root/youtube_cookies.txt na VPS.`;
+  }
+  return `nao consegui resolver "${query}": ${raw}`;
+}
+
+let lastCookieWarnAt = 0;
+function warnCookiesExpired(): void {
+  const now = Date.now();
+  // 1 aviso por hora no canal — evita spam.
+  if (now - lastCookieWarnAt < 60 * 60 * 1000) return;
+  lastCookieWarnAt = now;
+  announce('⚠ cookies do YouTube expiraram. jukebox nao vai resolver musica ate o owner atualizar /root/youtube_cookies.txt na VPS e rodar `systemctl restart vox-music-jukebox`.');
+  console.error('[jukebox] YouTube bot check hit — cookies precisam ser atualizados');
 }
 
 /** Log de yt-dlp/ffmpeg vem em spam de linhas repetitivas. Deixa so o essencial. */
