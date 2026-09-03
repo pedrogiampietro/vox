@@ -1730,6 +1730,23 @@ label.field {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   box-shadow: var(--shadow-xl);
+  transition: width var(--dur) var(--ease), max-height var(--dur) var(--ease),
+              right var(--dur) var(--ease), bottom var(--dur) var(--ease);
+}
+
+/* Modo expandido: ocupa a maior parte da tela, tipo player. Um click no botao
+ * expandir alterna. Ao fechar a expansao, volta pro dock pequeno. */
+.screen-dock.expanded {
+  right: 24px;
+  bottom: 24px;
+  width: min(1200px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+}
+
+.screen-dock.expanded .screen-tile {
+  aspect-ratio: unset;
+  height: calc(100vh - 130px);
+  max-height: 900px;
 }
 
 .screen-head {

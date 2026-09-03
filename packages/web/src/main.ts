@@ -76,6 +76,9 @@ const groupEdits = new Map<number, { name: string; color: string; icon: string }
 let sliderDragging = false;
 let renderPending = false;
 
+/** Modo expandido do dock de compartilhamento. Persiste enquanto o dock existir. */
+let screenDockExpanded = false;
+
 if (typeof document !== 'undefined') {
   document.addEventListener('pointerdown', (e) => {
     const el = e.target as HTMLElement | null;
@@ -1711,8 +1714,18 @@ function renderScreenDock(): HTMLElement | null {
   if (!client.screen.sharing && remotes.length === 0 && !client.screen.error) return null;
 
   const dock = $('div', 'screen-dock');
+  if (screenDockExpanded) dock.classList.add('expanded');
   const head = $('div', 'screen-head');
   head.append(text('span', 'screen-title', client.screen.sharing ? 'sua tela' : 'compartilhamento'));
+
+  const expandBtn = $('button', 'ghost');
+  expandBtn.textContent = screenDockExpanded ? '⤡ reduzir' : '⤢ expandir';
+  expandBtn.title = screenDockExpanded ? 'reduzir para o canto' : 'expandir na tela';
+  expandBtn.addEventListener('click', () => {
+    screenDockExpanded = !screenDockExpanded;
+    render();
+  });
+  head.append(expandBtn);
 
   if (client.screen.sharing) {
     const stop = $('button', 'ghost');
