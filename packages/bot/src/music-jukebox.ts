@@ -32,6 +32,10 @@ interface TrackRequest {
 }
 
 interface ResolvedTrack {
+  /** 'direct' = URL/arquivo acessivel diretamente pelo ffmpeg. */
+  /** 'ytdlp' = precisa passar por yt-dlp (cookies, JS challenge, etc.). */
+  source: 'direct' | 'ytdlp';
+  /** URL ou path (direct) ou query original (ytdlp). */
   input: string;
   title: string;
 }
@@ -152,7 +156,7 @@ async function pumpQueue(): Promise<void> {
     text: `tocando: ${track.title} (pedido por ${current.requestedByName})`,
   });
 
-  activePlayer = new MusicPlayer(track.input, player, () => {
+  activePlayer = new MusicPlayer(track, player, () => {
     activePlayer = null;
     player?.close('fim');
     player = null;
@@ -175,22 +179,21 @@ function trimError(err: unknown): string {
 }
 
 async function resolveTrack(query: string): Promise<ResolvedTrack> {
-  if (looksDirect(query)) return { input: query, title: query };
+  if (looksDirect(query)) return { source: 'direct', input: query, title: query };
 
+  // So extrai o titulo. A URL do googlevideo caduca em segundos e amarra-se
+  // ao user-agent do resolver, entao nao adianta guardar — ffmpeg vai pegar
+  // 403. No playback pipamos yt-dlp -> ffmpeg, aproveitando cookies e headers.
   const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
   const lines = await runCapture(ytdlpBin, [
     '--no-playlist',
     '-f', 'bestaudio',
     '--print', '%(title)s',
-    '--get-url',
     ...extra,
     `ytsearch1:${query}`,
   ]);
-  const useful = lines.map((l) => l.trim()).filter(Boolean);
-  const url = [...useful].reverse().find((line: string) => /^https?:\/\//i.test(line));
-  if (!url) throw new Error(`instale yt-dlp ou envie uma URL direta`);
-  const title = useful.find((line) => line !== url) || query;
-  return { input: url, title };
+  const title = lines.map((l) => l.trim()).find(Boolean) || query;
+  return { source: 'ytdlp', input: `ytsearch1:${query}`, title };
 }
 
 /**
@@ -368,21 +371,50 @@ class MusicPlayer {
   private readonly demux = new OggOpusDemuxer((packet) => this.queue.push(packet));
   private queue: Uint8Array[] = [];
   private ffmpeg: ReturnType<typeof spawn> | null = null;
+  private ytdlp: ReturnType<typeof spawn> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private finished = false;
 
   constructor(
-    private readonly input: string,
+    private readonly track: ResolvedTrack,
     private readonly conn: VoxConnection,
     private readonly onDone: () => void,
   ) {}
 
   start(): void {
+    // Fluxo: yt-dlp (com cookies/JS runtime) -> ffmpeg (transcode) -> nos.
+    // Assim o ffmpeg nao fala com o googlevideo direto (sempre da 403 sem
+    // os headers/cookies certos), e nao precisamos armazenar URL caduca.
+    const usingYtdlp = this.track.source === 'ytdlp';
+    let ffmpegInput = this.track.input;
+
+    if (usingYtdlp) {
+      const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
+      const ytdlp = spawn(ytdlpBin, [
+        '--no-playlist',
+        '-f', 'bestaudio',
+        '-o', '-',
+        '--no-warnings',
+        '--quiet',
+        ...extra,
+        this.track.input,
+      ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      this.ytdlp = ytdlp;
+      ytdlp.stderr.on('data', (chunk: Buffer) => {
+        const text = chunk.toString().trim();
+        if (text) console.error(`[yt-dlp] ${text}`);
+      });
+      ytdlp.on('error', (err) => {
+        announce(`nao consegui iniciar yt-dlp: ${err.message}`);
+        this.stop(false);
+      });
+      ffmpegInput = 'pipe:0';
+    }
+
     const ffmpeg = spawn(ffmpegBin, [
       '-hide_banner',
       '-loglevel', 'warning',
-      '-re',
-      '-i', this.input,
+      '-i', ffmpegInput,
       '-vn',
       '-ac', '1',
       '-ar', '48000',
@@ -392,11 +424,17 @@ class MusicPlayer {
       '-b:a', bitrate,
       '-f', 'opus',
       'pipe:1',
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ], { stdio: [usingYtdlp ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     this.ffmpeg = ffmpeg;
 
-    ffmpeg.stdout.on('data', (chunk: Buffer) => this.demux.push(chunk));
-    ffmpeg.stderr.on('data', (chunk: Buffer) => {
+    if (usingYtdlp && this.ytdlp?.stdout && ffmpeg.stdin) {
+      this.ytdlp.stdout.pipe(ffmpeg.stdin);
+      // Se ffmpeg fechar antes de yt-dlp terminar, EPIPE quebra o process.
+      ffmpeg.stdin.on('error', () => {});
+    }
+
+    ffmpeg.stdout?.on('data', (chunk: Buffer) => this.demux.push(chunk));
+    ffmpeg.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString().trim();
       if (text) console.error(`[ffmpeg] ${text}`);
     });
@@ -415,6 +453,8 @@ class MusicPlayer {
     this.finished = true;
     if (this.ffmpeg) this.ffmpeg.kill('SIGTERM');
     this.ffmpeg = null;
+    if (this.ytdlp) this.ytdlp.kill('SIGTERM');
+    this.ytdlp = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.queue.length = 0;
