@@ -2542,6 +2542,12 @@ label.field {
   padding-bottom: 8px;
 }
 
+.settings-note {
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .settings-row {
   display: grid;
   gap: 6px;

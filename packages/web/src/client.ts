@@ -221,7 +221,10 @@ export class VoxClient {
     this.preamp = prefs.preamp;
     this.outputDeviceId = prefs.outputDeviceId ?? '';
     this.microphone.reconfigure(this.mic);
-    if (this.mixer) this.mixer.volume = this.outputVolume;
+    if (this.mixer) {
+      this.mixer.volume = this.outputVolume;
+      this.mixer.preamp = this.preamp;
+    }
     if (this.sounds) this.sounds.enabled = this.soundsEnabled;
   }
 
@@ -276,6 +279,7 @@ export class VoxClient {
     if (!this.mixer) {
       this.mixer = new VoiceMixer(this.ctx);
       this.mixer.volume = this.outputVolume;
+      this.mixer.preamp = this.preamp;
     }
     this.sounds ??= new Sounds(this.ctx);
     this.sounds.enabled = this.soundsEnabled;
@@ -298,6 +302,14 @@ export class VoxClient {
     if (restart && this.link === 'online') await this.startMic();
     this.saveAudioPrefs();
     this.onChange();
+  }
+
+  /** Calibra o limiar usando o ruido ambiente do microfone atual. */
+  async calibrateMicThreshold(): Promise<number | null> {
+    const threshold = await this.microphone.calibrateThreshold();
+    if (threshold === null) return null;
+    await this.applyMicSettings({ threshold });
+    return threshold;
   }
 
   setOutputVolume(v: number): void {
@@ -332,6 +344,7 @@ export class VoxClient {
 
   setPreamp(v: number): void {
     this.preamp = v;
+    if (this.mixer) this.mixer.preamp = v;
     this.saveAudioPrefs();
     this.onChange();
   }

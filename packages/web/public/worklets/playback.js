@@ -4,6 +4,7 @@
  * demais e podada - preferimos cortar audio velho a acumular atraso.
  */
 
+const START_QUEUED = 2880; // 60ms: absorve a variacao normal de chegada
 const MAX_QUEUED = 48000; // 1 segundo a 48kHz
 
 class PlaybackProcessor extends AudioWorkletProcessor {
@@ -12,6 +13,7 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     this.queue = [];
     this.offset = 0;
     this.queued = 0;
+    this.started = false;
 
     this.port.onmessage = (event) => {
       const chunk = event.data;
@@ -19,6 +21,7 @@ class PlaybackProcessor extends AudioWorkletProcessor {
         this.queue.length = 0;
         this.queued = 0;
         this.offset = 0;
+        this.started = false;
         return;
       }
       this.queue.push(chunk);
@@ -35,6 +38,14 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     const out = outputs[0][0];
     if (!out) return true;
 
+    // O decoder pode entregar o primeiro frame antes de os seguintes
+    // chegarem. Esperar 60ms aqui evita transformar jitter de rede em cortes.
+    if (!this.started && this.queued < START_QUEUED) {
+      out.fill(0);
+      return true;
+    }
+    this.started = true;
+
     let written = 0;
     while (written < out.length && this.queue.length > 0) {
       const head = this.queue[0];
@@ -47,6 +58,12 @@ class PlaybackProcessor extends AudioWorkletProcessor {
         this.queue.shift();
         this.offset = 0;
       }
+    }
+    if (written < out.length) {
+      out.fill(0, written);
+      // Reinicia o pre-buffer na proxima chegada, em vez de continuar
+      // consumindo silencio e acumular atraso invisivel.
+      this.started = false;
     }
     return true;
   }

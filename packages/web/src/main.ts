@@ -13,7 +13,7 @@
 import { initNotifications, notify, requestNotificationPermission } from './notifications.js';
 import { VoxClient, type ChatLine } from './client.js';
 import type { MicSettings } from './audio/microphone.js';
-import { isMicTestRunning, startMicTest, stopMicTest } from './audio/mic-test.js';
+import { isMicTestRunning, micTestLevel, startMicTest, stopMicTest } from './audio/mic-test.js';
 import { renderBrowserView } from './browser.js';
 import { exportIdentity, importIdentity, loadIdentity, resetIdentity } from './identity.js';
 import {
@@ -2140,7 +2140,7 @@ function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {
 function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
   // Title
   body.append(text('h3', '', 'CAPTURAR'));
-  body.append(text('span', '', 'Configure o sistema de captura de áudio'));
+  body.append(text('span', 'settings-note', 'Voz mono em 48 kHz, com processamento otimizado para fala'));
 
   // Input device
   const devRow = $('div', 'settings-row');
@@ -2258,6 +2258,7 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
     marker.style.left = `${Math.min(100, client.mic.threshold * 4 * 100)}%`;
     bar.append(levelFill, marker);
     thrLabel.append(bar);
+    thrLabel.append(text('span', 'settings-note', 'O medidor mostra o nível atual. O limiar de parada é suavizado para não cortar sílabas.'));
 
     let thrAF: number | null = null;
     function updateThresholdViz(): void {
@@ -2279,13 +2280,31 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
 
     thrRow.append(thrLabel);
     body.append(thrRow);
+
+    const calibrationRow = $('div', 'settings-test');
+    const calibrationBtn = $('button', 'ghost');
+    calibrationBtn.textContent = 'calibrar ruído ambiente';
+    const calibrationNote = text('span', 'settings-note', 'fique em silêncio por 1,5 s');
+    calibrationBtn.addEventListener('click', async () => {
+      calibrationBtn.disabled = true;
+      calibrationBtn.textContent = 'medindo...';
+      const threshold = await client.calibrateMicThreshold();
+      if (threshold === null) {
+        calibrationBtn.disabled = false;
+        calibrationBtn.textContent = 'microfone indisponível';
+        return;
+      }
+      rebuild();
+    });
+    calibrationRow.append(calibrationBtn, calibrationNote);
+    body.append(calibrationRow);
   }
 
   // Test mic with loopback
   body.append($('hr'));
   const testRow = $('div', 'settings-test');
   const testBtn = $('button', 'ghost');
-  testBtn.textContent = isMicTestRunning() ? '■ parar teste' : '▶ teste de microfone';
+  testBtn.textContent = isMicTestRunning() ? '■ parar teste' : '▶ ouvir teste de microfone';
   const testDot = $('div', 'dot');
   let testIv: ReturnType<typeof setInterval> | null = null;
 
@@ -2293,11 +2312,11 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
     if (isMicTestRunning()) {
       stopMicTest();
       if (testIv) { clearInterval(testIv); testIv = null; }
-      testBtn.textContent = '▶ teste de microfone';
+      testBtn.textContent = '▶ ouvir teste de microfone';
       testDot.classList.remove('live');
       return;
     }
-    const ok = await startMicTest();
+    const ok = await startMicTest(client.mic.deviceId);
     if (!ok) {
       testBtn.textContent = '▶ erro de microfone';
       return;
@@ -2305,22 +2324,22 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
     testBtn.textContent = '■ parar teste';
     testIv = setInterval(() => {
       if (!isMicTestRunning()) { clearInterval(testIv!); testIv = null; return; }
-      testDot.classList.toggle('live', client.micLevel > 0.01);
+      testDot.classList.toggle('live', micTestLevel() > 0.01);
     }, 60);
   });
   testRow.append(testBtn, testDot);
   body.append(testRow);
 
-  // Bitrate
+  // Voice quality
   body.append($('hr'));
   const brRow = $('div', 'settings-row');
   const brLabel = $('label');
-  brLabel.append(text('span', '', 'Bitrate (kbps)'));
+  brLabel.append(text('span', '', 'Qualidade de voz (bitrate)'));
   const brSelect = $('select') as HTMLSelectElement;
   for (const br of [16, 24, 32, 48, 64]) {
     const opt = $('option') as HTMLOptionElement;
     opt.value = String(br * 1000);
-    opt.textContent = `${br} kbps`;
+    opt.textContent = `${br} kbps${br === 48 ? ' — recomendado' : br === 64 ? ' — máxima clareza' : ''}`;
     if (br * 1000 === client.mic.bitrate) opt.selected = true;
     brSelect.append(opt);
   }

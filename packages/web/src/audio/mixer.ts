@@ -16,9 +16,9 @@ import type { VoicePacket } from '@vox/protocol';
 
 const FRAME_US = 20_000;
 /** Quantos pacotes esperamos por um que ficou para tras antes de pular. */
-const REORDER_LIMIT = 3;
+const REORDER_LIMIT = 4;
 /** Sem pacote por esse tempo, a pessoa parou de falar. */
-const TALK_TIMEOUT_MS = 220;
+const TALK_TIMEOUT_MS = 400;
 
 interface RemoteVoice {
   decoder: AudioDecoder;
@@ -43,6 +43,8 @@ export class VoiceMixer {
    */
   private readonly prefs = new Map<number, { volume: number; muted: boolean }>();
   readonly master: GainNode;
+  private outputVolume = 1;
+  private outputPreamp = 1;
 
   constructor(private readonly ctx: AudioContext) {
     this.master = ctx.createGain();
@@ -54,7 +56,18 @@ export class VoiceMixer {
   }
 
   set volume(v: number) {
-    this.master.gain.value = v;
+    this.outputVolume = v;
+    this.applyMasterGain();
+  }
+
+  /** Preamp real da reproducao, limitado para evitar ganho descontrolado. */
+  set preamp(v: number) {
+    this.outputPreamp = Math.min(2, Math.max(0.5, v));
+    this.applyMasterGain();
+  }
+
+  private applyMasterGain(): void {
+    this.master.gain.value = this.outputVolume * this.outputPreamp;
   }
 
   push(packet: VoicePacket): void {
