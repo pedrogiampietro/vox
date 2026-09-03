@@ -209,26 +209,31 @@ function fromRow(row: Record<string, unknown>): StoredServer {
  * Antes o enum Group tinha 4 valores (0..3). Agora tem 8, com Moderator=5,
  * Admin=6, Owner=7. Servidores existentes tem no db grupos velhos —
  * remapeamos ao carregar para nao rebaixar todo mundo silenciosamente.
+ *
+ * Precisa ser IDEMPOTENTE: se qualquer valor ja esta no range novo (>=4),
+ * o dado ja foi migrado; nao mexemos mais. Caso contrario, valor <= 3 e
+ * tratado como antigo enum e mapeado.
  */
 function migrateGroupValues(raw: Record<string, unknown>): Record<string, Group> {
+  const values = Object.values(raw).filter((v): v is number => typeof v === 'number');
+  const alreadyNew = values.some((v) => v >= 4);
   const out: Record<string, Group> = {};
-  const mapped = (v: number): Group => {
-    if (v >= 8) return Group.Owner; // guard-rail
-    if (v >= 4) return v as Group;   // ja e novo enum
-    if (v === 3) return Group.Owner;
-    if (v === 2) return Group.Admin;
-    if (v === 1) return Group.Moderator;
-    return Group.Guest;
-  };
   for (const [fp, val] of Object.entries(raw)) {
-    if (typeof val === 'number') out[fp] = mapped(val);
+    if (typeof val !== 'number') continue;
+    out[fp] = alreadyNew ? (val as Group) : mapLegacyGroupId(val);
   }
   return out;
 }
 
 function migrateGroupDefIds(raw: GroupDef[] | undefined): GroupDef[] {
   if (!raw?.length) return [];
-  return raw.map((g) => ({ ...g, id: g.id <= 3 ? mapLegacyGroupId(g.id) : g.id }));
+  const alreadyNew = raw.some((g) => g.id >= 4);
+  const remapped = alreadyNew ? raw : raw.map((g) => ({ ...g, id: mapLegacyGroupId(g.id) }));
+  // Dedupe defensivo: se um migrator anterior duplicou (ex: 0,5,6,7,4,5,6,7),
+  // mantem so uma entrada por id — a ultima vence.
+  const byId = new Map<Group, GroupDef>();
+  for (const g of remapped) byId.set(g.id as Group, g);
+  return [...byId.values()];
 }
 
 function mapLegacyGroupId(v: number): Group {
