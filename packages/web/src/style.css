@@ -1773,6 +1773,24 @@ label.field {
   gap: 8px;
 }
 
+.client-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.icon-btn {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* ---------------------------------------------------------------- console -- */
 
 .console {

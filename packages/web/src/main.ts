@@ -1011,7 +1011,8 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     panel.append(descRow);
   }
 
-  // volume + mute controls (only for other users)
+  // volume + mute controls (only for other users); botoes do bot musica caem
+  // na mesma barra pra ficar tudo em uma linha compacta.
   if (!isSelf) {
     const controls = $('div', 'client-controls');
 
@@ -1035,37 +1036,32 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     volRow.append(volLabel, volSlider, volVal);
     controls.append(volRow);
 
-    const muteBtn = $('button', 'ghost');
-    muteBtn.textContent = client.isUserMuted(c) ? '🔇 som desativado' : '🔊 som ativado';
-    muteBtn.style.cssText = 'font-size:11px;padding:3px 8px;';
+    // Botoes de acao ficam numa linha so, horizontais e compactos.
+    const actions = $('div', 'client-actions-row');
+
+    const muteBtn = $('button', 'ghost icon-btn');
+    const muted = client.isUserMuted(c);
+    muteBtn.textContent = muted ? '🔇' : '🔊';
+    muteBtn.title = muted ? 'som desativado — clique para reativar' : 'som ativado — clique para mutar';
     muteBtn.addEventListener('click', () => { client.toggleUserMute(c); render(); });
-    controls.append(muteBtn);
+    actions.append(muteBtn);
 
+    if (c.nickname === 'music') {
+      const skipBtn = $('button', 'ghost icon-btn');
+      skipBtn.textContent = '⏭';
+      skipBtn.title = 'pular faixa atual';
+      skipBtn.addEventListener('click', () => client.say('skip', ChatScope.Private, c.id));
+
+      const stopBtn = $('button', 'ghost icon-btn danger');
+      stopBtn.textContent = '⏹';
+      stopBtn.title = 'parar tudo e limpar fila';
+      stopBtn.addEventListener('click', () => client.say('stop', ChatScope.Private, c.id));
+
+      actions.append(skipBtn, stopBtn);
+    }
+
+    controls.append(actions);
     panel.append(controls);
-  }
-
-  // Bot de musica: qualquer um pode pular ou parar. O bot ja aceita esses
-  // comandos por DM; os botoes so mandam a mensagem no seu nome.
-  if (c.nickname === 'music') {
-    const musicBar = $('div', 'client-controls');
-    musicBar.style.gap = '6px';
-
-    const skipBtn = $('button', 'ghost');
-    skipBtn.textContent = '⏭ pular';
-    skipBtn.style.cssText = 'font-size:12px;padding:4px 10px;';
-    skipBtn.addEventListener('click', () => {
-      client.say('skip', ChatScope.Private, c.id);
-    });
-
-    const stopBtn = $('button', 'ghost danger');
-    stopBtn.textContent = '⏹ parar tudo';
-    stopBtn.style.cssText = 'font-size:12px;padding:4px 10px;';
-    stopBtn.addEventListener('click', () => {
-      client.say('stop', ChatScope.Private, c.id);
-    });
-
-    musicBar.append(skipBtn, stopBtn);
-    panel.append(musicBar);
   }
 
   return panel;
