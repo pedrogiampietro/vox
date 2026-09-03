@@ -653,6 +653,10 @@ export class VoxClient {
           this.syncMicMute();
         }
         if (isNew && this.link === 'online') this.play('join');
+        // Novo cliente no meu canal? Se estou compartilhando tela, oferecer.
+        if (isNew && this.self && m.client.channelId === this.self.channelId) {
+          this.screen.onPeerReachable(m.client.id);
+        }
         break;
       }
 
@@ -666,7 +670,14 @@ export class VoxClient {
       case Op.ClientMove: {
         const c = this.clients.get(m.clientId);
         if (c) c.channelId = m.channelId;
-        if (m.clientId === this.selfId) this.syncMicMute();
+        if (m.clientId === this.selfId) {
+          this.syncMicMute();
+          // Mudei de canal — recalcula oferta de tela para o novo grupo.
+          this.screen.onSelfMoved();
+        } else if (this.self && m.channelId === this.self.channelId) {
+          // Alguem se moveu para o meu canal — oferece tela se estou compartilhando.
+          this.screen.onPeerReachable(m.clientId);
+        }
         break;
       }
 

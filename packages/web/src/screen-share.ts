@@ -66,11 +66,48 @@ export class ScreenShare {
       track.addEventListener('ended', () => this.stop(), { once: true });
     }
 
+    this.reofferAll();
+    this.onChange();
+  }
+
+  /** Envia oferta pra todos os membros do meu canal atual. Idempotente. */
+  private reofferAll(): void {
+    if (!this.localStream) return;
     const channelId = this.provider.selfChannelId();
     for (const member of this.provider.membersOf(channelId)) {
-      if (member.id !== this.provider.selfId()) void this.offerTo(member.id);
+      if (member.id !== this.provider.selfId() && !this.peers.has(member.id)) {
+        void this.offerTo(member.id);
+      }
     }
-    this.onChange();
+  }
+
+  /**
+   * Chamado quando alguem se move para o meu canal (ou entra novo no canal).
+   * Se estou compartilhando, mando oferta pra eles verem a tela.
+   */
+  onPeerReachable(clientId: number): void {
+    if (!this.localStream) return;
+    if (clientId === this.provider.selfId()) return;
+    if (this.peers.has(clientId)) return;
+    const channelId = this.provider.selfChannelId();
+    const inMyChannel = this.provider.membersOf(channelId).some((m) => m.id === clientId);
+    if (!inMyChannel) return;
+    void this.offerTo(clientId);
+  }
+
+  /** Chamado quando EU mudei de canal. Fecha peers antigos e reoferece novos. */
+  onSelfMoved(): void {
+    if (!this.localStream) return;
+    const channelId = this.provider.selfChannelId();
+    const stillInChannel = new Set(this.provider.membersOf(channelId).map((m) => m.id));
+    for (const [peerId, pc] of this.peers) {
+      if (!stillInChannel.has(peerId)) {
+        pc.close();
+        this.peers.delete(peerId);
+        this.signal(peerId, 'stop', '');
+      }
+    }
+    this.reofferAll();
   }
 
   stop(): void {
