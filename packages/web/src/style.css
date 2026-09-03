@@ -1734,19 +1734,40 @@ label.field {
               right var(--dur) var(--ease), bottom var(--dur) var(--ease);
 }
 
-/* Modo expandido: ocupa a maior parte da tela, tipo player. Um click no botao
- * expandir alterna. Ao fechar a expansao, volta pro dock pequeno. */
+/* Modo expandido: encaixa na area do chat (grid-area 'talk') no lugar da
+ * conversa. Enquanto expandido, .talk fica escondido — o :has() na .shell
+ * cuida disso. Voltando pra reduzido, o layout se restaura sozinho. */
 .screen-dock.expanded {
-  right: 24px;
-  bottom: 24px;
-  width: min(1200px, calc(100vw - 48px));
-  max-height: calc(100vh - 48px);
+  position: static;
+  grid-area: talk;
+  width: auto;
+  max-height: none;
+  height: 100%;
+  right: auto;
+  bottom: auto;
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid var(--line);
+  box-shadow: none;
+  padding: 12px 16px;
+  background: var(--ink-900);
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
+}
+
+.shell:has(.screen-dock.expanded) .talk {
+  display: none;
 }
 
 .screen-dock.expanded .screen-tile {
   aspect-ratio: unset;
-  height: calc(100vh - 130px);
-  max-height: 900px;
+  height: 100%;
+  min-height: 0;
+}
+
+.screen-dock.expanded video {
+  height: 100%;
+  max-height: none;
 }
 
 .screen-head {
