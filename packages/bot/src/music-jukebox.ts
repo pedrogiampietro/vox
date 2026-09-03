@@ -50,16 +50,13 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
     return;
   }
   if (msg.t !== Op.ChatDeliver) return;
-  console.log(
-    `[jukebox] chat: from=${msg.senderId}(${msg.senderName}) scope=${msg.scope} target=${msg.targetId} self.ch=${controller.self?.channelId} text="${msg.text}"`,
-  );
-  if (msg.scope !== ChatScope.Channel) { console.log('[jukebox] filtro: scope nao Channel'); return; }
-  if (msg.senderId === 0) { console.log('[jukebox] filtro: senderId=0'); return; }
-  if (msg.senderId === controller.selfId) { console.log('[jukebox] filtro: self'); return; }
-  if (msg.targetId !== controller.self?.channelId) {
-    console.log(`[jukebox] filtro: canal diferente (msg.targetId=${msg.targetId} self.ch=${controller.self?.channelId})`);
-    return;
-  }
+  if (msg.scope !== ChatScope.Channel) return;
+  if (msg.senderId === 0) return;
+  if (msg.senderId === controller.selfId) return;
+  // Server ja filtrou por canal (so entrega para membros do canal do remetente).
+  // Confirma pela info local: o sender precisa estar no mesmo canal que o bot.
+  const senderInfo = controller.clients.get(msg.senderId);
+  if (!senderInfo || senderInfo.channelId !== controller.self?.channelId) return;
 
   const body = msg.text.trim();
   if (!body) return;
