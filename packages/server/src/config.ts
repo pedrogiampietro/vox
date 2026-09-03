@@ -77,6 +77,9 @@ export const config = {
   /** Onde os canais permanentes sao gravados. */
   dataDir: str('VOX_DATA_DIR', 'data'),
 
+  /** Diretorio no disco cujos arquivos sao servidos em /icons/<nome>. */
+  iconsDir: str('VOX_ICONS_DIR', '/root/icons'),
+
   /**
    * TLS direto no Node. Deixe vazio quando houver um proxy reverso na frente
    * (Caddy, nginx) - e o caminho recomendado, porque renova certificado sozinho.

@@ -26,9 +26,8 @@ import {
   NO_CHANNEL,
   ChatScope,
   RESPAWN_CATALOG,
-  TIBIA_TEMPLATE_CHANNELS,
+  TIBIA_TEMPLATE,
   canonicalRespawnName,
-  tibiaLevelChannels,
 } from '@vox/protocol';
 import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
 import {
@@ -2335,33 +2334,60 @@ function buildNotificationsSection(body: HTMLElement): void {
   body.append(testRow);
 }
 
-function clampNum(v: number, lo: number, hi: number): number {
-  if (!Number.isFinite(v)) return lo;
-  return Math.min(Math.max(Math.round(v), lo), hi);
+/** Procura canal por nome exato (case-insensitive) e parent opcional. */
+function findChannelByName(name: string, parentId: number | null = null): ChannelInfo | undefined {
+  const lower = name.toLowerCase();
+  return [...client.channels.values()].find((c) => {
+    if (c.name.toLowerCase() !== lower) return false;
+    if (parentId === null) return true;
+    return c.parentId === parentId;
+  });
 }
 
 /**
- * Aplica o template Tibia: renomeia os 8 grupos com nomes/cores padrao e
- * cria canais base + faixas de level, pulando o que ja existe (idempotente).
+ * Cria um canal e aguarda o ChannelAdd do server chegar para conhecer o id.
+ * Se ja existe (mesmo nome + mesmo pai), reaproveita.
  */
-function applyTibiaTemplate(step: number, max: number): void {
+async function ensureChannel(name: string, parentId = NO_CHANNEL): Promise<number> {
+  const already = findChannelByName(name, parentId);
+  if (already) return already.id;
+  client.createChannel(name, '', parentId);
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const ch = findChannelByName(name, parentId);
+    if (ch) return ch.id;
+    await new Promise<void>((r) => setTimeout(r, 40));
+  }
+  throw new Error(`timeout criando canal "${name}"`);
+}
+
+/**
+ * Aplica o template Tibia: renomeia os 8 grupos e monta a arvore de canais
+ * (categorias como canais-pai com os canais reais dentro). Idempotente:
+ * canais ja existentes com o mesmo pai sao reaproveitados.
+ */
+async function applyTibiaTemplate(): Promise<void> {
   // 1) Grupos: usa DEFAULT_GROUP_DEFS como fonte.
   for (const def of DEFAULT_GROUP_DEFS) {
     client.setGroupDef(def.id, def.name, def.icon, def.color);
   }
 
-  // 2) Canais existentes (case-insensitive), pra nao duplicar.
-  const existing = new Set(
-    [...client.channels.values()].map((c) => c.name.toLowerCase()),
-  );
-
-  const wanted: { name: string; topic: string }[] = [
-    ...TIBIA_TEMPLATE_CHANNELS,
-    ...tibiaLevelChannels(step, 50, max),
-  ];
-  for (const w of wanted) {
-    if (existing.has(w.name.toLowerCase())) continue;
-    client.createChannel(w.name);
+  // 2) Categorias como canais-pai; canais reais como filhos.
+  for (const cat of TIBIA_TEMPLATE) {
+    let parentId: number;
+    try {
+      parentId = await ensureChannel(cat.name, NO_CHANNEL);
+    } catch (err) {
+      console.error(err);
+      continue;
+    }
+    for (const child of cat.children) {
+      try {
+        await ensureChannel(child.name, parentId);
+      } catch (err) {
+        console.error(err);
+      }
+    }
   }
 }
 
@@ -2369,45 +2395,30 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
   body.append(text('h3', '', 'GRUPOS DO SERVIDOR'));
   body.append(text('span', '', 'Configure nome, cor e ícone dos grupos. As alterações só valem depois de salvar.'));
 
-  // Bloco de template: cria/atualiza grupos e canais base pra Tibia em um clique.
+  // Bloco de template: cria/atualiza grupos + arvore de canais Tibia em um clique.
   const tplBox = $('div', 'tibia-template');
   tplBox.append(text('h4', '', 'TEMPLATE TIBIA'));
-  tplBox.append(text('span', 'settings-hint', 'aplica nomes/cores nos 8 grupos e cria os canais padrão (Lobby, Bosses, Team Hunt, Cavebot, Trades, Off-topic, Suporte + faixas de level).'));
+  tplBox.append(text('span', 'settings-hint', 'renomeia os 8 grupos e cria as categorias CHANELS / HUNT’S / PRIVATE com os canais padrão dentro. Roda idempotente: se já existir mesmo nome + mesmo pai, reaproveita.'));
 
   const tplRow = $('div', 'tibia-template-row');
-  const levelStepInput = $('input') as HTMLInputElement;
-  levelStepInput.type = 'number';
-  levelStepInput.min = '25';
-  levelStepInput.max = '500';
-  levelStepInput.step = '25';
-  levelStepInput.value = '100';
-  levelStepInput.style.cssText = 'width:70px;';
-
-  const levelMaxInput = $('input') as HTMLInputElement;
-  levelMaxInput.type = 'number';
-  levelMaxInput.min = '500';
-  levelMaxInput.max = '5000';
-  levelMaxInput.step = '100';
-  levelMaxInput.value = '2000';
-  levelMaxInput.style.cssText = 'width:80px;';
-
-  const applyBtn = $('button', 'primary');
+  const applyBtn = $('button', 'primary') as HTMLButtonElement;
   applyBtn.textContent = 'aplicar template Tibia';
-  applyBtn.addEventListener('click', () => {
-    const step = clampNum(Number(levelStepInput.value), 25, 500) || 100;
-    const max = clampNum(Number(levelMaxInput.value), 500, 5000) || 2000;
-    if (!confirm(`isso vai renomear os 8 grupos e criar os canais base + faixas de level (${step}-${max}). continuar?`)) return;
-    applyTibiaTemplate(step, max);
-    setTimeout(rebuild, 400);
+  applyBtn.addEventListener('click', async () => {
+    if (!confirm('isso vai renomear os 8 grupos e criar as categorias CHANELS, HUNT’S e PRIVATE com os canais padrão dentro. continuar?')) return;
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'aplicando...';
+    try {
+      await applyTibiaTemplate();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      applyBtn.disabled = false;
+      applyBtn.textContent = 'aplicar template Tibia';
+      setTimeout(rebuild, 200);
+    }
   });
 
-  tplRow.append(
-    text('span', '', 'passo:'),
-    levelStepInput,
-    text('span', '', 'max:'),
-    levelMaxInput,
-    applyBtn,
-  );
+  tplRow.append(applyBtn);
   tplBox.append(tplRow);
   body.append(tplBox);
   body.append($('hr'));
@@ -2520,9 +2531,21 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
       rebuild();
     });
 
+    const urlBtn = $('button', 'ghost');
+    urlBtn.textContent = 'URL';
+    urlBtn.title = 'colar URL de imagem (ex: /icons/leader.png)';
+    urlBtn.style.cssText = 'padding:2px 8px;font-size:11px;';
+    urlBtn.addEventListener('click', () => {
+      const url = prompt('URL da imagem (ex: /icons/leader.png):', edit.icon.startsWith('http') || edit.icon.startsWith('/') ? edit.icon : '');
+      if (url === null) return;
+      edit.icon = url.trim();
+      markDirty();
+      rebuild();
+    });
+
     const iconBtns = $('div', '');
     iconBtns.style.cssText = 'display:flex;gap:4px;';
-    iconBtns.append(iconBtn);
+    iconBtns.append(iconBtn, urlBtn);
     if (edit.icon) iconBtns.append(removeIconBtn);
     iconArea.append(iconBtns);
     card.append(iconArea);

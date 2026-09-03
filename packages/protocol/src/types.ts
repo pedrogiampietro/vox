@@ -282,29 +282,78 @@ export const DEFAULT_GROUP_DEFS: GroupDef[] = [
   { id: Group.Owner, name: 'Leader', icon: '', color: '#e8a33d' },
 ];
 
-/** Template Tibia: canais base pra guild/team, criados idempotentes. */
-export const TIBIA_TEMPLATE_CHANNELS: readonly { name: string; topic: string }[] = [
-  { name: 'Lobby', topic: 'Canal de entrada' },
-  { name: 'Bosses', topic: 'Boss hunts' },
-  { name: 'Team Hunt', topic: 'Hunt em grupo' },
-  { name: 'Cavebot', topic: 'Bots respawn' },
-  { name: 'Trades', topic: 'Comercio e mercado' },
-  { name: 'Off-topic', topic: 'Papo geral' },
-  { name: 'Suporte', topic: 'Suporte e duvidas' },
-];
-
 /**
- * Faixas de nivel Tibia. Geradas em intervalos configuraveis; padrao 100 em 100
- * do 50 ao 2000, e um canal 2000+ pra levels no topo.
+ * Template Tibia: categorias (canais-pai) com canais reais dentro,
+ * espelhando o layout tipico de guild/war no TS3.
  */
-export function tibiaLevelChannels(step = 100, min = 50, max = 2000): { name: string; topic: string }[] {
-  const out: { name: string; topic: string }[] = [];
-  for (let lo = min; lo < max; lo += step) {
-    out.push({ name: `${lo}-${lo + step}`, topic: `Level ${lo} a ${lo + step}` });
-  }
-  out.push({ name: `${max}+`, topic: `Level ${max}+` });
-  return out;
+export interface TemplateCategory {
+  name: string;
+  topic: string;
+  children: { name: string; topic: string }[];
 }
+
+export const TIBIA_TEMPLATE: readonly TemplateCategory[] = [
+  {
+    name: 'CHANELS',
+    topic: 'Canais principais / war',
+    children: [
+      { name: 'TAPETA DARASHIA FAST', topic: '' },
+      { name: 'Channel Vermelho', topic: '' },
+      { name: 'Channel 01 WAR CHANNEL', topic: 'War channel' },
+      { name: 'Channel 02', topic: '' },
+      { name: 'Channel 03', topic: '' },
+      { name: 'Channel 04', topic: '' },
+      { name: 'Channel 05', topic: '' },
+      { name: 'Channel 06', topic: '' },
+      { name: 'Channel 07', topic: '' },
+      { name: 'Channel 08', topic: '' },
+      { name: 'Channel 09', topic: '' },
+      { name: 'Channel 10', topic: '' },
+      { name: 'Channel 11', topic: '' },
+      { name: 'Channel 12', topic: '' },
+      { name: 'Channel 13', topic: '' },
+      { name: 'Channel 14', topic: '' },
+      { name: 'Channel 15', topic: '' },
+      { name: 'Channel 16', topic: '' },
+      { name: 'Channel 17', topic: '' },
+      { name: 'Channel 18', topic: '' },
+    ],
+  },
+  {
+    name: "HUNT'S",
+    topic: 'Respawns e locais de caca',
+    children: [
+      { name: 'Rotten Wasteland (North)', topic: '' },
+      { name: 'Rotten Wasteland (North-West)', topic: '' },
+      { name: 'Rotten Wasteland (South-West)', topic: '' },
+      { name: 'Livraria - Energy', topic: '' },
+      { name: 'Livraria - Fire', topic: '' },
+      { name: 'Livraria - Ice', topic: '' },
+      { name: 'Mirrored Nightmare (Thais invert)', topic: '' },
+      { name: 'Furious Crater (Cloak)', topic: '' },
+      { name: 'Claustrophobic Inferno (Brachio)', topic: '' },
+      { name: 'Piranha (North)', topic: '' },
+      { name: 'Piranha (South)', topic: '' },
+      { name: 'Gnomprona (Carrinho 1)', topic: '' },
+      { name: 'Gnomprona (Carrinho 2)', topic: '' },
+      { name: 'Gnomprona (Carrinho 3)', topic: '' },
+      { name: 'Putrefactory', topic: '' },
+      { name: 'Jaded Roots', topic: '' },
+      { name: 'Gloom Pillars', topic: '' },
+      { name: 'Darklight Core', topic: '' },
+    ],
+  },
+  {
+    name: 'PRIVATE',
+    topic: 'Canais privados',
+    children: [
+      { name: 'Private 02', topic: '' },
+      { name: 'Private 03', topic: '' },
+      { name: 'Private 04', topic: '' },
+      { name: 'Private 05', topic: '' },
+    ],
+  },
+];
 
 /** Raiz da arvore de canais / "nenhum canal". */
 export const NO_CHANNEL = 0;

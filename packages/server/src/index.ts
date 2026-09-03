@@ -98,6 +98,12 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
 
   if (admin.handle(req, res, path, clientIp(req))) return;
 
+  // Icones customizaveis servidos de VOX_ICONS_DIR (default /root/icons).
+  // Use nas URLs de icones de grupo/canal: /icons/leader.png
+  if (path.startsWith('/icons/')) {
+    return serveStatic(config.iconsDir, path.slice('/icons'.length), res);
+  }
+
   if (path === '/admin' || path.startsWith('/admin/')) {
     if (!hasPanel) {
       res.writeHead(404).end('painel nao buildado (npm run build:panel)');
