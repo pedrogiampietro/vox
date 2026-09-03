@@ -34,6 +34,13 @@ interface RemoteVoice {
   muted: boolean;
 }
 
+export interface VoicePlaybackHealth {
+  receivedPackets: number;
+  latePackets: number;
+  reorderedPackets: number;
+  skippedPackets: number;
+}
+
 export class VoiceMixer {
   private readonly voices = new Map<number, RemoteVoice>();
   /**
@@ -43,6 +50,13 @@ export class VoiceMixer {
    */
   private readonly prefs = new Map<number, { volume: number; muted: boolean }>();
   readonly master: GainNode;
+  readonly health: VoicePlaybackHealth = {
+    receivedPackets: 0,
+    latePackets: 0,
+    reorderedPackets: 0,
+    skippedPackets: 0,
+  };
+  private recordTap: AudioNode | null = null;
   private outputVolume = 1;
   private outputPreamp = 1;
 
@@ -70,15 +84,27 @@ export class VoiceMixer {
     this.master.gain.value = this.outputVolume * this.outputPreamp;
   }
 
+  /** Liga/desliga a saída mixada a um gravador local, sem afetar os speakers. */
+  setRecordTap(tap: AudioNode | null): void {
+    if (this.recordTap === tap) return;
+    if (this.recordTap) this.master.disconnect(this.recordTap);
+    this.recordTap = tap;
+    if (tap) this.master.connect(tap);
+  }
+
   push(packet: VoicePacket): void {
     if (packet.payload.length === 0) return;
+    this.health.receivedPackets++;
     const voice = this.ensure(packet.clientId);
     voice.lastPacketAt = performance.now();
 
     if (voice.nextSeq < 0) voice.nextSeq = packet.seq;
 
     const delta = seqDelta(packet.seq, voice.nextSeq);
-    if (delta < 0) return; // chegou tarde demais, ja tocamos por cima
+    if (delta < 0) {
+      this.health.latePackets++;
+      return; // chegou tarde demais, ja tocamos por cima
+    }
 
     // copyTo do EncodedAudioChunk exige memoria propria; a view veio do socket.
     const payload = packet.payload.slice();
@@ -88,6 +114,7 @@ export class VoiceMixer {
       voice.nextSeq = (voice.nextSeq + 1) & 0xffff;
       this.drain(voice);
     } else {
+      this.health.reorderedPackets++;
       voice.pending.set(packet.seq, payload);
       if (voice.pending.size > REORDER_LIMIT) this.skipGap(voice);
     }
@@ -113,6 +140,7 @@ export class VoiceMixer {
       if (oldest < 0 || seqDelta(seq, oldest) < 0) oldest = seq;
     }
     if (oldest < 0) return;
+    this.health.skippedPackets++;
     voice.nextSeq = oldest;
     this.drain(voice);
   }

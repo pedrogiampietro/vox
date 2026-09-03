@@ -8,7 +8,8 @@ import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_D
 import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
-import { VoiceMixer } from './audio/mixer.js';
+import { VoiceMixer, type VoicePlaybackHealth } from './audio/mixer.js';
+import { VoiceRecorder, type RecordingTelemetry, type VoiceRecordingResult } from './audio/recording.js';
 import { Sounds, type SoundName } from './audio/sounds.js';
 import { loadIdentity, type Identity } from './identity.js';
 import { loadAudioPrefs, saveAudioPrefs, type AudioPrefs } from './audio-prefs.js';
@@ -94,8 +95,12 @@ export class VoxClient {
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
   private mixer: VoiceMixer | null = null;
+  private recorder: VoiceRecorder | null = null;
   private sounds: Sounds | null = null;
   private readonly peers = new Map<string, PeerPrefs>();
+
+  /** Última gravação finalizada, disponível para ouvir/baixar nesta sessão. */
+  lastRecording: VoiceRecordingResult | null = null;
 
   readonly connection: Connection;
   readonly microphone: Microphone;
@@ -233,6 +238,8 @@ export class VoxClient {
   }
 
   private reset(): void {
+    // Não deixa uma gravação atravessar desconexões ou misturar duas sessões.
+    if (this.isVoiceRecording) void this.stopVoiceRecording();
     this.channels.clear();
     this.clients.clear();
     this.claims.clear();
@@ -302,6 +309,79 @@ export class VoxClient {
     if (restart && this.link === 'online') await this.startMic();
     this.saveAudioPrefs();
     this.onChange();
+  }
+
+  get isVoiceRecording(): boolean {
+    return this.recorder?.recording ?? false;
+  }
+
+  get recordingElapsedMs(): number {
+    return this.recorder?.elapsedMs ?? 0;
+  }
+
+  async startVoiceRecording(): Promise<boolean> {
+    try {
+      await this.ensureAudio();
+      if (!this.ctx || !this.mixer || !VoiceRecorder.supported) return false;
+      this.recorder ??= new VoiceRecorder(this.ctx);
+      const telemetry = this.recordingTelemetry();
+      this.mixer.setRecordTap(this.recorder.input);
+      this.microphone.setRecordTap(this.recorder.input);
+      this.recorder.start(telemetry);
+      this.onChange();
+      return true;
+    } catch (err) {
+      this.mixer?.setRecordTap(null);
+      this.microphone.setRecordTap(null);
+      this.warn(`gravação indisponível: ${describeError(err)}`);
+      return false;
+    }
+  }
+
+  async stopVoiceRecording(): Promise<VoiceRecordingResult | null> {
+    const recorder = this.recorder;
+    if (!recorder?.recording) return null;
+
+    this.mixer?.setRecordTap(null);
+    this.microphone.setRecordTap(null);
+    let result: VoiceRecordingResult | null;
+    try {
+      result = await recorder.stop(this.recordingTelemetry());
+    } catch (err) {
+      this.warn(`gravação não finalizada: ${describeError(err)}`);
+      return null;
+    }
+    if (!result) return null;
+
+    if (this.lastRecording) {
+      URL.revokeObjectURL(this.lastRecording.audioUrl);
+      URL.revokeObjectURL(this.lastRecording.reportUrl);
+    }
+    this.lastRecording = result;
+    downloadBlob(result.audioBlob, recordingFilename(result.report.startedAt, 'webm'));
+    downloadBlob(result.reportBlob, recordingFilename(result.report.startedAt, 'json'));
+    this.onChange();
+    return result;
+  }
+
+  private recordingTelemetry(): RecordingTelemetry {
+    const health = this.microphone.health;
+    const playback: VoicePlaybackHealth = this.mixer?.health ?? {
+      receivedPackets: 0,
+      latePackets: 0,
+      reorderedPackets: 0,
+      skippedPackets: 0,
+    };
+    return {
+      transport: this.connection.voiceTransport,
+      rttMs: this.connection.rtt,
+      droppedVoice: this.connection.droppedVoice,
+      mic: {
+        ...this.mic,
+        health: { ...health },
+      },
+      playback: { ...playback },
+    };
   }
 
   /** Calibra o limiar usando o ruido ambiente do microfone atual. */
@@ -869,4 +949,19 @@ function describeError(err: unknown): string {
     return err.name;
   }
   return String(err);
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  if (typeof document === 'undefined') return;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+function recordingFilename(startedAt: string, extension: string): string {
+  const stamp = startedAt.replace(/[:.]/g, '-').replace(/[^0-9TZ-]/g, '');
+  return `vox-channel-${stamp}.${extension}`;
 }

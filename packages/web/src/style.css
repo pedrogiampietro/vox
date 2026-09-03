@@ -2628,6 +2628,43 @@ label.field {
   box-shadow: 0 0 6px rgba(94, 224, 138, 0.5);
 }
 
+.settings-recording {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-recording-time {
+  min-width: 46px;
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.settings-recording-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: var(--ink-900);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+
+.recording-player {
+  width: 100%;
+  height: 36px;
+}
+
+.settings-recording-result a {
+  color: var(--amber);
+  text-decoration: none;
+}
+
+.settings-recording-result a:hover {
+  text-decoration: underline;
+}
+
 .settings-footer {
   grid-column: 1 / -1;
   display: flex;

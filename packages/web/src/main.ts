@@ -1707,6 +1707,13 @@ function formatDuration(ms: number): string {
   return `${d}d ${rh}h`;
 }
 
+function formatRecordingDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 // ----------------------------------------------------------------- console --
 
 // ------------------------------------------------------- drag-to-move helpers --
@@ -1754,6 +1761,12 @@ function renderConsole(): HTMLElement {
   threshold.style.left = `${threshPct}%`;
   meter.append(meterFill, threshold);
   bar.append(meter);
+
+  if (client.isVoiceRecording) {
+    const recording = text('span', 'recording-indicator', '● REC');
+    recording.title = 'gravação de análise em andamento';
+    bar.append(recording);
+  }
 
   // divider
   bar.append($('div', 'divider'));
@@ -2329,6 +2342,54 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
   });
   testRow.append(testBtn, testDot);
   body.append(testRow);
+
+  // Channel recording for objective voice-quality checks
+  body.append($('hr'));
+  body.append(text('h3', '', 'ANÁLISE DE VOZ'));
+  body.append(text('span', 'settings-note', 'Grava localmente o mix do canal e o microfone local para comparar qualidade, cortes e ruído.'));
+  body.append(text('span', 'settings-note', 'Use somente com o consentimento das pessoas gravadas.'));
+
+  const recordingRow = $('div', 'settings-recording');
+  const recordingBtn = $('button', client.isVoiceRecording ? 'danger' : 'ghost');
+  recordingBtn.textContent = client.isVoiceRecording ? '■ parar e salvar' : '● iniciar gravação de análise';
+  const recordingTimer = text('span', 'settings-recording-time', formatRecordingDuration(client.recordingElapsedMs));
+  recordingTimer.dataset.recordingTimer = 'true';
+  recordingBtn.addEventListener('click', async () => {
+    recordingBtn.disabled = true;
+    if (client.isVoiceRecording) {
+      await client.stopVoiceRecording();
+      rebuild();
+      return;
+    }
+    const ok = await client.startVoiceRecording();
+    if (!ok) {
+      recordingBtn.disabled = false;
+      recordingBtn.textContent = 'erro ao iniciar gravação';
+      return;
+    }
+    rebuild();
+  });
+  recordingRow.append(recordingBtn, recordingTimer);
+  body.append(recordingRow);
+
+  if (client.lastRecording && !client.isVoiceRecording) {
+    const result = client.lastRecording;
+    const player = $('audio', 'recording-player') as HTMLAudioElement;
+    player.controls = true;
+    player.preload = 'metadata';
+    player.src = result.audioUrl;
+    const resultRow = $('div', 'settings-recording-result');
+    resultRow.append(
+      text('span', 'settings-note', `${formatRecordingDuration(result.report.durationMs)} · ${result.report.end.transport} · ${result.report.delta.droppedVoice} pacote(s) descartado(s)`),
+      player,
+    );
+    const reportLink = $('a', 'settings-note') as HTMLAnchorElement;
+    reportLink.href = result.reportUrl;
+    reportLink.download = 'vox-channel-report.json';
+    reportLink.textContent = 'baixar relatório JSON';
+    resultRow.append(reportLink);
+    body.append(resultRow);
+  }
 
   // Voice quality
   body.append($('hr'));
@@ -4015,6 +4076,11 @@ void enumerateDevices();
 // ------------------------------------------------- animation loop --
 
 function tick(): void {
+  const recordingTimer = document.querySelector('[data-recording-timer]') as HTMLElement | null;
+  if (recordingTimer && client.isVoiceRecording) {
+    recordingTimer.textContent = formatRecordingDuration(client.recordingElapsedMs);
+  }
+
   // mic meter
   const micMeter = document.querySelector('[data-meter="mic"]') as HTMLElement | null;
   if (micMeter) {

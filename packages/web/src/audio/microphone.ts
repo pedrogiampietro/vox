@@ -65,6 +65,8 @@ export class Microphone {
   private worklet: AudioWorkletNode | null = null;
   private encoder: AudioEncoder | null = null;
   private encoderGeneration = 0;
+  private recordTap: AudioNode | null = null;
+  private recordGate: GainNode | null = null;
 
   private seq = 0;
   private timestamp = 0;
@@ -101,6 +103,31 @@ export class Microphone {
 
   constructor(private readonly send: (frame: Uint8Array) => void) {}
 
+  /** Liga o sinal local a um gravador, sem roteá-lo para os alto-falantes. */
+  setRecordTap(tap: AudioNode | null): void {
+    if (this.recordTap === tap) return;
+    if (this.source && this.recordGate) this.source.disconnect(this.recordGate);
+    this.recordGate?.disconnect();
+    this.recordGate = null;
+    this.recordTap = tap;
+    if (this.source && tap) this.connectRecordTap();
+  }
+
+  private connectRecordTap(): void {
+    if (!this.source || !this.recordTap) return;
+    const gate = this.source.context.createGain();
+    gate.gain.value = 0;
+    this.recordGate = gate;
+    this.source.connect(gate);
+    gate.connect(this.recordTap);
+  }
+
+  private setRecordGate(open: boolean): void {
+    const gate = this.recordGate;
+    if (!gate) return;
+    gate.gain.setTargetAtTime(open ? 1 : 0, gate.context.currentTime, 0.005);
+  }
+
   async start(ctx: AudioContext, settings: MicSettings): Promise<void> {
     await this.stop();
     this.settings = normalizeSettings(settings);
@@ -135,6 +162,7 @@ export class Microphone {
     });
     this.worklet.port.onmessage = (ev: MessageEvent<Float32Array<ArrayBuffer>>) => this.onFrame(ev.data);
     this.source.connect(this.worklet);
+    if (this.recordTap) this.connectRecordTap();
   }
 
   private encoderConfig(): AudioEncoderConfig {
@@ -178,6 +206,7 @@ export class Microphone {
     this.vadLevel = 0;
     this.hangoverUntil = 0;
     this.wasTransmitting = false;
+    this.setRecordGate(false);
 
     return new Promise((resolve) => {
       const calibration: Calibration = {
@@ -227,6 +256,7 @@ export class Microphone {
       calibration.sum += rms;
       calibration.frames++;
       if (now >= calibration.until) this.finishCalibration(calibration);
+      this.setRecordGate(false);
       this.transmitting = false;
       return;
     }
@@ -245,6 +275,7 @@ export class Microphone {
     }
 
     if (!active) {
+      this.setRecordGate(false);
       // Marca a ultima saida pendente como fim de fala, se houver.
       if (this.wasTransmitting && this.pending.length > 0) {
         this.pending[this.pending.length - 1] = VoiceFlags.EndOfTalk;
@@ -258,6 +289,7 @@ export class Microphone {
     if (!encoder || encoder.state !== 'configured') return;
 
     this.transmitting = true;
+    this.setRecordGate(true);
     this.wasTransmitting = true;
     this.pending.push(VoiceFlags.None);
     this.health.maxEncoderQueue = Math.max(this.health.maxEncoderQueue, encoder.encodeQueueSize);
@@ -296,6 +328,7 @@ export class Microphone {
     this.hangoverUntil = 0;
     this.wasTransmitting = false;
     this.lastFrameAt = 0;
+    this.setRecordGate(false);
     if (this.calibration) {
       const calibration = this.calibration;
       this.calibration = null;
