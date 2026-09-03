@@ -937,6 +937,30 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     panel.append(controls);
   }
 
+  // Bot de musica: qualquer um pode pular ou parar. O bot ja aceita esses
+  // comandos por DM; os botoes so mandam a mensagem no seu nome.
+  if (c.nickname === 'music') {
+    const musicBar = $('div', 'client-controls');
+    musicBar.style.gap = '6px';
+
+    const skipBtn = $('button', 'ghost');
+    skipBtn.textContent = '⏭ pular';
+    skipBtn.style.cssText = 'font-size:12px;padding:4px 10px;';
+    skipBtn.addEventListener('click', () => {
+      client.say('skip', ChatScope.Private, c.id);
+    });
+
+    const stopBtn = $('button', 'ghost danger');
+    stopBtn.textContent = '⏹ parar tudo';
+    stopBtn.style.cssText = 'font-size:12px;padding:4px 10px;';
+    stopBtn.addEventListener('click', () => {
+      client.say('stop', ChatScope.Private, c.id);
+    });
+
+    musicBar.append(skipBtn, stopBtn);
+    panel.append(musicBar);
+  }
+
   return panel;
 }
 

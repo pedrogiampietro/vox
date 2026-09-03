@@ -386,6 +386,8 @@ class MusicPlayer {
   private ffmpeg: ReturnType<typeof spawn> | null = null;
   private ytdlp: ReturnType<typeof spawn> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private aloneWatch: ReturnType<typeof setInterval> | null = null;
+  private aloneSince = 0;
   private finished = false;
   private started = false;
   private startAt = 0;
@@ -473,6 +475,33 @@ class MusicPlayer {
     // proximo pacote pelo wall-clock. Isso evita drift do setInterval, que
     // sozinho a 20ms produz pequenos jitters audiveis ao longo da musica.
     this.timer = setInterval(() => this.tick(), 10);
+
+    // Watchdog: se o canal em que o bot esta tocando ficar sem ouvintes por
+    // mais de 10s, para tudo. Evita bot deserto queimando CPU e banda.
+    this.aloneWatch = setInterval(() => this.checkAlone(), 3_000);
+  }
+
+  private checkAlone(): void {
+    const myCh = this.conn.self?.channelId;
+    if (!myCh) return;
+    let listeners = 0;
+    for (const c of this.conn.clients.values()) {
+      if (c.channelId === myCh && c.id !== this.conn.selfId) listeners++;
+    }
+    if (listeners > 0) {
+      this.aloneSince = 0;
+      return;
+    }
+    const now = Date.now();
+    if (this.aloneSince === 0) {
+      this.aloneSince = now;
+      return;
+    }
+    if (now - this.aloneSince >= 10_000) {
+      console.log('[jukebox] canal vazio ha 10s, encerrando faixa');
+      queue.length = 0; // limpa fila tambem — nao adianta tocar pra ninguem
+      this.stop(false);
+    }
   }
 
   stop(skipped: boolean): void {
@@ -483,6 +512,8 @@ class MusicPlayer {
     this.ytdlp = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.aloneWatch) clearInterval(this.aloneWatch);
+    this.aloneWatch = null;
     this.queue.length = 0;
     if (skipped) announce('pulando...');
     this.onDone();
