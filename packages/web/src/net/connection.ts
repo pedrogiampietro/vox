@@ -74,6 +74,8 @@ export class Connection {
   private attempt = 0;
   private everOnline = false;
   private closedByUser = false;
+  private retryAllowed = true;
+  private terminalReason = '';
 
   /** Host do socket de controle, base para achar o canal de voz. */
   private host = '';
@@ -107,6 +109,8 @@ export class Connection {
     this.attempt = 0;
     this.everOnline = false;
     this.closedByUser = false;
+    this.retryAllowed = true;
+    this.terminalReason = '';
     this.open();
   }
 
@@ -167,7 +171,11 @@ export class Connection {
 
     ws.onclose = (ev) => {
       this.teardown();
-      this.scheduleRetry(ev.reason);
+      if (!this.retryAllowed) {
+        this.giveUp(this.terminalReason || ev.reason || 'servidor recusou a conexão');
+      } else {
+        this.scheduleRetry(ev.reason);
+      }
     };
   }
 
@@ -223,6 +231,13 @@ export class Connection {
     if (msg.t === Op.Pong) {
       this.rtt = Math.round(performance.now() - msg.stamp);
       return;
+    }
+    if (msg.t === Op.Failure) {
+      // Recusas do servidor (senha, versão, banimento, lotação) não devem
+      // entrar no ciclo de reconexão automática: são falhas definitivas até
+      // o usuário corrigir a configuração.
+      this.retryAllowed = false;
+      this.terminalReason = msg.message;
     }
     // O desafio se resolve aqui dentro: quem chamou connect nao precisa saber
     // que existe um handshake de tres etapas.

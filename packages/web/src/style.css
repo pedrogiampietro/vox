@@ -2477,6 +2477,183 @@ label.field {
 
 /* ---------------------------------------------------------------- avisos -- */
 
+.connection-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 62%);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  animation: overlay-in 180ms var(--ease-out);
+}
+
+.connection-modal {
+  width: min(420px, 100%);
+  overflow: hidden;
+  background: var(--ink-800);
+  border: 1px solid var(--amber-dim);
+  border-radius: 12px;
+  box-shadow: var(--shadow-xl), 0 0 0 1px rgb(0 0 0 / 20%);
+  animation: modal-in 220ms var(--ease-out);
+}
+
+.connection-modal.error {
+  border-color: var(--alert-dim);
+}
+
+.connection-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, rgba(232, 163, 61, 0.10), transparent 70%);
+  border-bottom: 1px solid var(--line);
+}
+
+.connection-modal.error .connection-header {
+  background: linear-gradient(135deg, rgba(232, 105, 93, 0.12), transparent 70%);
+}
+
+.connection-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--amber-dim);
+  border-radius: 50%;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 22px;
+  line-height: 1;
+  animation: connection-pulse 1.4s ease-in-out infinite;
+}
+
+.connection-icon.failure {
+  border-color: var(--alert-dim);
+  color: var(--alert);
+  animation: none;
+}
+
+@keyframes connection-pulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.connection-heading {
+  min-width: 0;
+}
+
+.connection-eyebrow {
+  margin-bottom: 3px;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.connection-modal.error .connection-eyebrow {
+  color: var(--alert);
+}
+
+.connection-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+}
+
+.connection-target {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-steps {
+  display: grid;
+  gap: 9px;
+  padding: 18px 20px 12px;
+}
+
+.connection-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  transition: color var(--dur) var(--ease);
+}
+
+.connection-step-marker {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.connection-step.current {
+  color: var(--text);
+}
+
+.connection-step.current .connection-step-marker {
+  border-color: var(--amber-dim);
+  color: var(--amber);
+  animation: connection-pulse 1.4s ease-in-out infinite;
+}
+
+.connection-step.completed {
+  color: var(--signal);
+}
+
+.connection-step.completed .connection-step-marker {
+  border-color: rgba(94, 224, 138, 0.4);
+  background: rgba(94, 224, 138, 0.10);
+  color: var(--signal);
+}
+
+.connection-step.failed {
+  color: var(--alert);
+}
+
+.connection-step.failed .connection-step-marker {
+  border-color: var(--alert-dim);
+  color: var(--alert);
+}
+
+.connection-detail {
+  min-height: 36px;
+  padding: 3px 20px 16px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.connection-modal.error .connection-detail {
+  color: #f3ccc4;
+}
+
+.connection-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--ink-700);
+  border-top: 1px solid var(--line);
+}
+
 .notice {
   position: fixed;
   bottom: 76px;

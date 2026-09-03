@@ -91,6 +91,7 @@ export class VoxClient {
   onBotResult: ((message: string) => void) | null = null;
 
   private audioPrefs: AudioPrefs | null = null;
+  private connectGeneration = 0;
 
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
@@ -197,11 +198,14 @@ export class VoxClient {
   // --------------------------------------------------------------- sessao --
 
   async connect(favorite: Favorite): Promise<void> {
+    const generation = ++this.connectGeneration;
     this.identity ??= await loadIdentity();
+    if (generation !== this.connectGeneration) return;
     this.favorite = favorite;
     this.audioPrefs = loadAudioPrefs(favorite.serverId);
     this.applyAudioPrefs(this.audioPrefs);
     await this.ensureAudio();
+    if (generation !== this.connectGeneration) return;
 
     const target: Target = {
       address: favorite.address,
@@ -217,6 +221,7 @@ export class VoxClient {
     }).catch((err) => {
       this.warn(`audio indisponivel: ${describeError(err)}`);
     });
+    if (generation !== this.connectGeneration) return;
     this.connection.connect(target);
   }
 
@@ -235,6 +240,7 @@ export class VoxClient {
   }
 
   disconnect(): void {
+    this.connectGeneration++;
     this.connection.close();
   }
 

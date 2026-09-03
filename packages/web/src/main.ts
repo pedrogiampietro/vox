@@ -59,6 +59,21 @@ let selectedChannelId = 0;
 let selectedClientId = 0;
 let selectedTool: 'statistics' | 'claims' | null = null;
 let lastVoiceChannelId = 0;
+type ConnectionProgressStage = 'preparing' | 'connecting' | 'authenticating' | 'channels' | 'ready';
+type ConnectionStage = ConnectionProgressStage | 'error';
+interface ConnectionModalState {
+  run: number;
+  favorite: Favorite;
+  stage: ConnectionStage;
+  failedAt: ConnectionProgressStage;
+  detail: string;
+  started: boolean;
+  channelsLoaded: boolean;
+}
+let connectionModal: ConnectionModalState | null = null;
+let connectionRun = 0;
+let connectionCloseTimer: ReturnType<typeof setTimeout> | null = null;
+let connectionReadyTimer: ReturnType<typeof setTimeout> | null = null;
 const CHANNEL_INFO_HEIGHT_KEY = 'vox.channel-info-height';
 let channelInfoHeight = loadChannelInfoHeight();
 const collapsedChannels = new Set<number>();
@@ -120,6 +135,7 @@ function render(): void {
     renderPending = true;
     return;
   }
+  syncConnectionModal();
   syncVoiceChannelView();
   const app = document.getElementById('app')!;
   const chatInput = app.querySelector('.composer input') as HTMLInputElement | null;
@@ -169,8 +185,168 @@ function renderShell(): HTMLElement {
   root.append(renderRail(), renderRooms(), renderTalk(), renderConsole());
   const dock = renderScreenDock();
   if (dock) root.append(dock);
+  if (connectionModal) root.append(renderConnectionModal(connectionModal));
   return root;
 }
+
+function syncConnectionModal(): void {
+  const state = connectionModal;
+  if (!state || state.stage === 'error' || state.stage === 'ready') return;
+
+  if (client.link === 'connecting') {
+    state.stage = 'connecting';
+    state.detail = client.detail || 'abrindo uma conexão segura…';
+    return;
+  }
+
+  if (client.link === 'online') {
+    if (client.channels.size === 0) {
+      state.stage = 'authenticating';
+      state.detail = client.serverName
+        ? `acesso aceito em ${client.serverName}`
+        : 'servidor respondeu; validando sua identidade';
+    } else if (!state.channelsLoaded) {
+      state.channelsLoaded = true;
+      state.stage = 'channels';
+      state.detail = `recebendo ${client.channels.size} canais e usuários…`;
+      scheduleConnectionReady(state.run);
+    } else if (!client.self) {
+      state.stage = 'channels';
+      state.detail = 'sincronizando canais e usuários…';
+    } else {
+      state.stage = 'ready';
+      state.detail = `${client.channels.size} canais e ${client.clients.size} usuário(s) carregados`;
+      scheduleConnectionModalClose(state.run);
+    }
+    return;
+  }
+
+  // Durante a preparação do cliente, o WebSocket ainda não foi aberto.
+  // Depois que a tentativa começou, offline significa falha definitiva.
+  if (state.started) {
+    state.failedAt = state.stage;
+    state.stage = 'error';
+    state.detail = client.detail || 'não foi possível estabelecer a conexão';
+  }
+}
+
+function scheduleConnectionReady(run: number): void {
+  if (connectionReadyTimer !== null) return;
+  connectionReadyTimer = setTimeout(() => {
+    connectionReadyTimer = null;
+    const state = connectionModal;
+    if (state?.run !== run || state.stage !== 'channels' || client.link !== 'online' || !client.self) return;
+    state.stage = 'ready';
+    state.detail = `${client.channels.size} canais e ${client.clients.size} usuário(s) carregados`;
+    scheduleConnectionModalClose(run);
+    render();
+  }, 260);
+}
+
+function scheduleConnectionModalClose(run: number): void {
+  if (connectionCloseTimer !== null) return;
+  connectionCloseTimer = setTimeout(() => {
+    connectionCloseTimer = null;
+    if (connectionModal?.run !== run || connectionModal.stage !== 'ready') return;
+    connectionModal = null;
+    render();
+  }, 700);
+}
+
+function clearConnectionModalTimer(): void {
+  if (connectionCloseTimer !== null) {
+    clearTimeout(connectionCloseTimer);
+    connectionCloseTimer = null;
+  }
+  if (connectionReadyTimer !== null) {
+    clearTimeout(connectionReadyTimer);
+    connectionReadyTimer = null;
+  }
+}
+
+function closeConnectionAttempt(run: number): void {
+  if (connectionModal?.run !== run) return;
+  connectionRun++;
+  clearConnectionModalTimer();
+  connectionModal = null;
+  client.disconnect();
+  view = 'browser';
+  render();
+}
+
+function retryConnection(run: number): void {
+  const state = connectionModal;
+  if (!state || state.run !== run) return;
+  const favorite = state.favorite;
+  connectionRun++;
+  clearConnectionModalTimer();
+  connectionModal = null;
+  client.disconnect();
+  void connectTo(favorite);
+}
+
+function renderConnectionModal(state: ConnectionModalState): HTMLElement {
+  const overlay = $('div', 'connection-overlay');
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-live', 'polite');
+
+  const card = $('div', 'connection-modal');
+  if (state.stage === 'error') card.classList.add('error');
+
+  const header = $('div', 'connection-header');
+  const statusIcon = text('span', `connection-icon ${state.stage === 'error' ? 'failure' : ''}`, state.stage === 'error' ? '!' : '◌');
+  const heading = $('div', 'connection-heading');
+  heading.append(
+    text('div', 'connection-eyebrow', state.stage === 'error' ? 'CONEXÃO FALHOU' : 'CONECTANDO'),
+    text('h2', '', state.stage === 'error' ? 'Não foi possível entrar' : 'Entrando no servidor'),
+    text('div', 'connection-target', state.favorite.label || state.favorite.address || 'servidor atual'),
+  );
+  header.append(statusIcon, heading);
+  card.append(header);
+
+  const steps = $('div', 'connection-steps');
+  const currentIndex = Math.max(0, CONNECTION_STEPS.findIndex((step) => step.stage === (state.stage === 'error' ? state.failedAt : state.stage)));
+  for (const [index, step] of CONNECTION_STEPS.entries()) {
+    const completed = state.stage === 'ready' || index < currentIndex;
+    const current = !completed && index === currentIndex && state.stage !== 'error';
+    const row = $('div', `connection-step ${completed ? 'completed' : current ? 'current' : state.stage === 'error' && index === currentIndex ? 'failed' : ''}`.trim());
+    const marker = text('span', 'connection-step-marker', completed ? '✓' : current ? '…' : state.stage === 'error' && index === currentIndex ? '×' : '·');
+    row.append(marker, text('span', '', step.label));
+    steps.append(row);
+  }
+  card.append(steps);
+
+  const detail = text('div', 'connection-detail', state.detail);
+  card.append(detail);
+
+  const footer = $('div', 'connection-footer');
+  if (state.stage === 'error') {
+    const retry = $('button', 'primary');
+    retry.textContent = 'tentar novamente';
+    retry.addEventListener('click', () => retryConnection(state.run));
+    const back = $('button', 'ghost');
+    back.textContent = 'voltar';
+    back.addEventListener('click', () => closeConnectionAttempt(state.run));
+    footer.append(back, retry);
+  } else {
+    const cancel = $('button', 'ghost');
+    cancel.textContent = 'cancelar';
+    cancel.addEventListener('click', () => closeConnectionAttempt(state.run));
+    footer.append(cancel);
+  }
+  card.append(footer);
+  overlay.append(card);
+  return overlay;
+}
+
+const CONNECTION_STEPS: readonly { stage: ConnectionProgressStage; label: string }[] = [
+  { stage: 'preparing', label: 'Preparando identidade e áudio' },
+  { stage: 'connecting', label: 'Conectando ao servidor' },
+  { stage: 'authenticating', label: 'Autenticando acesso' },
+  { stage: 'channels', label: 'Carregando canais e usuários' },
+  { stage: 'ready', label: 'Sessão pronta' },
+];
 
 // ------------------------------------------------------------------- rail --
 
@@ -4109,9 +4285,41 @@ document.addEventListener('keyup', (e) => {
 // ============================================================ init ==
 
 async function connectTo(fav: Favorite): Promise<void> {
+  const run = ++connectionRun;
+  clearConnectionModalTimer();
+  connectionModal = {
+    run,
+    favorite: fav,
+    stage: 'preparing',
+    failedAt: 'preparing',
+    detail: 'validando sua identidade e preparando o áudio…',
+    started: false,
+    channelsLoaded: false,
+  };
   view = 'shell';
   render();
-  await client.connect(fav);
+  // Marca a tentativa antes de chamar connect: erros imediatos (por exemplo,
+  // endereço inválido) também precisam aparecer no modal.
+  if (connectionModal?.run === run) connectionModal.started = true;
+  try {
+    await client.connect(fav);
+  } catch (err) {
+    if (connectionModal?.run !== run) return;
+    connectionModal.failedAt = connectionModal.stage === 'error' ? 'preparing' : connectionModal.stage;
+    connectionModal.stage = 'error';
+    connectionModal.detail = describeConnectionError(err);
+    render();
+  }
+}
+
+function describeConnectionError(err: unknown): string {
+  if (err instanceof DOMException) {
+    if (err.name === 'NotAllowedError') return 'permissão do navegador não concedida';
+    if (err.name === 'NotFoundError') return 'nenhum dispositivo de áudio disponível';
+    return err.name;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return String(err);
 }
 
 // Probe servers on browser view
