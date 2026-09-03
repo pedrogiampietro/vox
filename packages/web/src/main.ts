@@ -58,6 +58,7 @@ let settingsOpen = false;
 let selectedChannelId = 0;
 let selectedClientId = 0;
 let selectedTool: 'statistics' | 'claims' | null = null;
+const collapsedChannels = new Set<number>();
 
 // ---- drag-to-move state ----
 let dragClientId = 0;
@@ -211,8 +212,12 @@ function renderRooms(): HTMLElement {
   const pane = $('div', 'rooms');
 
   // header
-  const hdr = $('header', '');
-  hdr.append(text('div', 'name', client.serverName || 'v0x'), text('span', 'label', `v${client.serverId || 1}`));
+  const hdr = $('header', 'rooms-header');
+  const headline = $('div', 'rooms-headline');
+  headline.append(text('div', 'name', client.serverName || 'v0x'), text('span', 'label', `v${client.serverId || 1}`));
+  const presence = $('div', 'rooms-presence');
+  presence.append(text('span', 'presence-dot', '●'), text('span', '', `${client.clients.size} online`));
+  hdr.append(headline, presence);
   pane.append(hdr);
 
   // tree
@@ -230,12 +235,14 @@ function renderRooms(): HTMLElement {
   pane.append(tree);
 
   // footer
-  const foot = $('footer', '');
+  const foot = $('footer', 'rooms-footer');
+  foot.setAttribute('aria-label', 'ações do servidor');
+  const footActions = $('div', 'rooms-footer-actions');
 
   const addBtn = $('button', 'ghost');
   addBtn.textContent = '+ canal';
   addBtn.addEventListener('click', () => promptCreateChannel());
-  foot.append(addBtn);
+  footActions.append(addBtn);
 
   const disconnectBtn = $('button', 'ghost danger');
   disconnectBtn.textContent = 'sair';
@@ -244,121 +251,155 @@ function renderRooms(): HTMLElement {
     view = 'browser';
     render();
   });
-  foot.append(disconnectBtn);
+  footActions.append(disconnectBtn);
 
+  foot.append(footActions, text('span', 'rooms-footer-hint', 'duplo clique para entrar'));
   pane.append(foot);
   return pane;
 }
 
 function renderChannelTree(parent: HTMLElement, parentId: number, depth: number): void {
   const rawChildren = client.childrenOf(parentId);
-  // Na raiz, o canal do bot fica em uma secao propria logo apos os canais
-  // padrao (Lobby), com um cabecalho "BOT" para dar destaque.
-  const children = depth === 0 ? reorderTopLevel(rawChildren) : rawChildren;
-  let botHeaderPending = depth === 0 && children.some((c) => isBotChannel(c));
-  let lastWasTopLevelBot = false;
-  for (const ch of children) {
-    if (lastWasTopLevelBot && !isBotChannel(ch)) {
-      renderToolRows(parent);
-      parent.append($('div', 'section-divider'));
-      lastWasTopLevelBot = false;
-    }
-    if (botHeaderPending && isBotChannel(ch)) {
-      parent.append(renderBotSectionHeader());
-      botHeaderPending = false;
-    }
-    const members = client.membersOf(ch.id);
-    const locked = (ch.flags & ChannelFlags.Password) !== 0;
-    const full = ch.maxClients > 0 && members.length >= ch.maxClients;
+  if (depth > 0) {
+    for (const ch of rawChildren) renderChannelBranch(parent, ch, depth);
+    return;
+  }
 
-    const row = $('div', 'room');
-    if (ch.id === client.self?.channelId) row.classList.add('here');
-    if (ch.id === selectedChannelId) row.classList.add('selected');
-    if (isBotChannel(ch)) row.classList.add('bot-channel');
-    row.style.paddingLeft = `${8 + depth * 14}px`;
+  const defaults = rawChildren.filter((c) => (c.flags & ChannelFlags.Default) !== 0);
+  const bots = rawChildren.filter((c) => isBotChannel(c));
+  const rest = rawChildren.filter((c) => !defaults.includes(c) && !bots.includes(c));
 
-    const moderated = (ch.flags & ChannelFlags.Moderated) !== 0;
-    const glyph = isBotChannel(ch) ? '◆' : locked ? '🔒' : moderated ? '🎙' : '#';
-    const idx = text('span', 'idx', glyph);
-    const info = $('div', 'room-info');
-    info.append(text('span', 'name', ch.name));
-    if (moderated) {
-      const modLabel = text('span', 'topic', 'moderado');
-      modLabel.style.color = 'var(--amber)';
-      info.append(modLabel);
-    }
-    if (ch.topic) info.append(text('span', 'topic', ch.topic));
-    const cap =
-      ch.maxClients > 0 ? text('span', 'cap', `${members.length}/${ch.maxClients}`) : text('span', 'cap', String(members.length));
-    row.append(idx, info, cap);
+  // O canal de entrada continua no topo, sem competir com as seções abaixo.
+  for (const ch of defaults) renderChannelBranch(parent, ch, depth);
 
-    row.dataset.channelId = String(ch.id);
+  if (bots.length > 0) {
+    parent.append(renderSectionHeader('BOT', bots.length, 'bot-section'));
+    for (const ch of bots) renderChannelBranch(parent, ch, depth);
+  }
 
-    row.addEventListener('click', () => {
-      selectedChannelId = ch.id;
-      selectedClientId = 0;
-      selectedTool = null;
+  renderToolRows(parent);
+
+  if (rest.length > 0) {
+    parent.append(renderSectionHeader('CANAIS', rest.length));
+    for (const ch of rest) renderChannelBranch(parent, ch, depth);
+  }
+
+  if (rawChildren.length === 0) {
+    parent.append(text('div', 'tree-empty', 'nenhum canal disponível'));
+  }
+}
+
+function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number): void {
+  const members = client.membersOf(ch.id);
+  const locked = (ch.flags & ChannelFlags.Password) !== 0;
+  const moderated = (ch.flags & ChannelFlags.Moderated) !== 0;
+  const full = ch.maxClients > 0 && members.length >= ch.maxClients;
+  const children = client.childrenOf(ch.id);
+  const hasChildren = children.length > 0;
+  const expanded = !collapsedChannels.has(ch.id);
+
+  const row = $('div', 'room channel-row');
+  if (ch.id === client.self?.channelId) row.classList.add('here');
+  if (ch.id === selectedChannelId) row.classList.add('selected');
+  if (isBotChannel(ch)) row.classList.add('bot-channel');
+  if (locked) row.classList.add('locked');
+  if (moderated) row.classList.add('moderated');
+  if (full) row.classList.add('full');
+  row.style.paddingLeft = `${8 + depth * 14}px`;
+  row.dataset.channelId = String(ch.id);
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  row.setAttribute('aria-label', `${ch.name}, ${members.length} usuário(s)`);
+  if (ch.id === client.self?.channelId) row.setAttribute('aria-current', 'true');
+  if (hasChildren) row.setAttribute('aria-expanded', String(expanded));
+  if (full) row.title = 'canal lotado';
+
+  const leading = $('span', 'room-leading');
+  if (hasChildren) {
+    const disclosure = $('button', 'room-disclosure');
+    disclosure.type = 'button';
+    disclosure.textContent = expanded ? '⌄' : '›';
+    disclosure.title = expanded ? 'recolher canal' : 'expandir canal';
+    disclosure.setAttribute('aria-label', disclosure.title);
+    disclosure.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (expanded) collapsedChannels.add(ch.id);
+      else collapsedChannels.delete(ch.id);
       render();
     });
-    row.addEventListener('dblclick', () => {
-      if (ch.id !== client.self?.channelId) client.join(ch.id);
-    });
-    row.addEventListener('contextmenu', (e) => {
+    leading.append(disclosure);
+  } else {
+    leading.append($('span', 'room-disclosure-placeholder'));
+  }
+
+  const glyph = isBotChannel(ch) ? '◆' : locked ? '🔒' : moderated ? '◈' : '#';
+  leading.append(text('span', 'idx', glyph));
+
+  const info = $('div', 'room-info');
+  info.append(text('span', 'name', ch.name));
+  const details: string[] = [];
+  if (moderated) details.push('moderado');
+  if (ch.topic) details.push(ch.topic);
+  if (details.length > 0) info.append(text('span', 'topic', details.join(' · ')));
+
+  const cap = ch.maxClients > 0 ? `${members.length}/${ch.maxClients}` : String(members.length);
+  const count = text('span', 'cap', cap);
+  count.title = `${members.length} usuário(s)${ch.maxClients > 0 ? ` de ${ch.maxClients}` : ''}`;
+  row.append(leading, info, count);
+
+  const select = (): void => {
+    selectedChannelId = ch.id;
+    selectedClientId = 0;
+    selectedTool = null;
+    render();
+  };
+  row.addEventListener('click', select);
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      e.stopPropagation();
-      showChannelMenu(e, ch);
-    });
-
-    parent.append(row);
-
-    // members inside channel
-    for (const m of members) {
-      parent.append(renderPeer(m));
+      select();
     }
+  });
+  row.addEventListener('dblclick', () => {
+    if (ch.id !== client.self?.channelId) client.join(ch.id);
+  });
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showChannelMenu(e, ch);
+  });
 
-    // sub-channels
-    renderChannelTree(parent, ch.id, depth + 1);
-    lastWasTopLevelBot = depth === 0 && isBotChannel(ch);
-  }
-  if (depth === 0 && lastWasTopLevelBot) renderToolRows(parent);
-  if (depth === 0 && !children.some((c) => isBotChannel(c))) {
-    parent.append($('div', 'section-divider'));
-    renderToolRows(parent);
-  }
+  parent.append(row);
+  if (!expanded) return;
+  for (const member of members) parent.append(renderPeer(member));
+  renderChannelTree(parent, ch.id, depth + 1);
 }
 
 function isBotChannel(ch: ChannelInfo): boolean {
   return ch.name.toLowerCase() === 'bot';
 }
 
-/** Sobe o canal do bot para logo depois dos canais padrao (Lobby). */
-function reorderTopLevel(children: ChannelInfo[]): ChannelInfo[] {
-  const defaults: ChannelInfo[] = [];
-  const bots: ChannelInfo[] = [];
-  const rest: ChannelInfo[] = [];
-  for (const c of children) {
-    if ((c.flags & ChannelFlags.Default) !== 0) defaults.push(c);
-    else if (isBotChannel(c)) bots.push(c);
-    else rest.push(c);
-  }
-  return [...defaults, ...bots, ...rest];
-}
-
-function renderBotSectionHeader(): HTMLElement {
-  const header = $('div', 'section-header bot-section');
-  header.append(text('span', 'section-label', 'BOT'));
+function renderSectionHeader(label: string, count: number, extraClass = ''): HTMLElement {
+  const header = $('div', `section-header ${extraClass}`.trim());
+  const title = text('span', 'section-label', label);
+  const countLabel = text('span', 'section-count', String(count).padStart(2, '0'));
+  header.append(title, countLabel);
   return header;
 }
 
 function renderToolRows(parent: HTMLElement): void {
-  const stats = renderToolRow('statistics', 'statistics', String(client.clients.size));
-  const claims = renderToolRow('claims', 'claimed resp', String(client.claims.size));
+  parent.append(renderSectionHeader('FERRAMENTAS', 2, 'tools-section'));
+  const stats = renderToolRow('statistics', 'visão geral', String(client.clients.size));
+  const claims = renderToolRow('claims', 'respawns reivindicados', String(client.claims.size));
   parent.append(stats, claims);
 }
 
 function renderToolRow(tool: 'statistics' | 'claims', label: string, count: string): HTMLElement {
   const row = $('div', 'room tool-channel');
   if (selectedTool === tool) row.classList.add('selected');
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  row.setAttribute('aria-label', `${label}, ${count}`);
   const glyph = tool === 'statistics' ? '≡' : '◇';
   row.append(text('span', 'idx', glyph));
   const info = $('div', 'room-info');
@@ -370,6 +411,12 @@ function renderToolRow(tool: 'statistics' | 'claims', label: string, count: stri
     selectedClientId = 0;
     client.activeDmTab = null;
     render();
+  });
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      row.click();
+    }
   });
   return row;
 }
