@@ -490,31 +490,20 @@ function names(events: OnlineEvent[]): string {
 }
 
 /**
- * Guild API do Rubinot manda vocation como numero. Convencional Tibia OT:
- * comum ser 4=Knight, 3=Paladin, 1=Sorcerer, 2=Druid, 5=Monk (varia).
- * Aceita 1-8 pra cobrir esquemas com e sem promocao separada. Se cair no
- * default, loga uma vez pra podermos ajustar.
+ * Rubinot expõe as vocations pelo enum interno:
+ *   0=None, 1=Sorcerer, 2=Druid, 3=Paladin, 4=Knight,
+ *   5=Master Sorcerer, 6=Elder Druid, 7=Royal Paladin, 8=Elite Knight,
+ *   9=Monk, 10=Exalted Monk.
+ * Base e promovido caem no mesmo icone (EK/RP/MS/ED/MK).
  */
-const _loggedVocs = new Set<number>();
 function normalizeVocationNumber(n: number): string {
   switch (n) {
-    // Esquemas comuns Tibia server-side (numero da vocacao promovida):
-    case 1: return 'MS';   // Sorcerer / Master Sorcerer
-    case 2: return 'ED';   // Druid / Elder Druid
-    case 3: return 'RP';   // Paladin / Royal Paladin
-    case 4: return 'EK';   // Knight / Elite Knight
-    case 5: return 'MK';   // Monk / Exalted Monk
-    // Alguns servers separam promovido em 5-8 e novo Monk vai pra 9+.
-    case 6: return 'ED';
-    case 7: return 'RP';
-    case 8: return 'EK';
-    case 9: return 'MK';
-    default:
-      if (!_loggedVocs.has(n)) {
-        _loggedVocs.add(n);
-        console.log(`[bot] vocation number desconhecido: ${n} — ajusta normalizeVocationNumber`);
-      }
-      return '';
+    case 1: case 5: return 'MS';
+    case 2: case 6: return 'ED';
+    case 3: case 7: return 'RP';
+    case 4: case 8: return 'EK';
+    case 9: case 10: return 'MK';
+    default: return '';
   }
 }
 
