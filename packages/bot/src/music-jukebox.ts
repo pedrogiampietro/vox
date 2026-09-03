@@ -50,8 +50,16 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
     return;
   }
   if (msg.t !== Op.ChatDeliver) return;
-  if (msg.scope !== ChatScope.Channel || msg.senderId === 0 || msg.senderId === controller.selfId) return;
-  if (msg.targetId !== controller.self?.channelId) return;
+  console.log(
+    `[jukebox] chat: from=${msg.senderId}(${msg.senderName}) scope=${msg.scope} target=${msg.targetId} self.ch=${controller.self?.channelId} text="${msg.text}"`,
+  );
+  if (msg.scope !== ChatScope.Channel) { console.log('[jukebox] filtro: scope nao Channel'); return; }
+  if (msg.senderId === 0) { console.log('[jukebox] filtro: senderId=0'); return; }
+  if (msg.senderId === controller.selfId) { console.log('[jukebox] filtro: self'); return; }
+  if (msg.targetId !== controller.self?.channelId) {
+    console.log(`[jukebox] filtro: canal diferente (msg.targetId=${msg.targetId} self.ch=${controller.self?.channelId})`);
+    return;
+  }
 
   const body = msg.text.trim();
   if (!body) return;
@@ -87,6 +95,7 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
 
 function joinBotChannel(): void {
   const id = controller.findChannel(botChannelName);
+  console.log(`[jukebox] joinBotChannel: name="${botChannelName}" foundId=${id} currentCh=${controller.self?.channelId}`);
   if (id && controller.self?.channelId !== id) controller.send({ t: Op.JoinChannel, channelId: id, password: '' });
 }
 
