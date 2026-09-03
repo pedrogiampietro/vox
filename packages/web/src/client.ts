@@ -370,7 +370,8 @@ export class VoxClient {
     const prefs = { ...this.prefsOf(client), volume };
     this.savePrefs(client, prefs);
     this.mixer?.setVolume(client.id, volume);
-    this.onChange();
+    // Nao dispara onChange: o handler do slider ja atualiza o label; um
+    // re-render completo destroi o input no meio do drag, travando o cursor.
   }
 
   toggleUserMute(client: ClientInfo): void {

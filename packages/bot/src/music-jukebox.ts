@@ -22,6 +22,8 @@ const ffmpegBin = process.env['VOX_FFMPEG'] || 'ffmpeg';
 const ytdlpBin = process.env['VOX_YTDLP'] || 'yt-dlp';
 const ytdlpExtraArgs = (process.env['VOX_YTDLP_ARGS'] || '').trim();
 const bitrate = process.env['VOX_BOT_BITRATE'] || '96k';
+/** Ganho aplicado ao audio antes de encodar. 0.25 = -12dB, padrao seguro. */
+const volumeGain = Number(process.env['VOX_BOT_VOLUME'] || '0.25');
 
 interface TrackRequest {
   query: string;
@@ -149,12 +151,15 @@ async function pumpQueue(): Promise<void> {
   player = new VoxConnection('music player', () => {});
   await player.connect();
   player.send({ t: Op.JoinChannel, channelId: current.channelId, password: '' });
-  player.send({
-    t: Op.ChatSend,
-    scope: ChatScope.Channel,
-    targetId: 0,
-    text: `tocando: ${track.title} (pedido por ${current.requestedByName})`,
-  });
+
+  // Anuncia o que esta tocando: DM para quem pediu por DM, senao no canal `bot`.
+  // NUNCA no canal de voz — ninguem quer ver metadados no chat do canal.
+  const announceMsg = `tocando: ${track.title} (pedido por ${current.requestedByName})`;
+  if (current.viaDm) {
+    controller.send({ t: Op.ChatSend, scope: ChatScope.Private, targetId: current.requestedBy, text: announceMsg });
+  } else {
+    announce(announceMsg);
+  }
 
   activePlayer = new MusicPlayer(track, player, () => {
     activePlayer = null;
@@ -411,11 +416,18 @@ class MusicPlayer {
       ffmpegInput = 'pipe:0';
     }
 
+    // Corrente de audio:
+    //  - dynaudnorm: normaliza dinamicamente (deixa musicas em volume parecido);
+    //  - volume=<gain>: atenuacao final (musicas mixadas alto no YouTube facil
+    //    saturam Opus mesmo depois do dynaudnorm; -12dB deixa margem).
+    const audioFilter = `dynaudnorm=f=200:g=15,volume=${volumeGain}`;
+
     const ffmpeg = spawn(ffmpegBin, [
       '-hide_banner',
       '-loglevel', 'warning',
       '-i', ffmpegInput,
       '-vn',
+      '-af', audioFilter,
       '-ac', '1',
       '-ar', '48000',
       '-c:a', 'libopus',
