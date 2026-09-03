@@ -1991,6 +1991,39 @@ label.field {
   font-size: 11px;
 }
 
+/* Modo mosaico: multiplas telas em miniaturas. Auto-fit para caber 2 por linha
+ * no dock pequeno, mais no expandido. */
+.screen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.screen-dock.expanded .screen-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+/* Faixa de miniaturas embaixo do main quando ha um focado + outros. */
+.screen-thumbs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-top: 6px;
+}
+
+.screen-thumbs .screen-tile-thumb {
+  flex: 0 0 160px;
+}
+
+.screen-tile-thumb {
+  cursor: pointer;
+  transition: outline var(--dur) var(--ease);
+}
+
+.screen-tile-thumb:hover {
+  outline: 2px solid rgba(232, 163, 61, 0.5);
+}
+
 .screen-full {
   position: absolute;
   top: 8px;
