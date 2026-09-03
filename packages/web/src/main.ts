@@ -72,6 +72,8 @@ interface ConnectionModalState {
 }
 let connectionModal: ConnectionModalState | null = null;
 let connectionRun = 0;
+/** Tentativa cujo shell ja foi atualizado com o snapshot completo. */
+let connectionBackgroundRun = 0;
 let connectionCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let connectionReadyTimer: ReturnType<typeof setTimeout> | null = null;
 const CHANNEL_INFO_HEIGHT_KEY = 'vox.channel-info-height';
@@ -139,8 +141,8 @@ function render(): void {
   syncVoiceChannelView();
   // O shell por trás do modal não precisa acompanhar cada evento do handshake.
   // Mantê-lo intacto evita flashes enquanto canais e permissões chegam.
-  if (view === 'shell' && connectionModal && connectionModal.stage !== 'ready'
-      && document.querySelector('.connection-overlay')) {
+  if (view === 'shell' && connectionModal && document.querySelector('.connection-overlay')
+      && (connectionModal.stage !== 'ready' || connectionBackgroundRun === connectionModal.run)) {
     syncConnectionOverlay();
     return;
   }
@@ -154,6 +156,11 @@ function render(): void {
   } else {
     app.replaceChildren(renderShell());
   }
+
+  // O primeiro render de "sessão pronta" traz o snapshot completo para o
+  // fundo. Depois disso, mensagens tardias do bootstrap nao podem remontar o
+  // shell enquanto o modal ainda esta visivel.
+  if (connectionModal?.stage === 'ready') connectionBackgroundRun = connectionModal.run;
 
   if (hadFocus && view === 'shell') {
     const newInput = app.querySelector('.composer input') as HTMLInputElement | null;
@@ -292,7 +299,9 @@ function scheduleConnectionModalClose(run: number): void {
     connectionCloseTimer = null;
     if (connectionModal?.run !== run || connectionModal.stage !== 'ready') return;
     connectionModal = null;
-    render();
+    // O shell ja foi atualizado no primeiro estado "ready". Remover apenas o
+    // overlay evita uma segunda troca visivel da parte superior da tela.
+    syncConnectionOverlay();
   }, 700);
 }
 
@@ -310,6 +319,7 @@ function clearConnectionModalTimer(): void {
 function closeConnectionAttempt(run: number): void {
   if (connectionModal?.run !== run) return;
   connectionRun++;
+  connectionBackgroundRun = 0;
   clearConnectionModalTimer();
   connectionModal = null;
   client.disconnect();
@@ -322,6 +332,7 @@ function retryConnection(run: number): void {
   if (!state || state.run !== run) return;
   const favorite = state.favorite;
   connectionRun++;
+  connectionBackgroundRun = 0;
   clearConnectionModalTimer();
   connectionModal = null;
   client.disconnect();
@@ -4323,6 +4334,7 @@ async function connectTo(fav: Favorite): Promise<void> {
     started: false,
     channelsLoaded: false,
   };
+  connectionBackgroundRun = 0;
   view = 'shell';
   render();
   // Marca a tentativa antes de chamar connect: erros imediatos (por exemplo,
