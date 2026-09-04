@@ -1,17 +1,21 @@
 import type { MicHealth, MicSettings } from './microphone.js';
-import type { VoiceTransport } from '../net/connection.js';
+import type { VoiceQuality, VoiceTransport } from '../net/connection.js';
 import type { VoicePlaybackHealth } from './mixer.js';
 
 export interface RecordingTelemetry {
   transport: VoiceTransport;
   rttMs: number;
+  /** RTT medido no caminho dedicado da voz; o RTT de controle pode ser outro. */
+  voiceRttMs: number;
+  voiceRegion: string;
+  voiceQuality: VoiceQuality;
   droppedVoice: number;
   mic: MicSettings & { health: MicHealth };
   playback: VoicePlaybackHealth;
 }
 
 export interface RecordingReport {
-  schema: 1;
+  schema: 2;
   startedAt: string;
   endedAt: string;
   durationMs: number;
@@ -147,7 +151,7 @@ export class VoiceRecorder {
 
     const endedAt = new Date().toISOString();
     const report: RecordingReport = {
-      schema: 1,
+      schema: 2,
       startedAt: this.startedAt,
       endedAt,
       durationMs: Math.max(0, performance.now() - this.startedAtMs),
@@ -228,6 +232,9 @@ function cloneTelemetry(value: RecordingTelemetry): RecordingTelemetry {
   return {
     transport: value.transport,
     rttMs: value.rttMs,
+    voiceRttMs: value.voiceRttMs,
+    voiceRegion: value.voiceRegion,
+    voiceQuality: value.voiceQuality,
     droppedVoice: value.droppedVoice,
     mic: {
       deviceId: value.mic.deviceId,

@@ -48,9 +48,11 @@ O Caddy da origem já encaminha o caminho `/internal/edge` junto com os demais
 WebSockets. Depois de atualizar o `.env`, reinicie o `vox.service`.
 
 Quando houver mais de uma região, cada edge precisa de DNS, certificado,
-UDP/9987 e a mesma chave privada compartilhada. O cliente abre os candidatos
-em paralelo e mantém o primeiro handshake QUIC concluído; isso escolhe a menor
-latência de rota naquele momento, sem depender de uma base fixa de geolocalização.
+  UDP/9987 e o mesmo segredo compartilhado com a origem. O cliente abre os candidatos
+  em paralelo e mantém o primeiro handshake completo de voz concluído; isso
+  escolhe a menor latência de rota disponível naquele momento, sem depender de
+  uma base fixa de geolocalização. Se o QUIC abrir, mas o edge não conseguir
+  autenticar na origem, o cliente fecha esse candidato e tenta o próximo.
 Além dos edges configurados, a própria origem é anunciada automaticamente como
 mais um candidato quando o WebTransport local consegue iniciar. Isso permite
 comparar uma VPS regional com a origem sem criar outra máquina.

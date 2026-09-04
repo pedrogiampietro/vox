@@ -288,15 +288,26 @@ npm run smoke
 O teste deve validar o handshake QUIC, voz nos dois sentidos, isolamento entre
 canais e recuperação para WebSocket. Os clientes de teste são temporários.
 
-Na interface, o indicador esperado é:
+Na interface, o indicador esperado separa o caminho de controle do caminho da
+voz:
 
 ```text
-RTT 167ms · QUIC · drop 0
+ctrl 167ms · voz 11ms · QUIC · São Paulo · excelente · drop 0
 ```
 
 QUIC não reduz a distância até o servidor. Ele reduz engasgos e atrasos
 variáveis causados por perda de pacotes no TCP. Para reduzir o RTT, é necessário
 usar uma VPS mais próxima dos usuários ou distribuir relays por região.
+
+O RTT exibido depois de `voz` é medido no edge QUIC escolhido pelo cliente; o
+valor depois de `ctrl` continua sendo o caminho até a origem. Quando há mais de
+um candidato configurado, o cliente testa o handshake completo de voz e tenta o
+próximo automaticamente se o primeiro edge estiver sem acesso à origem.
+
+As gravações de análise continuam sendo salvas localmente em áudio e JSON. O
+relatório agora usa `schema: 2` e inclui `voiceRttMs`, `voiceRegion` e
+`voiceQuality` no início e no fim da gravação, permitindo comparar a qualidade
+do áudio com a rota efetivamente usada.
 
 ## Diagnóstico rápido
 

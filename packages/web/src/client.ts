@@ -399,6 +399,9 @@ export class VoxClient {
     return {
       transport: this.connection.voiceTransport,
       rttMs: this.connection.rtt,
+      voiceRttMs: this.connection.voiceRtt,
+      voiceRegion: this.connection.voiceRegion,
+      voiceQuality: this.connection.voiceQuality,
       droppedVoice: this.connection.droppedVoice,
       mic: {
         ...this.mic,

@@ -306,6 +306,8 @@ export class Connection {
     if (writer) {
       if (this.wtInflight >= MAX_INFLIGHT_DATAGRAMS) {
         this.droppedVoice++;
+        this.voiceQuality = this.qualityFromMetrics();
+        this.handlers.onVoiceStats?.();
         return;
       }
       this.wtInflight++;
@@ -327,6 +329,7 @@ export class Connection {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (ws.bufferedAmount > BACKPRESSURE_BYTES) {
       this.droppedVoice++;
+      this.handlers.onVoiceStats?.();
       return;
     }
     ws.send(frame);
@@ -345,16 +348,10 @@ export class Connection {
     const generation = this.generation;
 
     try {
-      const { wt, edge } = await this.openFastestEdge(candidates);
-      await wt.ready;
-      if (generation !== this.generation) return wt.close();
-
-      // O segredo vai por stream: handshake perdido deixaria o canal pendurado.
-      const stream = await wt.createBidirectionalStream();
-      const writer = stream.writable.getWriter();
-      await writer.write(token);
-      const reply = await stream.readable.getReader().read();
-      if (reply.value?.[0] !== 1) return wt.close();
+      // O edge só é considerado vencedor depois do handshake completo. Assim,
+      // um QUIC que abriu mas não consegue falar com a origem não bloqueia os
+      // demais candidatos.
+      const { wt, edge } = await this.openFastestEdge(candidates, token, generation);
       if (generation !== this.generation) return wt.close();
 
       // A especificacao trocou `writable` por `createWritable()`; navegadores
@@ -379,8 +376,16 @@ export class Connection {
     }
   }
 
-  /** Abre todos os candidatos em paralelo e conserva a rota que responde primeiro. */
-  private async openFastestEdge(edges: VoiceEdge[]): Promise<{ wt: WebTransport; edge: VoiceEdge }> {
+  /**
+   * Abre os candidatos em paralelo e conserva o primeiro que completa o
+   * handshake de voz. O WebTransport `ready` sozinho não basta: o edge pode
+   * estar acessível, mas sem o link privado até a origem.
+   */
+  private async openFastestEdge(
+    edges: VoiceEdge[],
+    token: Uint8Array,
+    generation: number,
+  ): Promise<{ wt: WebTransport; edge: VoiceEdge }> {
     const transports: { wt: WebTransport; edge: VoiceEdge }[] = [];
     for (const edge of edges) {
       const init: WebTransportOptions = {};
@@ -397,24 +402,53 @@ export class Connection {
     }
     if (transports.length === 0) throw new Error('nenhum edge de voz valido');
 
+    const pending = new Set(transports.map((candidate) => ({
+      candidate,
+      ready: candidate.wt.ready.then(
+        () => ({ ok: true as const }),
+        (error) => ({ ok: false as const, error }),
+      ),
+    })));
+    let lastError: unknown = new Error('nenhum edge de voz respondeu');
+
     try {
-      const winner = await Promise.any(transports.map(async (candidate) => {
-        try {
-          await candidate.wt.ready;
-          return candidate;
-        } catch (err) {
+      while (pending.size > 0) {
+        const settled = await Promise.race(
+          [...pending].map((attempt) => attempt.ready.then((result) => ({ attempt, result }))),
+        );
+        pending.delete(settled.attempt);
+        const candidate = settled.attempt.candidate;
+        if (!settled.result.ok) {
+          lastError = settled.result.error;
           candidate.wt.close();
-          throw err;
+          continue;
         }
-      }));
-      for (const candidate of transports) {
-        if (candidate !== winner) candidate.wt.close();
+
+        try {
+          await this.authenticateVoice(candidate.wt, token, generation);
+          for (const attempt of pending) attempt.candidate.wt.close();
+          return candidate;
+        } catch (error) {
+          lastError = error;
+          candidate.wt.close();
+        }
       }
-      return winner;
-    } catch (err) {
-      for (const candidate of transports) candidate.wt.close();
-      throw err;
+    } finally {
+      for (const attempt of pending) attempt.candidate.wt.close();
     }
+
+    throw lastError;
+  }
+
+  private async authenticateVoice(wt: WebTransport, token: Uint8Array, generation: number): Promise<void> {
+    if (generation !== this.generation) throw new Error('conexão de voz substituída');
+    // O segredo vai por stream: handshake perdido deixaria o canal pendurado.
+    const stream = await wt.createBidirectionalStream();
+    const writer = stream.writable.getWriter();
+    await writer.write(token);
+    const reply = await stream.readable.getReader().read();
+    if (reply.value?.[0] !== 1) throw new Error('edge recusou a sessão de voz');
+    if (generation !== this.generation) throw new Error('conexão de voz substituída');
   }
 
   private startVoiceProbe(wt: WebTransport, generation: number): void {
@@ -508,6 +542,8 @@ export class Connection {
     this.voiceTransport = 'ws';
     this.voiceRtt = 0;
     this.voiceQuality = 'unknown';
+    this.voiceHost = '';
+    this.voiceRegion = '';
     if (this.wtProbeTimer !== null) {
       clearInterval(this.wtProbeTimer);
       this.wtProbeTimer = null;
