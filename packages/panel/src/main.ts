@@ -112,6 +112,8 @@ let stream: EventSource | null = null;
 let notice = '';
 let activeTab: AdminTab = 'overview';
 let renewingServerId = 0;
+let loggingIn = false;
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 const $ = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
   const el = document.createElement(tag);
@@ -125,15 +127,37 @@ function text(tag: string, cls: string, content: string): HTMLElement {
   return el;
 }
 
+function showToast(message: string, kind: 'success' | 'error' | 'info' = 'info'): void {
+  document.querySelector('.toast')?.remove();
+  if (toastTimer !== null) clearTimeout(toastTimer);
+
+  const toast = $('div', `toast toast-${kind}`);
+  toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  toast.append(
+    text('span', 'toast-mark', kind === 'success' ? '✓' : kind === 'error' ? '!' : 'i'),
+    text('span', '', message),
+  );
+  document.body.append(toast);
+  toastTimer = setTimeout(() => {
+    toast.remove();
+    toastTimer = null;
+  }, 4200);
+}
+
 function render(): void {
   app.replaceChildren(token ? renderAdmin() : renderLogin());
 }
 
 function renderLogin(): HTMLElement {
   const root = $('div', 'login');
-  const panel = $('form', 'panel form');
-  panel.append(text('h1', '', 'v0x painel'));
-  panel.append(text('p', 'subtle', 'Entre com sua conta ou com a senha master.'));
+  const panel = $('form', 'panel form login-panel');
+  const heading = $('div', 'login-heading');
+  heading.append(
+    text('span', 'login-kicker', 'CENTRAL DE GESTÃO'),
+    text('h1', '', 'Vox Painel'),
+    text('p', 'subtle', 'Entre com sua conta ou com a senha master.'),
+  );
+  panel.append(heading);
 
   const email = input('email do cliente (opcional)', '', 'email', 'cliente@exemplo.com');
 
@@ -146,7 +170,17 @@ function renderLogin(): HTMLElement {
 
   const error = text('div', 'error', notice);
   const submit = $('button', 'primary');
-  submit.textContent = 'entrar';
+  submit.type = 'submit';
+  submit.disabled = loggingIn;
+  submit.setAttribute('aria-busy', String(loggingIn));
+  if (loggingIn) {
+    submit.append($('span', 'loading-spinner'), text('span', '', 'Entrando…'));
+  } else {
+    submit.textContent = 'Entrar';
+  }
+
+  email.input.disabled = loggingIn;
+  passwordInput.disabled = loggingIn;
 
   panel.append(email.wrap, label, error, submit);
   panel.addEventListener('submit', (e) => {
@@ -190,10 +224,10 @@ function renderSidebar(): HTMLElement {
   side.append(list);
 
   const create = $('button', 'ghost');
-  create.textContent = '+ servidor virtual';
+  create.textContent = '+ Servidor Virtual';
   create.addEventListener('click', () => void createServer());
   const logout = $('button', 'danger');
-  logout.textContent = 'sair';
+  logout.textContent = 'Sair';
   logout.addEventListener('click', () => {
     sessionStorage.removeItem(TOKEN_KEY);
     token = '';
@@ -212,7 +246,7 @@ function renderMain(): HTMLElement {
   const top = $('div', 'topline');
   top.append(text('h2', '', server?.name ?? 'Painel'));
   const refresh = $('button', 'ghost');
-  refresh.textContent = 'atualizar';
+  refresh.textContent = 'Atualizar';
   refresh.addEventListener('click', () => void refreshAll());
   top.append(refresh);
   main.append(top, renderTabs());
@@ -259,14 +293,14 @@ function renderTabs(): HTMLElement {
   nav.setAttribute('aria-label', 'Seções do painel');
   nav.setAttribute('role', 'tablist');
   const tabs: [AdminTab, string, string][] = [
-    ['overview', 'visão geral', '⌂'],
-    ['server', 'servidor', '◈'],
-    ['users', 'usuários', '●'],
-    ['channels', 'canais', '⌗'],
-    ['bans', 'banimentos', '⊘'],
-    ['bot', 'bot', '✦'],
-    ['billing', 'faturamento', '◫'],
-    ['tickets', 'tickets', '◇'],
+    ['overview', 'Visão Geral', '⌂'],
+    ['server', 'Servidor', '◈'],
+    ['users', 'Usuários', '●'],
+    ['channels', 'Canais', '⌗'],
+    ['bans', 'Banimentos', '⊘'],
+    ['bot', 'Bot', '✦'],
+    ['billing', 'Faturamento', '◫'],
+    ['tickets', 'Tickets', '◇'],
   ];
   for (const [id, label, icon] of tabs) {
     const button = $('button', `tab-button${activeTab === id ? ' active' : ''}`);
@@ -310,7 +344,7 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
   }
   const pass = input('senha', '', 'password', server.password ? 'definida; preencha para trocar' : 'vazio = aberto');
   const save = $('button', 'primary');
-  save.textContent = 'salvar';
+  save.textContent = 'Salvar';
   save.addEventListener('click', () => {
     void api(`/api/servers/${server.id}`, {
       method: 'PATCH',
@@ -323,10 +357,15 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
           : {}),
         ...(pass.input.value ? { password: pass.input.value } : {}),
       }),
-    }).then(() => refreshAll());
+    }).then(() => {
+      showToast('Configuração do servidor salva.', 'success');
+      return refreshAll();
+    }).catch((error) => {
+      showToast(error instanceof Error ? error.message : String(error), 'error');
+    });
   });
   const remove = $('button', 'danger');
-  remove.textContent = 'remover';
+  remove.textContent = 'Remover';
   remove.addEventListener('click', () => void removeServer(server.id));
   form.append(slug.wrap, name.wrap, motd.wrap, max.wrap, pass.wrap, save, remove);
   box.append(form);
@@ -346,10 +385,10 @@ function renderClients(server: ServerDetail): HTMLElement {
     info.append(text('div', 'mono subtle', `${GROUP_NAMES[client.group]} · ${channel?.name ?? 'sem canal'} · ${client.platform || 'Web'}`));
 
     const actions = $('div', 'actions');
-    actions.append(action('mover', () => moveClient(server, client)));
-    actions.append(action('grupo', () => setGroup(server, client)));
-    actions.append(action('kick', () => kick(server, client)));
-    actions.append(action('ban', () => ban(server, client), 'danger'));
+    actions.append(action('Mover', () => moveClient(server, client)));
+    actions.append(action('Grupo', () => setGroup(server, client)));
+    actions.append(action('Kick', () => kick(server, client)));
+    actions.append(action('Banir', () => ban(server, client), 'danger'));
     row.append(info, actions);
     rows.append(row);
   }
@@ -382,7 +421,7 @@ function renderBans(server: ServerDetail): HTMLElement {
     const info = $('div', '');
     info.append(text('strong', 'mono', ban.fingerprint.slice(0, 16)));
     info.append(text('div', 'subtle', `${until} · ${ban.reason}`));
-    row.append(info, action('remover', () => unban(server, ban), 'danger'));
+    row.append(info, action('Remover', () => unban(server, ban), 'danger'));
     rows.append(row);
   }
   box.append(rows);
@@ -417,7 +456,7 @@ function renderBilling(server: ServerDetail): HTMLElement {
       const renew = $('button', 'primary');
       renew.type = 'button';
       renew.disabled = renewingServerId === server.id;
-      renew.textContent = renewingServerId === server.id ? 'abrindo pagamento...' : 'renovar por Pix ou cartão';
+      renew.textContent = renewingServerId === server.id ? 'Abrindo pagamento…' : 'Renovar por Pix ou Cartão';
       renew.addEventListener('click', () => { void renewServer(server.id); });
       box.append(renew);
     }
@@ -447,7 +486,7 @@ function renderTickets(): HTMLElement {
   const button = $('button', 'ghost');
   button.type = 'button';
   button.disabled = true;
-  button.textContent = 'abrir ticket · em breve';
+  button.textContent = 'Abrir Ticket · Em Breve';
   empty.append(button);
   box.append(empty);
   return box;
@@ -513,6 +552,7 @@ async function renewServer(serverId: number): Promise<void> {
   } catch (error) {
     renewingServerId = 0;
     notice = error instanceof Error ? error.message : String(error);
+    showToast(notice, 'error');
     render();
   }
 }
@@ -524,7 +564,7 @@ function renderAnnouncement(server: ServerDetail): HTMLElement {
   const msg = $('input') as HTMLInputElement;
   msg.placeholder = 'mensagem para todos neste servidor';
   const send = $('button', 'primary');
-  send.textContent = 'enviar';
+  send.textContent = 'Enviar';
   send.addEventListener('click', () => {
     if (!msg.value.trim()) return;
     void api(`/api/servers/${server.id}/announce`, {
@@ -532,8 +572,11 @@ function renderAnnouncement(server: ServerDetail): HTMLElement {
       body: JSON.stringify({ text: msg.value.trim() }),
     }).then(() => {
       msg.value = '';
-      notice = 'anúncio enviado';
+      notice = '';
+      showToast('Anúncio enviado.', 'success');
       render();
+    }).catch((error) => {
+      showToast(error instanceof Error ? error.message : String(error), 'error');
     });
   });
   form.append(msg, send);
@@ -549,19 +592,27 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   const statusLabel = text('span', bot.running ? 'bot-status bot-on' : 'bot-status bot-off', bot.running ? 'ativo' : 'parado');
   statusLine.append(statusLabel);
   const toggle = $('button', bot.running ? 'danger' : 'primary');
-  toggle.textContent = bot.running ? 'parar' : 'iniciar';
+  toggle.textContent = bot.running ? 'Parar' : 'Iniciar';
   toggle.addEventListener('click', () => {
     void api(`/api/servers/${server.id}/bot/${bot.running ? 'stop' : 'start'}`, { method: 'POST' })
-      .then(() => loadDetail(server.id));
+      .then(() => {
+        showToast(bot.running ? 'Bot parado.' : 'Bot iniciado.', 'success');
+        return loadDetail(server.id);
+      }).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      });
   });
   statusLine.append(toggle);
   const test = $('button', 'ghost');
-  test.textContent = 'testar alerta';
+  test.textContent = 'Testar Alerta';
   test.addEventListener('click', () => {
     void api(`/api/servers/${server.id}/bot/test`, { method: 'POST' })
       .then(() => {
-        notice = 'alerta de teste enviado';
+        notice = '';
+        showToast('Alerta de teste enviado.', 'success');
         render();
+      }).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
       });
   });
   statusLine.append(test);
@@ -592,7 +643,7 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   rules.append(deaths.wrap, presence.wrap);
 
   const save = $('button', 'primary');
-  save.textContent = 'salvar config';
+  save.textContent = 'Salvar Configuração';
   save.addEventListener('click', () => {
     void api(`/api/servers/${server.id}/bot`, {
       method: 'PATCH',
@@ -610,7 +661,10 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
       }),
     }).then(() => {
       botDraft = {};
-      void loadDetail(server.id);
+      showToast('Configuração do bot salva.', 'success');
+      return loadDetail(server.id);
+    }).catch((error) => {
+      showToast(error instanceof Error ? error.message : String(error), 'error');
     });
   });
 
@@ -625,7 +679,7 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   const addInput = $('input') as HTMLInputElement;
   addInput.placeholder = 'adicionar jogador';
   const addBtn = $('button', 'ghost');
-  addBtn.textContent = '+ adicionar';
+  addBtn.textContent = '+ Adicionar';
   addBtn.addEventListener('click', () => {
     const name = addInput.value.trim();
     if (!name) return;
@@ -634,7 +688,10 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
       body: JSON.stringify({ name }),
     }).then(() => {
       addInput.value = '';
-      void loadDetail(server.id);
+      showToast('Jogador adicionado à Hunted List.', 'success');
+      return loadDetail(server.id);
+    }).catch((error) => {
+      showToast(error instanceof Error ? error.message : String(error), 'error');
     });
   });
   addInput.addEventListener('keydown', (e) => {
@@ -651,11 +708,16 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
     const row = $('div', 'rowline');
     row.append(text('span', 'mono', name));
     const del = $('button', 'danger');
-    del.textContent = 'remover';
+    del.textContent = 'Remover';
     del.addEventListener('click', () => {
       void api(`/api/servers/${server.id}/bot/hunted/${encodeURIComponent(name)}`, {
         method: 'DELETE',
-      }).then(() => loadDetail(server.id));
+      }).then(() => {
+        showToast('Jogador removido da Hunted List.', 'success');
+        return loadDetail(server.id);
+      }).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      });
     });
     row.append(del);
     list.append(row);
@@ -694,6 +756,11 @@ function action(label: string, run: () => void, cls = 'ghost'): HTMLButtonElemen
 }
 
 async function login(password: string, email = ''): Promise<void> {
+  if (loggingIn) return;
+  loggingIn = true;
+  notice = '';
+  render();
+
   try {
     const res = await fetch(email ? '/api/account/login' : '/api/login', {
       method: 'POST',
@@ -707,8 +774,14 @@ async function login(password: string, email = ''): Promise<void> {
     notice = '';
     await refreshAll();
     openStream();
+    loggingIn = false;
+    showToast('Login realizado com sucesso.', 'success');
   } catch (err) {
-    notice = err instanceof Error ? err.message : String(err);
+    loggingIn = false;
+    token = '';
+    sessionStorage.removeItem(TOKEN_KEY);
+    notice = '';
+    showToast(err instanceof Error ? err.message : String(err), 'error');
     render();
   }
 }

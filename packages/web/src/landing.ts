@@ -24,16 +24,16 @@ function renderNav(): HTMLElement {
 
   const links = $('div', 'landing-nav-links');
   links.append(
-    landingLink('recursos', '#recursos'),
-    landingLink('como funciona', '#como-funciona'),
-    landingLink('download', '#download'),
-    landingLink('planos', '#planos'),
+    landingLink('Recursos', '#recursos'),
+    landingLink('Como Funciona', '#como-funciona'),
+    landingLink('Download', '#download'),
+    landingLink('Planos', '#planos'),
   );
 
   const actions = $('div', 'landing-nav-actions');
   actions.append(
-    landingLink('entrar no Vox', '/app', 'landing-button landing-button-small landing-button-app'),
-    landingLink('abrir painel', '/painel', 'landing-button landing-button-small landing-button-panel'),
+    landingLink('Entrar no Vox', '/app', 'landing-button landing-button-small landing-button-app'),
+    landingLink('Abrir Painel', '/painel', 'landing-button landing-button-small landing-button-panel'),
   );
   nav.append(brand, links, actions);
   return nav;
@@ -50,8 +50,8 @@ function renderHero(): HTMLElement {
 
   const actions = $('div', 'landing-hero-actions');
   actions.append(
-    landingLink('entrar no Vox', '/app', 'landing-button landing-button-primary'),
-    landingLink('conhecer recursos', '#recursos', 'landing-button landing-button-outline'),
+    landingLink('Entrar no Vox', '/app', 'landing-button landing-button-primary'),
+    landingLink('Conhecer Recursos', '#recursos', 'landing-button landing-button-outline'),
   );
   copy.append(actions, renderQuickConnect());
 
@@ -73,7 +73,7 @@ function renderQuickConnect(): HTMLElement {
   input.setAttribute('aria-label', 'Endereço do servidor');
   const submit = $('button', 'landing-connect-button');
   submit.type = 'submit';
-  submit.textContent = 'conectar';
+  submit.textContent = 'Conectar';
   form.append(input, submit);
   form.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -149,7 +149,7 @@ function renderDownload(): HTMLElement {
   section.append(sectionIntro('baixe e escolha seu jeito', 'O Vox acompanha a sua rotina de jogo.'));
   const grid = $('div', 'landing-download-grid');
   grid.append(
-    downloadCard('web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', landingLink('abrir Vox', '/app', 'landing-button landing-button-primary')),
+    downloadCard('web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', landingLink('Abrir Vox', '/app', 'landing-button landing-button-primary')),
     downloadCard('desktop', 'Windows / Tauri', 'disponível agora', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', downloadPair()),
     downloadCard('mobile', 'Android e iOS', 'próxima etapa', 'A mesma experiência do Vox chegando ao celular para você acompanhar o time de qualquer lugar.', text('span', 'landing-download-soon', 'roadmap em breve')),
   );
@@ -174,7 +174,7 @@ function downloadLink(label: string, href: string): HTMLAnchorElement {
 
 function downloadPair(): HTMLElement {
   const pair = $('div', 'landing-download-pair');
-  pair.append(downloadLink('baixar .exe', '/downloads/v0x-windows-x64-setup.exe'), downloadLink('baixar .msi', '/downloads/v0x-windows-x64.msi'));
+  pair.append(downloadLink('Baixar .EXE', '/downloads/v0x-windows-x64-setup.exe'), downloadLink('Baixar .MSI', '/downloads/v0x-windows-x64.msi'));
   return pair;
 }
 
@@ -301,7 +301,7 @@ function renderPlans(): HTMLElement {
   summary.append(summaryPrice, text('span', 'landing-configurator-period', 'por mês'));
   const summaryList = $('ul', 'landing-configurator-list');
   summary.append(summaryList);
-  const action = landingLink('criar meu servidor grátis', '/contratar?plan=community', 'landing-button landing-button-primary landing-configurator-action');
+  const action = landingLink('Criar Meu Servidor Grátis', '/contratar?plan=community', 'landing-button landing-button-primary landing-configurator-action');
   action.dataset.configAction = 'true';
   summary.append(action, text('p', 'landing-configurator-note', 'Pix ou cartão · servidor criado após a confirmação do pagamento.'));
 
@@ -346,7 +346,7 @@ function updateConfigurator(section: HTMLElement, slider: HTMLInputElement, botC
   if (price) price.textContent = priceCents > 0 ? formatCents(priceCents) : 'gratuito';
   if (action) {
     action.href = `/contratar?plan=${encodeURIComponent(planKey)}`;
-    action.textContent = priceCents > 0 ? 'continuar com essa configuração' : 'criar meu servidor grátis';
+    action.textContent = priceCents > 0 ? 'Continuar com Essa Configuração' : 'Criar Meu Servidor Grátis';
   }
   if (list) {
     list.replaceChildren(
@@ -387,7 +387,7 @@ function renderCta(): HTMLElement {
   const content = $('div', 'landing-cta-content');
   content.append(text('span', 'landing-kicker', 'PRONTO PARA ENTRAR?'), text('h2', '', 'Seu time já está esperando.'), text('p', '', 'Abra o Vox, escolha um channel e coloque a comunicação no lugar certo — dentro da partida, sem distração.'));
   const actions = $('div', 'landing-cta-actions');
-  actions.append(landingLink('abrir painel Vox', '/painel', 'landing-button landing-button-primary'));
+  actions.append(landingLink('Abrir Painel Vox', '/painel', 'landing-button landing-button-primary'));
   content.append(actions);
   section.append(content);
   return section;
