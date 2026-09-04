@@ -57,6 +57,7 @@ Variáveis opcionais na VPS:
 ```ini
 VOX_SCRAPER_PROFILE_DIR=/opt/vox/data/scraper-profiles
 VOX_SCRAPER_HEADLESS=true
+VOX_SCRAPER_FINGERPRINT=51873  # mantenha igual ao bootstrap manual
 CLOAKBROWSER_LICENSE_KEY=      # opcional; não colocar no repositório
 ```
 

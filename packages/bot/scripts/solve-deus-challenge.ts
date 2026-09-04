@@ -11,6 +11,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchPersistentContext } from 'cloakbrowser';
 import type { Page } from 'playwright-core';
+import { scraperBrowserArgs } from '../src/scrapers/browser.js';
 
 type Provider = 'deusot' | 'deusold';
 
@@ -81,6 +82,7 @@ async function main(): Promise<void> {
   const context = await launchPersistentContext({
     userDataDir: manualProfile,
     headless: false,
+    args: scraperBrowserArgs(),
     ...(proxy ? { proxy } : {}),
   });
   const page = context.pages()[0] ?? await context.newPage();

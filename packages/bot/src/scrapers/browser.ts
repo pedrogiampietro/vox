@@ -16,6 +16,7 @@ import type { Browser, BrowserContext, Page } from 'playwright-core';
 const NAVIGATION_TIMEOUT_MS = 25_000;
 const CHALLENGE_WAIT_MS = 12_000;
 const PROFILE_ROOT = process.env['VOX_SCRAPER_PROFILE_DIR'] || resolve('data', 'scraper-profiles');
+const DEFAULT_FINGERPRINT = '51873';
 
 let sharedBrowser: Browser | null = null;
 let sharedBrowserPromise: Promise<Browser> | null = null;
@@ -80,11 +81,23 @@ export function scraperProfileDir(id: string): string {
   return resolve(PROFILE_ROOT, id);
 }
 
+/**
+ * O clearance do site pode ser associado a sinais do browser. O seed fixo
+ * permite que a sessao resolvida no bootstrap seja reutilizada apos restart.
+ */
+export function scraperBrowserArgs(): string[] {
+  const configured = process.env['VOX_SCRAPER_FINGERPRINT']?.trim();
+  const fingerprint = configured && /^\d+$/.test(configured)
+    ? configured
+    : DEFAULT_FINGERPRINT;
+  return [`--fingerprint=${fingerprint}`];
+}
+
 async function browserRuntime(): Promise<Browser> {
   if (sharedBrowser) return sharedBrowser;
   if (!sharedBrowserPromise) {
     const headless = envBoolean('VOX_SCRAPER_HEADLESS', true);
-    sharedBrowserPromise = launch({ headless }).then((browser) => {
+    sharedBrowserPromise = launch({ headless, args: scraperBrowserArgs() }).then((browser) => {
       sharedBrowser = browser;
       browser.on('disconnected', () => {
         sharedBrowser = null;
