@@ -152,7 +152,7 @@ function renderDownload(): HTMLElement {
   const grid = $('div', 'landing-download-grid');
   grid.append(
     downloadCard('web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', landingLink('abrir Vox', '/app', 'landing-button landing-button-primary')),
-    downloadCard('desktop', 'Windows / Tauri', 'em preparação', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', text('span', 'landing-download-soon', 'build desktop em breve')),
+    downloadCard('desktop', 'Windows / Tauri', 'disponível agora', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', downloadPair()),
     downloadCard('mobile', 'Android e iOS', 'próxima etapa', 'A mesma experiência do Vox chegando ao celular para você acompanhar o time de qualquer lugar.', text('span', 'landing-download-soon', 'roadmap em breve')),
   );
   section.append(grid);
@@ -166,6 +166,18 @@ function downloadCard(kind: string, title: string, status: string, detail: strin
   actions.append(action);
   card.append(actions);
   return card;
+}
+
+function downloadLink(label: string, href: string): HTMLAnchorElement {
+  const link = landingLink(label, href, 'landing-button landing-button-primary');
+  link.setAttribute('download', '');
+  return link;
+}
+
+function downloadPair(): HTMLElement {
+  const pair = $('div', 'landing-download-pair');
+  pair.append(downloadLink('baixar .exe', '/downloads/v0x-windows-x64-setup.exe'), downloadLink('baixar .msi', '/downloads/v0x-windows-x64.msi'));
+  return pair;
 }
 
 function renderFeatures(): HTMLElement {
@@ -214,9 +226,9 @@ function renderPlans(): HTMLElement {
   section.append(sectionIntro('planos', 'Comece pequeno. Cresça quando o time pedir mais espaço.'));
   const grid = $('div', 'landing-plan-grid');
   grid.append(
-    planCard('comunidade', 'Para testar com o time', 'gratuito', ['10 slots', 'Channels essenciais', 'Áudio em tempo real', 'Acesso pelo navegador'], 'começar agora', '/app'),
-    planCard('privado', 'Para sua guilda', 'sob consulta', ['Até 50 slots', 'Servidor dedicado', 'Permissões e grupos', 'Bot Rubinot configurável'], 'falar sobre o Vox', '/app', true),
-    planCard('war room', 'Para operações maiores', 'sob medida', ['Até 100 slots', 'Estrutura para vários times', 'Edges regionais', 'Rubinot e módulos futuros'], 'montar estrutura', '/app'),
+    planCard('comunidade', 'Para testar com o time', 'gratuito', ['10 slots', 'Channels essenciais', 'Áudio em tempo real', 'Acesso pelo navegador'], 'começar agora', '/contratar?plan=community'),
+    planCard('privado', 'Para sua guilda', 'sob consulta', ['Até 50 slots', 'Servidor dedicado', 'Permissões e grupos', 'Bot Rubinot configurável'], 'falar sobre o Vox', '/contratar?plan=private', true),
+    planCard('war room', 'Para operações maiores', 'sob medida', ['Até 100 slots', 'Estrutura para vários times', 'Edges regionais', 'Rubinot e módulos futuros'], 'montar estrutura', '/contratar?plan=war'),
   );
   section.append(grid, text('p', 'landing-plan-note', 'A tabela inicial de slots está pronta para o checkout. Os planos pagos ainda serão conectados à contratação e à cobrança automática.'));
   return section;

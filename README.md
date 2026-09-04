@@ -102,6 +102,9 @@ Em produção, a entrada pública fica organizada assim:
 - `https://v0x.online/` — landing page e apresentação do Vox.
 - `https://v0x.online/app` — área para entrar nos servidores.
 - `https://v0x.online/cliente` — área do cliente, com cadastro, login e visão dos servidores vinculados.
+- `https://v0x.online/contratar?plan=community` — contratação guiada; o plano gratuito provisiona o primeiro servidor automaticamente.
+- `https://v0x.online/downloads/v0x-windows-x64-setup.exe` — instalador Windows (NSIS).
+- `https://v0x.online/downloads/v0x-windows-x64.msi` — instalador Windows (MSI).
 - `https://v0x.online/admin` — painel administrativo.
 - `https://servidor.v0x.online/` — acesso direto ao servidor virtual.
 
@@ -302,6 +305,16 @@ casa dos 10 MB em vez dos 180 MB de um Electron.
 ```bash
 npm run dev:desktop
 ```
+
+Para gerar os instaladores Windows:
+
+```bash
+npm run build --workspace=@vox/desktop
+```
+
+Os bundles são gerados em `packages/desktop/src-tauri/target/release/bundle/`.
+O checkout já preserva o plano escolhido; o plano gratuito cria o servidor e
+vincula o dono à conta. Pix e cartão aguardam a configuração do Mercado Pago.
 
 Antes do primeiro `tauri build`, gere os ícones a partir de um PNG 1024×1024:
 

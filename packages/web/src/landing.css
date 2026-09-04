@@ -469,7 +469,6 @@
   text-transform: uppercase;
 }
 
-.landing-download-desktop .landing-download-status,
 .landing-download-mobile .landing-download-status { color: var(--text-faint); }
 
 .landing-download-card h3 {
@@ -495,6 +494,8 @@
 }
 
 .landing-download-actions .landing-button { width: 100%; }
+.landing-download-pair { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.landing-download-pair .landing-button { padding: 0 8px; }
 .landing-download-soon { color: var(--text-faint); font-family: var(--mono); font-size: 10px; }
 
 .landing-feature-grid,

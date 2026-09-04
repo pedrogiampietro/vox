@@ -100,6 +100,10 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return serveStatic(WEB_ROOT, 'customer.html', res);
   }
 
+  if ((path === '/contratar' || path === '/contratar/') && hasWeb) {
+    return serveStatic(WEB_ROOT, 'checkout.html', res);
+  }
+
   // O Caddy consulta isto antes de emitir TLS sob demanda para um subdominio.
   // So slugs existentes podem gerar certificados, evitando abuso do dominio.
   if (path === '/internal/caddy-ask') {

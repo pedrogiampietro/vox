@@ -222,13 +222,15 @@ function module(name: string, state: string, active: boolean): HTMLElement {
 
 function renderDownloadCard(): HTMLElement {
   const card = dashboardCard('aplicativo', 'Leve sua call para a partida.', 'half');
-  card.append(text('p', 'customer-muted-copy', 'O cliente web já está disponível. A versão desktop em Tauri está sendo preparada para Windows e outras plataformas.'));
+  card.append(text('p', 'customer-muted-copy', 'O cliente web já está disponível. A versão desktop em Tauri já pode ser instalada no Windows.'));
   const actions = $('div', 'customer-card-actions');
   const web = $('a', 'customer-button customer-button-primary');
   web.href = '/app';
   web.textContent = 'abrir versão web';
-  const desktop = $('span', 'customer-download-soon');
-  desktop.textContent = 'Windows / Tauri · em breve';
+  const desktop = $('a', 'customer-button customer-button-outline');
+  desktop.href = '/downloads/v0x-windows-x64-setup.exe';
+  desktop.setAttribute('download', '');
+  desktop.textContent = 'baixar Windows';
   actions.append(web, desktop);
   card.append(actions);
   return card;

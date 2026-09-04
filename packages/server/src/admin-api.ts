@@ -108,6 +108,10 @@ export class AdminApi {
       return send(res, 200, this.overview(session));
     }
 
+    if (path === '/api/account/provision' && method === 'POST') {
+      return this.provisionAccountServer(req, res, session);
+    }
+
     if (path === '/api/stream' && method === 'GET') {
       return this.stream(req, res, session);
     }
@@ -382,6 +386,46 @@ export class AdminApi {
     this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: account.id });
     this.pruneTokens();
     send(res, 201, { token, role: 'owner', expiresIn: config.adminSessionMs, account: publicAccount(account) });
+  }
+
+  private async provisionAccountServer(
+    req: IncomingMessage,
+    res: ServerResponse,
+    session: { ownerId: number | null },
+  ): Promise<void> {
+    if (session.ownerId === null) return send(res, 403, { error: 'somente contas de cliente podem contratar' });
+    const body = await readJson(req);
+    const plan = str(body.plan).trim().toLowerCase();
+    if (plan !== 'community') {
+      return send(res, 402, { error: 'este plano precisa passar pelo checkout do Mercado Pago antes da criação' });
+    }
+    const owned = this.registry.snapshot().filter((server) => server.ownerId === session.ownerId);
+    if (owned.length > 0) {
+      return send(res, 409, { error: 'esta conta já possui um servidor; escolha um plano maior no checkout' });
+    }
+    const name = str(body.name).trim() || 'Meu servidor Vox';
+    const slug = str(body.slug).trim().toLowerCase();
+    const password = str(body.password);
+    const hub = this.registry.create({
+      name,
+      slug,
+      ownerId: session.ownerId,
+      password,
+      maxClients: 10,
+      motd: 'Bem-vindo ao seu servidor Vox.',
+    });
+    this.broadcastState();
+    return send(res, 201, {
+      plan,
+      server: {
+        id: hub.id,
+        slug: hub.settings.slug,
+        name: hub.settings.name,
+        maxClients: hub.settings.maxClients,
+        url: publicUrl(hub.settings.slug),
+      },
+      adminUrl: '/admin',
+    });
   }
 
   private allowAttempt(ip: string): boolean {
