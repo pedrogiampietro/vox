@@ -18,7 +18,7 @@ import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
-import { applyBotConfig, providerInfoFor, startBot, stopBot, testBot } from './bot-ctrl.js';
+import { applyBotConfig, currentBotConfig, providerInfoFor, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { addTicketMessage, createTicket, getTicket, listTickets, updateTicketStatus, type TicketStatus } from './tickets.js';
 import {
   BILLING_PERIOD_MS,
@@ -315,12 +315,16 @@ export class AdminApi {
 
     if (action === '/bot' && method === 'GET') {
       const provider = providerInfoFor(hub);
+      const botConfig = currentBotConfig(hub);
       return send(res, 200, {
         provider: provider.id,
         providerLabel: provider.label,
-        config: hub.botConfig,
+        config: botConfig,
         running: hub.rubinot?.isRunning ?? false,
-        hunted: hub.rubinot?.huntedList ?? hub.botConfig.huntedNames,
+        hunted: hub.rubinot?.manualHuntedList ?? hub.botConfig.huntedNames,
+        friends: hub.rubinot?.friendsList ?? [],
+        friendGuilds: [...hub.botConfig.friendGuilds],
+        enemyGuilds: [...hub.botConfig.enemyGuilds],
       });
     }
 
@@ -373,6 +377,75 @@ export class AdminApi {
       testBot(hub);
       hub.broadcastBotState();
       this.broadcastState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest === 'restart' && method === 'POST') {
+      applyBotConfig(hub);
+      this.registry.scheduleSave();
+      hub.broadcastBotState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest === 'guilds/friend' && method === 'POST') {
+      const body = await readJson(req);
+      const name = str(body.name).trim();
+      if (!name) return send(res, 400, { error: 'nome da guild vazio' });
+      const key = name.toLowerCase();
+      const enemyBefore = hub.botConfig.enemyGuilds.length;
+      const friendBefore = hub.botConfig.friendGuilds.length;
+      hub.botConfig.enemyGuilds = hub.botConfig.enemyGuilds.filter((guild) => guild.toLowerCase() !== key);
+      if (!hub.botConfig.friendGuilds.some((guild) => guild.toLowerCase() === key)) {
+        hub.botConfig.friendGuilds.push(name);
+      }
+      if (enemyBefore !== hub.botConfig.enemyGuilds.length || friendBefore !== hub.botConfig.friendGuilds.length) {
+        applyBotConfig(hub);
+      }
+      this.registry.scheduleSave();
+      hub.broadcastBotState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest === 'guilds/enemy' && method === 'POST') {
+      const body = await readJson(req);
+      const name = str(body.name).trim();
+      if (!name) return send(res, 400, { error: 'nome da guild vazio' });
+      const key = name.toLowerCase();
+      const friendBefore = hub.botConfig.friendGuilds.length;
+      const enemyBefore = hub.botConfig.enemyGuilds.length;
+      hub.botConfig.friendGuilds = hub.botConfig.friendGuilds.filter((guild) => guild.toLowerCase() !== key);
+      if (!hub.botConfig.enemyGuilds.some((guild) => guild.toLowerCase() === key)) {
+        hub.botConfig.enemyGuilds.push(name);
+      }
+      if (friendBefore !== hub.botConfig.friendGuilds.length || enemyBefore !== hub.botConfig.enemyGuilds.length) {
+        applyBotConfig(hub);
+      }
+      this.registry.scheduleSave();
+      hub.broadcastBotState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest.startsWith('guilds/friend/') && method === 'DELETE') {
+      const name = decodeURIComponent(rest.slice('guilds/friend/'.length)).trim();
+      if (!name) return send(res, 400, { error: 'nome da guild vazio' });
+      hub.botConfig.friendGuilds = hub.botConfig.friendGuilds.filter(
+        (guild) => guild.toLowerCase() !== name.toLowerCase(),
+      );
+      applyBotConfig(hub);
+      this.registry.scheduleSave();
+      hub.broadcastBotState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest.startsWith('guilds/enemy/') && method === 'DELETE') {
+      const name = decodeURIComponent(rest.slice('guilds/enemy/'.length)).trim();
+      if (!name) return send(res, 400, { error: 'nome da guild vazio' });
+      hub.botConfig.enemyGuilds = hub.botConfig.enemyGuilds.filter(
+        (guild) => guild.toLowerCase() !== name.toLowerCase(),
+      );
+      applyBotConfig(hub);
+      this.registry.scheduleSave();
+      hub.broadcastBotState();
       return send(res, 200, { ok: true });
     }
 

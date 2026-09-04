@@ -209,6 +209,36 @@ body {
   grid-template-columns: 1fr 1fr;
 }
 
+.bot-provider-field {
+  max-width: 420px;
+  margin: 4px 0 14px;
+}
+
+.bot-section-title {
+  margin: 18px 0 4px;
+  color: var(--amber);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.bot-section-hint {
+  margin: 0 0 10px;
+}
+
+.bot-check-grid .check {
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--ink-700);
+}
+
+.bot-guild-section {
+  margin-top: 18px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
 .table {
   display: grid;
   gap: 4px;

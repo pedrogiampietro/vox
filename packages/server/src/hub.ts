@@ -109,6 +109,7 @@ export class Hub {
     removeHunted(n: string): void;
     clearHunted(): void;
     huntedList: string[];
+    manualHuntedList: string[];
     friendsList: string[];
     enemiesList: string[];
     isRunning: boolean;
@@ -1380,7 +1381,7 @@ export class Hub {
       alertEnemyOnline: c.alertEnemyOnline,
       alertEnemyOffline: c.alertEnemyOffline,
       running: this.rubinot?.isRunning ?? false,
-      hunted: this.rubinot?.enemiesList ?? [...c.huntedNames],
+      hunted: this.rubinot?.manualHuntedList ?? [...c.huntedNames],
       friends: this.rubinot?.friendsList ?? [],
       friendGuilds: [...c.friendGuilds],
       enemyGuilds: [...c.enemyGuilds],

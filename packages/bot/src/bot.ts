@@ -183,6 +183,13 @@ export class RubinotBot {
     return [...this.tags.entries()].filter(([, t]) => t.kind === 'enemy').map(([n]) => n);
   }
 
+  /** Apenas nomes adicionados manualmente, sem membros de guild inimiga. */
+  get manualHuntedList(): string[] {
+    return [...this.tags.entries()]
+      .filter(([, t]) => t.kind === 'enemy' && !t.guild)
+      .map(([n]) => n);
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     this.ac = new AbortController();
@@ -275,9 +282,9 @@ export class RubinotBot {
     if (changed) this.refreshInfoChannels();
   }
 
-  /** Lista combinada, para clientes antigos e persistencia. */
+  /** Lista manual persistida e exibida no painel. */
   get huntedList(): string[] {
-    return this.enemiesList;
+    return this.manualHuntedList;
   }
 
   // ---------------------------------------------------------------- poll --

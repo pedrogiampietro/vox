@@ -86,6 +86,8 @@ type BotState = {
     world: string;
     guildName: string;
     huntedNames: string[];
+    friendGuilds: string[];
+    enemyGuilds: string[];
     intervalMs: number;
     channelName: string;
     enabled: boolean;
@@ -94,9 +96,18 @@ type BotState = {
     globalLevelMin: number;
     summarizePresence: boolean;
     presenceSummaryMs: number;
+    alertEnemyDeath: boolean;
+    alertFriendDeath: boolean;
+    alertFriendLevelUp: boolean;
+    alertEnemyLevelUp: boolean;
+    alertEnemyOnline: boolean;
+    alertEnemyOffline: boolean;
   };
   running: boolean;
   hunted: string[];
+  friends: string[];
+  friendGuilds: string[];
+  enemyGuilds: string[];
 };
 
 type ServerDetail = {
@@ -798,60 +809,68 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
     return box;
   }
 
+  box.append(text('h4', 'bot-section-title', 'CONEXÃO'));
   const statusLine = $('div', 'toolbar');
   const statusLabel = text('span', bot.running ? 'bot-status bot-on' : 'bot-status bot-off', bot.running ? 'ativo' : 'parado');
   statusLine.append(statusLabel);
-  const toggle = $('button', bot.running ? 'danger' : 'primary');
-  toggle.textContent = bot.running ? 'Parar' : 'Iniciar';
-  toggle.addEventListener('click', () => {
-    void api(`/api/servers/${server.id}/bot/${bot.running ? 'stop' : 'start'}`, { method: 'POST' })
-      .then(() => {
-        showToast(bot.running ? 'Bot parado.' : 'Bot iniciado.', 'success');
-        return loadDetail(server.id);
-      }).catch((error) => {
-        showToast(error instanceof Error ? error.message : String(error), 'error');
-      });
-  });
-  statusLine.append(toggle);
-  const test = $('button', 'ghost');
-  test.textContent = 'Testar Alerta';
-  test.addEventListener('click', () => {
-    void api(`/api/servers/${server.id}/bot/test`, { method: 'POST' })
-      .then(() => {
-        notice = '';
-        showToast('Alerta de teste enviado.', 'success');
-        render();
-      }).catch((error) => {
-        showToast(error instanceof Error ? error.message : String(error), 'error');
-      });
-  });
-  statusLine.append(test);
   box.append(statusLine);
 
-  const form = $('div', 'form two');
+  box.append(text('p', 'subtle bot-section-hint', 'Configure a conexão com o mundo e o canal que receberá os alertas.'));
+  const connectionForm = $('div', 'form two');
   const world = input('world', botDraft.world ?? bot.config.world, 'text', 'ex: Vesperia');
-  const guild = input('guild', botDraft.guildName ?? bot.config.guildName, 'text', 'nome da guild (opcional)');
   const channel = input('canal de notificacao', botDraft.channelName ?? bot.config.channelName, 'text', 'bot');
   const interval = input('intervalo (segundos)', botDraft.intervalSec ?? String(bot.config.intervalMs / 1000), 'number');
-  const globalLevelMin = input('level global min.', botDraft.globalLevelMin ?? String(bot.config.globalLevelMin), 'number');
-  const presenceSummarySec = input(
-    'resumo online/offline (segundos)',
-    botDraft.presenceSummarySec ?? String(bot.config.presenceSummaryMs / 1000),
-    'number',
-  );
 
   world.input.addEventListener('input', () => { botDraft.world = world.input.value; });
-  guild.input.addEventListener('input', () => { botDraft.guildName = guild.input.value; });
   channel.input.addEventListener('input', () => { botDraft.channelName = channel.input.value; });
   interval.input.addEventListener('input', () => { botDraft.intervalSec = interval.input.value; });
-  globalLevelMin.input.addEventListener('input', () => { botDraft.globalLevelMin = globalLevelMin.input.value; });
-  presenceSummarySec.input.addEventListener('input', () => { botDraft.presenceSummarySec = presenceSummarySec.input.value; });
 
-  const rules = $('div', 'bot-rules');
-  const deaths = checkbox('kills/deaths globais', bot.config.globalDeaths && bot.config.globalKills);
-  const presence = checkbox('resumir online/offline', bot.config.summarizePresence);
-  rules.append(deaths.wrap, presence.wrap);
+  connectionForm.append(world.wrap, channel.wrap, interval.wrap);
+  box.append(connectionForm);
 
+  box.append(text('h4', 'bot-section-title', 'ALERTAS'));
+  box.append(text('p', 'subtle bot-section-hint', 'Escolha o que o bot deve postar no canal.'));
+  const alertEnemyDeath = checkbox('morte de inimigo', bot.config.alertEnemyDeath);
+  const alertFriendDeath = checkbox('morte de amigo', bot.config.alertFriendDeath);
+  const alertFriendLevelUp = checkbox('level up de amigo', bot.config.alertFriendLevelUp);
+  const alertEnemyLevelUp = checkbox('level up de inimigo', bot.config.alertEnemyLevelUp);
+  const alertEnemyOnline = checkbox('inimigo online', bot.config.alertEnemyOnline);
+  const alertEnemyOffline = checkbox('inimigo offline', bot.config.alertEnemyOffline);
+  const alerts = $('div', 'form two bot-check-grid');
+  alerts.append(
+    alertEnemyDeath.wrap,
+    alertFriendDeath.wrap,
+    alertFriendLevelUp.wrap,
+    alertEnemyLevelUp.wrap,
+    alertEnemyOnline.wrap,
+    alertEnemyOffline.wrap,
+  );
+  box.append(alerts);
+
+  box.append(text('h4', 'bot-section-title', 'BROADCAST'));
+  box.append(text('p', 'subtle bot-section-hint', 'Envie também para quem está fora do canal do bot.'));
+  const globalLevelMin = input('nivel minimo (levelup global)', botDraft.globalLevelMin ?? String(bot.config.globalLevelMin), 'number');
+  const presenceSummaryMin = input(
+    'resumo presenca (min)',
+    botDraft.presenceSummarySec ? String(Number(botDraft.presenceSummarySec) / 60) : String(bot.config.presenceSummaryMs / 60_000),
+    'number',
+  );
+  const globalDeaths = checkbox('mortes globais', bot.config.globalDeaths);
+  const globalKills = checkbox('kills globais', bot.config.globalKills);
+  const summarizePresence = checkbox('resumir login/logout', bot.config.summarizePresence);
+  const enabled = checkbox('habilitar bot', bot.config.enabled);
+  const broadcast = $('div', 'form two bot-check-grid');
+  broadcast.append(
+    globalLevelMin.wrap,
+    presenceSummaryMin.wrap,
+    globalDeaths.wrap,
+    globalKills.wrap,
+    summarizePresence.wrap,
+    enabled.wrap,
+  );
+  box.append(broadcast);
+
+  const actions = $('div', 'toolbar bot-actions');
   const save = $('button', 'primary');
   save.textContent = 'Salvar Configuração';
   save.addEventListener('click', () => {
@@ -859,15 +878,21 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
       method: 'PATCH',
       body: JSON.stringify({
         world: world.input.value.trim(),
-        guildName: guild.input.value.trim(),
+        guildName: bot.config.guildName,
         channelName: channel.input.value.trim() || 'bot',
         intervalMs: (Number(interval.input.value) || 60) * 1000,
-        globalDeaths: deaths.input.checked,
-        globalKills: deaths.input.checked,
+        globalDeaths: globalDeaths.input.checked,
+        globalKills: globalKills.input.checked,
         globalLevelMin: Number(globalLevelMin.input.value) || 0,
-        summarizePresence: presence.input.checked,
-        presenceSummaryMs: (Number(presenceSummarySec.input.value) || 300) * 1000,
-        enabled: bot.config.enabled,
+        summarizePresence: summarizePresence.input.checked,
+        presenceSummaryMs: (Number(presenceSummaryMin.input.value) || 5) * 60 * 1000,
+        enabled: enabled.input.checked,
+        alertEnemyDeath: alertEnemyDeath.input.checked,
+        alertFriendDeath: alertFriendDeath.input.checked,
+        alertFriendLevelUp: alertFriendLevelUp.input.checked,
+        alertEnemyLevelUp: alertEnemyLevelUp.input.checked,
+        alertEnemyOnline: alertEnemyOnline.input.checked,
+        alertEnemyOffline: alertEnemyOffline.input.checked,
       }),
     }).then(() => {
       botDraft = {};
@@ -877,13 +902,67 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
       showToast(error instanceof Error ? error.message : String(error), 'error');
     });
   });
+  actions.append(save);
 
-  form.append(world.wrap, guild.wrap, channel.wrap, interval.wrap, globalLevelMin.wrap, presenceSummarySec.wrap, rules, save);
-  box.append(form);
+  const run = $('button', bot.running ? 'ghost' : 'primary');
+  run.textContent = bot.running ? 'Reiniciar' : 'Iniciar';
+  run.addEventListener('click', () => {
+    void api(`/api/servers/${server.id}/bot/${bot.running ? 'restart' : 'start'}`, { method: 'POST' })
+      .then(() => {
+        showToast(bot.running ? 'Bot reiniciado.' : 'Bot iniciado.', 'success');
+        return loadDetail(server.id);
+      }).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      });
+  });
+  actions.append(run);
 
-  // hunted list
+  if (bot.running) {
+    const stop = $('button', 'danger');
+    stop.textContent = 'Parar';
+    stop.addEventListener('click', () => {
+      void api(`/api/servers/${server.id}/bot/stop`, { method: 'POST' })
+        .then(() => {
+          showToast('Bot parado.', 'success');
+          return loadDetail(server.id);
+        }).catch((error) => {
+          showToast(error instanceof Error ? error.message : String(error), 'error');
+        });
+    });
+    actions.append(stop);
+  }
+
+  const test = $('button', 'ghost');
+  test.textContent = 'Enviar Teste';
+  test.addEventListener('click', () => {
+    void api(`/api/servers/${server.id}/bot/test`, { method: 'POST' })
+      .then(() => showToast('Alerta de teste enviado.', 'success'))
+      .catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      });
+  });
+  actions.append(test);
+  box.append(actions);
+
+  box.append(renderBotGuildSection(
+    server,
+    `GUILDS AMIGAS (${bot.friendGuilds.length})`,
+    'Membros viram amigos; a tag [GUILD] aparece nos alertas.',
+    bot.friendGuilds,
+    'friend',
+  ));
+  box.append(renderBotGuildSection(
+    server,
+    `GUILDS INIMIGAS (${bot.enemyGuilds.length})`,
+    'Todos os membros são tratados como inimigos.',
+    bot.enemyGuilds,
+    'enemy',
+  ));
+
+  // inimigos manuais
   const huntedSection = $('div', 'bot-hunted');
-  huntedSection.append(text('h4', '', `Hunted List (${bot.hunted.length})`));
+  huntedSection.append(text('h4', 'bot-section-title', `INIMIGOS MANUAIS (${bot.hunted.length})`));
+  huntedSection.append(text('p', 'subtle bot-section-hint', 'Nomes soltos, sem guild associada.'));
 
   const addRow = $('div', 'toolbar');
   const addInput = $('input') as HTMLInputElement;
@@ -930,9 +1009,9 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
 
   const list = $('div', 'table');
   if (bot.hunted.length === 0) {
-    list.append(text('div', 'subtle', 'nenhum jogador na hunted list'));
+    list.append(text('div', 'subtle', 'nenhum inimigo cadastrado'));
   }
-  for (const name of bot.hunted.sort()) {
+  for (const name of [...bot.hunted].sort()) {
     const row = $('div', 'rowline');
     row.append(text('span', 'mono', name));
     const del = $('button', 'danger');
@@ -953,7 +1032,81 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   huntedSection.append(list);
   box.append(huntedSection);
 
+  if (bot.friends.length > 0) {
+    const friendsSection = $('div', 'bot-hunted');
+    friendsSection.append(text('h4', 'bot-section-title', `AMIGOS ONLINE-DB (${bot.friends.length})`));
+    friendsSection.append(text('p', 'subtle bot-section-hint', 'Nomes carregados das guilds amigas.'));
+    const friendsList = $('div', 'table');
+    for (const name of [...bot.friends].sort()) friendsList.append(text('div', 'rowline', name));
+    friendsSection.append(friendsList);
+    box.append(friendsSection);
+  }
+
   return box;
+}
+
+function renderBotGuildSection(
+  server: ServerDetail,
+  title: string,
+  hint: string,
+  guilds: string[],
+  kind: 'friend' | 'enemy',
+): HTMLElement {
+  const section = $('div', 'bot-guild-section');
+  section.append(text('h4', 'bot-section-title', title), text('p', 'subtle bot-section-hint', hint));
+
+  const addRow = $('div', 'toolbar');
+  const addInput = $('input') as HTMLInputElement;
+  addInput.placeholder = 'nome exato da guild';
+  const addBtn = $('button', 'primary');
+  addBtn.textContent = 'Adicionar';
+  const add = () => {
+    const name = addInput.value.trim();
+    if (!name) return;
+    addBtn.disabled = true;
+    void api(`/api/servers/${server.id}/bot/guilds/${kind}`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }).then(() => {
+      showToast('Guild adicionada à configuração do bot.', 'success');
+      return loadDetail(server.id);
+    }).catch((error) => {
+      addBtn.disabled = false;
+      showToast(error instanceof Error ? error.message : String(error), 'error');
+    });
+  };
+  addBtn.addEventListener('click', add);
+  addInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') add();
+  });
+  addRow.append(addInput, addBtn);
+  section.append(addRow);
+
+  const list = $('div', 'table bot-guild-list');
+  if (guilds.length === 0) {
+    list.append(text('div', 'subtle', 'nenhuma guild cadastrada'));
+  }
+  for (const name of [...guilds].sort((a, b) => a.localeCompare(b))) {
+    const row = $('div', 'rowline');
+    row.append(text('span', 'mono', `[${name.toUpperCase()}] ${name}`));
+    const remove = $('button', 'danger');
+    remove.textContent = 'Remover';
+    remove.addEventListener('click', () => {
+      remove.disabled = true;
+      void api(`/api/servers/${server.id}/bot/guilds/${kind}/${encodeURIComponent(name)}`, { method: 'DELETE' })
+        .then(() => {
+          showToast('Guild removida da configuração do bot.', 'success');
+          return loadDetail(server.id);
+        }).catch((error) => {
+          remove.disabled = false;
+          showToast(error instanceof Error ? error.message : String(error), 'error');
+        });
+    });
+    row.append(remove);
+    list.append(row);
+  }
+  section.append(list);
+  return section;
 }
 
 function input(label: string, value: string, type = 'text', placeholder = ''): { wrap: HTMLElement; input: HTMLInputElement } {
