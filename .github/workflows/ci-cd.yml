@@ -20,7 +20,20 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - name: Restore dependencies
+        id: dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-node-22-dependencies-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies when needed
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=2
+      - name: Reuse cached dependencies
+        if: steps.dependencies.outputs.cache-hit == 'true'
+        run: echo 'Dependências restauradas do cache; npm ci ignorado.'
       - run: npm run typecheck
       - run: npm run build
 
