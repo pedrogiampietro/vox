@@ -24,6 +24,7 @@ import {
   type ProviderGuildMember,
   type ProviderOnlinePlayer,
 } from './provider.js';
+import { PersistentBrowserHtml } from './browser.js';
 
 const BASE = 'https://deusot.com';
 const UA =
@@ -32,8 +33,15 @@ const TIMEOUT_MS = 15_000;
 
 /** Paginas de listagem trazem 50 linhas; mais que isso nao cabe num alerta. */
 const MAX_ONLINE_PAGES = 20;
+const browser = new PersistentBrowserHtml({ id: 'deusot', label: 'DeusOT', baseUrl: BASE });
 
 async function get(path: string, signal?: AbortSignal): Promise<string> {
+  // O egress da VPS recebe um challenge do Cloudflare; o navegador executa
+  // o JavaScript e conserva a sessao. O fetch nativo fica disponivel apenas
+  // para diagnostico local/rollback explicito.
+  if (process.env['VOX_DEUSOT_NATIVE_FETCH'] !== '1') {
+    return browser.get(path, signal);
+  }
   // Timeout proprio combinado com o abort do bot: o primeiro que disparar vence.
   const timeout = AbortSignal.timeout(TIMEOUT_MS);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -370,6 +378,9 @@ export const deusotProvider: GameProvider = {
   fetchDeaths,
   fetchGuild,
   fetchCharacter,
-  // fetch nativo nao mantem nada aberto que precise ser fechado.
-  close: async () => {},
+  close: () => browser.close(),
 };
+
+export async function closeDeusotBrowser(): Promise<void> {
+  await browser.close();
+}

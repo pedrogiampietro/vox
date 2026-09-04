@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "music-bot": "tsx src/music-client.ts",
-    "music-jukebox": "tsx src/music-jukebox.ts"
+    "music-jukebox": "tsx src/music-jukebox.ts",
+    "probe-deus": "tsx scripts/probe-deus.ts"
   },
   "dependencies": {
     "@vox/protocol": "*",
+    "cloakbrowser": "0.5.10",
     "cycletls": "^1.0.26",
     "form-data": "^4.0.0",
+    "playwright-core": "1.55.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

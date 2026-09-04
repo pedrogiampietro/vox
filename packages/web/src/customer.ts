@@ -256,7 +256,12 @@ function renderSubscriptionCard(): HTMLElement {
 function renderBotCard(): HTMLElement {
   const card = dashboardCard('bot e integrações', 'Automação para o mundo da sua guilda.', 'half');
   const modules = $('div', 'customer-module-list');
-  modules.append(module('Rubinot', 'disponível', true), module('DeusOT', 'disponível', true), module('Global', 'em breve', false));
+  modules.append(
+    module('Rubinot', 'disponível', true),
+    module('DeusOT', 'disponível', true),
+    module('DeusOLD', 'disponível', true),
+    module('Global', 'em breve', false),
+  );
   card.append(modules, text('p', 'customer-muted-copy', 'A configuração detalhada continua disponível no painel administrativo de cada servidor.'));
   return card;
 }

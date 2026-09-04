@@ -26,7 +26,7 @@ import type { RespawnCatalogGroup } from './respawns.js';
  * nao tem fonte de dados conhecida, e forcar o scraper do Rubinot num OT
  * diferente so produziria lixo.
  */
-export type BotProvider = 'rubinot' | 'deusot' | 'none';
+export type BotProvider = 'rubinot' | 'deusot' | 'deusold' | 'none';
 
 export interface PresetBotConfig {
   provider: BotProvider;
@@ -180,6 +180,23 @@ export const DEUSOT_PRESET: ServerPreset = {
   groups: RUBINOT_GROUP_DEFS,
 };
 
+// ----------------------------------------------------------------- deusold --
+
+/**
+ * DeusOLD e um mundo 7.4 e usa a mesma base de canais/claims por enquanto.
+ * O provider coleta mortes, guilds e fichas; o site nao publica roster online.
+ */
+export const DEUSOLD_PRESET: ServerPreset = {
+  id: 'deusold',
+  name: 'DeusOLD',
+  description: 'OT 7.4. Bot le mortes, guilds e fichas publicas do DeusOLD.',
+  version: 1,
+  channels: RUBINOT_CHANNELS,
+  respawns: RESPAWN_CATALOG,
+  bot: { provider: 'deusold', channelName: 'bot' },
+  groups: RUBINOT_GROUP_DEFS,
+};
+
 // -------------------------------------------------------------------- vazio --
 
 /**
@@ -229,7 +246,7 @@ export const BLANK_PRESET: ServerPreset = {
 
 // ----------------------------------------------------------------- registro --
 
-export const SERVER_PRESETS: ServerPreset[] = [RUBINOT_PRESET, DEUSOT_PRESET, BLANK_PRESET];
+export const SERVER_PRESETS: ServerPreset[] = [RUBINOT_PRESET, DEUSOT_PRESET, DEUSOLD_PRESET, BLANK_PRESET];
 
 export function findPreset(id: string): ServerPreset | undefined {
   return SERVER_PRESETS.find((p) => p.id === id);
@@ -380,7 +397,9 @@ function parseBot(raw: unknown): PresetBotConfig {
   if (!raw || typeof raw !== 'object') return { provider: 'none' };
   const o = raw as Record<string, unknown>;
   const provider: BotProvider =
-    o.provider === 'rubinot' || o.provider === 'deusot' ? o.provider : 'none';
+    o.provider === 'rubinot' || o.provider === 'deusot' || o.provider === 'deusold'
+      ? o.provider
+      : 'none';
   return {
     provider,
     world: str(o.world, 32),

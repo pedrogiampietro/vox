@@ -13,7 +13,13 @@ que normaliza quatro fontes de informação:
 | Provider | Preset | Fonte | Mundos |
 | --- | --- | --- | --- |
 | `rubinot` | Rubinot | API JSON + páginas públicas | definidos pelo Rubinot |
-| `deusot` | DeusOT | páginas públicas HTML | Andromeda, Eclipse, Sirius, Titan |
+| `deusot` | DeusOT | páginas públicas HTML via browser persistente | Andromeda, Eclipse, Sirius, Titan |
+| `deusold` | DeusOLD | páginas públicas HTML via browser persistente | Memorium |
+
+O DeusOT publica roster online, mortes, guilds e personagens. O DeusOLD
+publica mortes, guilds e personagens, além do contador de jogadores do mundo,
+mas não publica o nome de cada jogador online. Nesse provider o bot não emite
+logins/logouts nem finge ter uma Hunted List online.
 
 O provider é escolhido pelo preset ativo (`ServerPreset.bot.provider`). O
 preset Rubinot é o padrão para preservar servidores antigos.
@@ -37,9 +43,36 @@ As consultas seguintes geram os mesmos eventos para qualquer provider. Falhas
 de scraping aparecem no journal do serviço com o nome da fonte:
 
 ```bash
-journalctl -u vox.service -f | grep -Ei 'bot|rubinot|deusot'
+journalctl -u vox.service -f | grep -Ei 'bot|rubinot|deusot|deusold'
 ```
 
-O provider DeusOT tem timeout de 15 segundos e cacheia o mapa de mundos por 30
-minutos. A resolução de guilds usa o nome exato retornado na busca, evitando
-selecionar a primeira guild quando existem resultados parecidos.
+DeusOT e DeusOLD usam um contexto de navegador persistente por domínio. Ele é
+iniciado somente quando o provider é usado; a primeira inicialização pode
+demorar mais porque o Chromium é preparado. As consultas são serializadas e
+possuem timeout para não sobrecarregar o processo nem disputar navegação entre
+servidores.
+
+Variáveis opcionais na VPS:
+
+```ini
+VOX_SCRAPER_PROFILE_DIR=/opt/vox/data/scraper-profiles
+VOX_SCRAPER_HEADLESS=true
+CLOAKBROWSER_LICENSE_KEY=      # opcional; não colocar no repositório
+```
+
+Os perfis `deusot` e `deusold` ficam em subdiretórios separados e conservam a
+sessão do navegador. Para investigar uma falha:
+
+```bash
+journalctl -u vox.service -n 200 --no-pager | grep -Ei 'scraper|deusot|deusold|challenge|bot'
+```
+
+Smoke test sem ligar nenhum bot ou publicar mensagens:
+
+```bash
+npm run probe:deus -- Andromeda Memorium
+```
+
+Se aparecer `challenge não foi concluído`, a sessão não foi liberada pelo
+site. A solução preferida continua sendo API ou allowlist oficial do IP da
+Vox. Não aumente a frequência de requests para tentar forçar um challenge.

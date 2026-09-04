@@ -805,7 +805,7 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   box.append(providerField);
 
   if (bot.provider === 'none') {
-    box.append(text('p', 'subtle', 'Este servidor está sem bot. Selecione Rubinot ou DeusOT para habilitar um provider.'));
+    box.append(text('p', 'subtle', 'Este servidor está sem bot. Selecione Rubinot, DeusOT ou DeusOLD para habilitar um provider.'));
     return box;
   }
 
@@ -814,6 +814,14 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   const statusLabel = text('span', bot.running ? 'bot-status bot-on' : 'bot-status bot-off', bot.running ? 'ativo' : 'parado');
   statusLine.append(statusLabel);
   box.append(statusLine);
+
+  if (bot.provider === 'deusold') {
+    box.append(text(
+      'p',
+      'subtle bot-section-hint',
+      'O DeusOLD publica mortes, guilds e fichas, mas não publica o roster de jogadores online. Alertas de online/offline ficam indisponíveis nesse provider.',
+    ));
+  }
 
   box.append(text('p', 'subtle bot-section-hint', 'Configure a conexão com o mundo e o canal que receberá os alertas.'));
   const connectionForm = $('div', 'form two');

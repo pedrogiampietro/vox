@@ -24,6 +24,14 @@ export class OnlineTracker {
   ) {}
 
   async poll(signal?: AbortSignal): Promise<OnlineEvent[]> {
+    // DeusOld publica o contador do mundo, mas nao os nomes dos jogadores.
+    // Mantemos o snapshot vazio e, principalmente, nao geramos logout para
+    // quem estava no snapshot anterior de outro provider/configuracao.
+    if (this.provider.worldOnlineAvailable === false) {
+      this.prev = new Map();
+      this.initialized = true;
+      return [];
+    }
     const players = await this.provider.fetchWorldOnline(this.worldName, signal);
     const current = new Map<string, PlayerSnapshot>();
     for (const p of players) {

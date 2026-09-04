@@ -8,6 +8,7 @@
 
 import { RubinotBot } from '../../bot/src/bot.js';
 import { deusotProvider } from '../../bot/src/scrapers/deusot.js';
+import { deusoldProvider } from '../../bot/src/scrapers/deusold.js';
 import { rubinotProvider } from '../../bot/src/scrapers/rubinot.js';
 import type { BotProvider } from '@vox/protocol';
 import type { GameProvider } from '../../bot/src/scrapers/provider.js';
@@ -22,6 +23,7 @@ import type { StoredBotConfig } from './persistence.js';
 export function providerFor(hub: Hub): GameProvider {
   switch (hub.activePreset().bot.provider) {
     case 'deusot': return deusotProvider;
+    case 'deusold': return deusoldProvider;
     default: return rubinotProvider;
   }
 }

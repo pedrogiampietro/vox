@@ -20,6 +20,9 @@ import { attachEdgeWebSocket } from './edge-relay.js';
 import { startVoiceTransport, type VoiceEndpoint } from './transport-wt.js';
 import { RubinotBot, botConfigFromEnv } from '../../bot/src/bot.js';
 import { shutdownRubinotClient } from '../../bot/src/scrapers/rubinot.js';
+import { closeBrowserRuntime } from '../../bot/src/scrapers/browser.js';
+import { closeDeusotBrowser } from '../../bot/src/scrapers/deusot.js';
+import { closeDeusoldBrowser } from '../../bot/src/scrapers/deusold.js';
 import { providerFor } from './bot-ctrl.js';
 
 // --------------------------------------------------------------- estado --
@@ -302,7 +305,9 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(pulse);
     void voice?.stop();
     registry.saveNow();
-    server.close(() => process.exit(0));
+    void Promise.all([closeDeusotBrowser(), closeDeusoldBrowser()]).then(() => closeBrowserRuntime()).finally(() => {
+      server.close(() => process.exit(0));
+    });
     setTimeout(() => process.exit(0), 2000).unref();
   });
 }

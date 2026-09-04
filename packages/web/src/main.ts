@@ -998,7 +998,11 @@ function renderTalk(): HTMLElement {
     const row = $('div', 'line');
     if (isSystem) row.classList.add('system');
     if (line.scope === ChatScope.Private) row.classList.add('dm');
-    const isBot = line.senderId === 0 && (line.senderName === 'rubinot' || line.senderName === 'deusot');
+    const isBot = line.senderId === 0 && (
+      line.senderName === 'rubinot'
+      || line.senderName === 'deusot'
+      || line.senderName === 'deusold'
+    );
     const parsed = isBot ? parseBotLine(line.text) : null;
     if (isBot) {
       row.classList.add('bot');

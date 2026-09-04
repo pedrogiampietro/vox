@@ -6,7 +6,7 @@
  * HTML no servidor. Esta interface e o contrato que o bot enxerga, com tudo ja
  * normalizado, pra que trocar de OT nao vire um `if` espalhado pelo bot.
  *
- * Implementacoes vivem em `rubinot.ts` e `deusot.ts`.
+ * Implementacoes vivem em `rubinot.ts`, `deusot.ts` e `deusold.ts`.
  */
 
 export interface ProviderOnlinePlayer {
@@ -52,6 +52,13 @@ export interface GameProvider {
   readonly id: string;
   /** Nome exibido em log e mensagens de erro. */
   readonly label: string;
+
+  /**
+   * Alguns sites mostram apenas o total online do mundo, sem publicar o
+   * roster. Nessa situacao o bot continua operando mortes/guilds, mas nao
+   * deve transformar a ausencia do roster em logouts falsos.
+   */
+  readonly worldOnlineAvailable?: boolean;
 
   fetchWorldOnline(world: string, signal?: AbortSignal): Promise<ProviderOnlinePlayer[]>;
 
