@@ -2,7 +2,10 @@
 Description=Vox music jukebox bot
 After=network-online.target vox.service
 Wants=network-online.target
-Requires=vox.service
+# Wants, e nao Requires: parar o vox.service nao deve derrubar o jukebox junto.
+# Ele reconecta sozinho, e com Requires ele ficaria parado pelo systemd — que
+# nao e uma saida do processo, entao Restart=always nao o traria de volta.
+Wants=vox.service
 
 [Service]
 Type=simple
@@ -14,6 +17,13 @@ Environment=VOX_BOT_CHANNEL=bot
 ExecStart=/usr/bin/npm run music-jukebox
 Restart=always
 RestartSec=3
+
+# O bot sai com exit(1) a cada queda de socket e conta com o systemd para
+# voltar limpo. O padrao do systemd (5 tentativas em 10s) trabalha contra isso:
+# todo deploy reinicia o vox.service, o jukebox tenta reconectar enquanto o
+# servidor ainda sobe, estoura o limite em 15s e o unit vai para 'failed' — de
+# onde nunca mais sai sozinho. Sem limite, ele insiste ate o servidor voltar.
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target

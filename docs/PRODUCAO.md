@@ -141,6 +141,56 @@ systemctl enable --now vox.service
 Em uma instalação mais restrita, troque `User=root` por um usuário próprio e
 garanta leitura do banco, dos ícones e dos certificados do WebTransport.
 
+## Bot de música (jukebox)
+
+Roda como um processo separado, em `vox-music-jukebox.service`, que entra no
+servidor como um cliente comum. O unit versionado fica em
+[`docs/vox-music-jukebox.service`](vox-music-jukebox.service).
+
+Instalação na máquina:
+
+```bash
+cp /opt/vox/docs/vox-music-jukebox.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now vox-music-jukebox.service
+```
+
+A partir daí o deploy cuida dele: se o unit do repositório mudar, o arquivo em
+`/etc/systemd/system` é atualizado (com `.bak` do anterior) e recarregado.
+
+### Por que ele sumia
+
+O bot chama `process.exit(1)` a cada queda de socket, delegando o restart ao
+systemd. Isso colidia com dois padrões:
+
+- **O limite de reinícios do systemd** (5 tentativas em 10s). Todo deploy
+  reinicia o `vox.service`; o jukebox caía junto e tentava reconectar enquanto
+  o servidor ainda subia. Com `RestartSec=3`, as 5 tentativas se esgotavam em
+  15 segundos e o unit ia para `failed` — estado do qual ele **não sai
+  sozinho**. Resolvido com `StartLimitIntervalSec=0`.
+- **A checagem `is-active` no deploy.** Um jukebox caído nunca era religado: o
+  passo apenas imprimia "inativo" e seguia. Ou seja, uma vez morto, morto para
+  sempre. Agora o deploy limpa o estado de falha e reinicia sempre que o unit
+  existir.
+
+O `Requires=vox.service` também virou `Wants=`: parar o servidor não deve
+derrubar o bot como dependência, já que ele reconecta sozinho — e um unit
+parado pelo systemd não é reiniciado por `Restart=always`.
+
+### Verificar
+
+O log do deploy passa a terminar com `Jukebox: active` ou `Jukebox: failed`.
+Na máquina:
+
+```bash
+systemctl status vox-music-jukebox.service --no-pager
+journalctl -u vox-music-jukebox.service -n 80 --no-pager | grep jukebox
+```
+
+O bot entra no canal `VOX_BOT_CHANNEL` (padrão `bot`) do servidor primário e
+responde a pedidos no chat. As variáveis (`VOX_BOT_PASSWORD`, `VOX_BOT_VOLUME`,
+`VOX_FFMPEG`, `VOX_YTDLP`) estão descritas no README.
+
 ## Deploy de uma atualização
 
 O workflow do GitHub Actions já executa este fluxo quando há push na `master`:

@@ -150,10 +150,29 @@ jobs:
 
           npm run build
           systemctl restart vox.service
-          if systemctl is-active --quiet vox-music-jukebox.service; then
-            systemctl restart vox-music-jukebox.service
+
+          # O jukebox sai com exit(1) a cada queda de socket e conta com o
+          # systemd para voltar. Como todo deploy reinicia o vox.service, ele
+          # cai junto e pode estourar o limite de reinicios enquanto o servidor
+          # sobe — indo parar em 'failed', de onde nao sai sozinho.
+          #
+          # A checagem antiga era `is-active`, entao um jukebox caido nunca era
+          # religado: o deploy so dizia "inativo" e seguia. Agora ele e tratado
+          # sempre que o unit existir, com o estado de falha limpo antes.
+          unit=/etc/systemd/system/vox-music-jukebox.service
+          if [ -f "$unit" ]; then
+            if ! cmp -s docs/vox-music-jukebox.service "$unit"; then
+              cp "$unit" "$unit.bak"
+              cp docs/vox-music-jukebox.service "$unit"
+              systemctl daemon-reload
+              echo "Unit do jukebox atualizado a partir do repositorio (backup em $unit.bak)."
+            fi
+            systemctl enable vox-music-jukebox.service >/dev/null 2>&1 || true
+            systemctl reset-failed vox-music-jukebox.service >/dev/null 2>&1 || true
+            systemctl restart vox-music-jukebox.service || true
+            echo "Jukebox: $(systemctl is-active vox-music-jukebox.service)"
           else
-            echo 'Jukebox nao instalado ou inativo; nenhuma reinicializacao necessaria.'
+            echo 'Jukebox nao instalado nesta maquina; nada a fazer.'
           fi
           REMOTE
 
