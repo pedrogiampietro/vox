@@ -2230,6 +2230,7 @@ function renderConsole(): HTMLElement {
   const screenBtn = $('button', 'ghost');
   screenBtn.textContent = client.screen.sharing ? '■ tela' : '▣ tela';
   screenBtn.title = client.screen.sharing ? 'parar compartilhamento de tela' : 'compartilhar tela ou janela';
+  screenBtn.setAttribute('aria-label', screenBtn.title);
   if (client.screen.sharing) screenBtn.classList.add('armed');
   screenBtn.addEventListener('click', () => {
     void client.screen.toggle().then(render);
@@ -2240,6 +2241,7 @@ function renderConsole(): HTMLElement {
   const sndBtn = $('button', 'ghost');
   sndBtn.append(client.soundsEnabled ? iconBell() : iconBellOff());
   sndBtn.title = client.soundsEnabled ? 'silenciar avisos' : 'ativar avisos';
+  sndBtn.setAttribute('aria-label', sndBtn.title);
   sndBtn.addEventListener('click', () => client.setSoundsEnabled(!client.soundsEnabled));
   bar.append(sndBtn);
 
