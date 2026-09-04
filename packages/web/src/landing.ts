@@ -222,33 +222,148 @@ function step(number: string, title: string, detail: string): HTMLElement {
   return item;
 }
 
+type ConfigTier = {
+  slots: number;
+  label: string;
+  basicKey: string;
+  botKey: string | null;
+  basicPriceCents: number;
+  botPriceCents: number;
+};
+
+const configTiers: ConfigTier[] = [
+  { slots: 10, label: 'comunidade', basicKey: 'community', botKey: null, basicPriceCents: 0, botPriceCents: 0 },
+  { slots: 50, label: 'guilda', basicKey: '50-basic', botKey: '50-bot', basicPriceCents: 2990, botPriceCents: 6990 },
+  { slots: 100, label: 'operação', basicKey: '100-basic', botKey: '100-bot', basicPriceCents: 5090, botPriceCents: 9990 },
+  { slots: 254, label: 'comunidade', basicKey: '254-basic', botKey: '254-bot', basicPriceCents: 10000, botPriceCents: 15000 },
+];
+
+const landingPrices = new Map<string, number>();
+for (const tier of configTiers) {
+  landingPrices.set(tier.basicKey, tier.basicPriceCents);
+  if (tier.botKey) landingPrices.set(tier.botKey, tier.botPriceCents);
+}
+
+let selectedTierIndex = 0;
+let includeBot = false;
+
 function renderPlans(): HTMLElement {
   const section = $('section', 'landing-section landing-plans');
   section.id = 'planos';
-  section.append(sectionIntro('planos', 'Comece pequeno. Cresça quando o time pedir mais espaço.'));
-  const grid = $('div', 'landing-plan-grid');
-  grid.append(
-    planCard('comunidade', 'Para testar com o time', 'gratuito', ['10 slots', 'Channels essenciais', 'Áudio em tempo real', 'Acesso pelo navegador'], 'começar agora', '/contratar?plan=community'),
-    planCard('50 slots', 'Vox 50', 'R$ 29,90', ['Sem bot', 'Channels e permissões', 'Áudio QUIC + WS', 'Painel administrativo'], 'contratar', '/contratar?plan=50-basic'),
-    planCard('50 slots · Rubinot', 'Vox 50 Rubinot', 'R$ 69,90', ['Bot Rubinot', 'Hunted List, UP Level e DeathList', 'Channels prontos', 'Painel administrativo'], 'contratar', '/contratar?plan=50-bot', true),
-    planCard('100 slots', 'Vox 100', 'R$ 50,90', ['Sem bot', 'Mais espaço para a guilda', 'Áudio QUIC + WS', 'Painel administrativo'], 'contratar', '/contratar?plan=100-basic'),
-    planCard('100 slots · Rubinot', 'Vox 100 Rubinot', 'R$ 99,90', ['Bot Rubinot', 'Relatórios automáticos', 'Channels prontos', 'Painel administrativo'], 'contratar', '/contratar?plan=100-bot'),
-    planCard('254 slots', 'Vox 254', 'R$ 100,00', ['Sem bot', 'Capacidade máxima', 'Edges regionais', 'Painel administrativo'], 'contratar', '/contratar?plan=254-basic'),
-    planCard('254 slots · Rubinot', 'Vox 254 Rubinot', 'R$ 150,00', ['Bot Rubinot', 'Capacidade máxima', 'Relatórios e alertas', 'Painel administrativo'], 'contratar', '/contratar?plan=254-bot'),
+  section.append(sectionIntro('monte do seu jeito', 'Um servidor. Você escolhe a capacidade e os extras.'));
+
+  const configurator = $('div', 'landing-configurator');
+  const controls = $('div', 'landing-configurator-controls');
+  controls.append(
+    text('span', 'landing-configurator-eyebrow', 'CONFIGURAÇÃO DO SEU VOX'),
+    text('h3', '', 'Quanto espaço o seu time precisa?'),
+    text('p', 'landing-configurator-copy', 'Mova o slider para escolher a capacidade. O preço é atualizado na hora.'),
   );
-  section.append(grid, text('p', 'landing-plan-note', 'Planos mensais · pagamento via Pix ou cartão · servidor criado após a confirmação do Mercado Pago.'));
+
+  const slotHeader = $('div', 'landing-configurator-label-row');
+  slotHeader.append(text('span', '', 'quantidade de slots'));
+  const slotValue = text('strong', '', '10 slots');
+  slotValue.dataset.configSlots = 'true';
+  slotHeader.append(slotValue);
+  controls.append(slotHeader);
+
+  const sliderWrap = $('div', 'landing-configurator-slider-wrap');
+  const slider = $('input') as HTMLInputElement;
+  slider.type = 'range';
+  slider.min = '0';
+  slider.max = String(configTiers.length - 1);
+  slider.step = '1';
+  slider.value = String(selectedTierIndex);
+  slider.setAttribute('aria-label', 'Quantidade de slots');
+  slider.setAttribute('aria-valuetext', '10 slots');
+  sliderWrap.append(slider);
+
+  const marks = $('div', 'landing-configurator-marks');
+  for (const tier of configTiers) marks.append(text('span', '', `${tier.slots}`));
+  sliderWrap.append(marks);
+  controls.append(sliderWrap);
+
+  const botOption = $('label', 'landing-configurator-bot');
+  const botCheckbox = $('input') as HTMLInputElement;
+  botCheckbox.type = 'checkbox';
+  botCheckbox.checked = includeBot;
+  botCheckbox.setAttribute('aria-label', 'Adicionar Rubinot');
+  const botCopy = $('span', 'landing-configurator-bot-copy');
+  botCopy.append(text('strong', '', 'Adicionar Rubinot'), text('small', '', 'Hunted List, UP Level e DeathList automáticos'));
+  const botSwitch = $('span', 'landing-configurator-switch');
+  botSwitch.append($('i'));
+  botOption.append(botCheckbox, botSwitch, botCopy);
+  controls.append(botOption, text('p', 'landing-configurator-hint', 'O Rubinot começa a partir de 50 slots.'));
+
+  const summary = $('aside', 'landing-configurator-summary');
+  summary.append(text('span', 'landing-configurator-summary-label', 'SUA CONFIGURAÇÃO'));
+  const summaryTitle = text('h3', '', 'Comunidade · 10 slots');
+  summaryTitle.dataset.configTitle = 'true';
+  summary.append(summaryTitle);
+  const summaryPrice = text('strong', 'landing-configurator-price', 'gratuito');
+  summaryPrice.dataset.configPrice = 'true';
+  summary.append(summaryPrice, text('span', 'landing-configurator-period', 'por mês'));
+  const summaryList = $('ul', 'landing-configurator-list');
+  summary.append(summaryList);
+  const action = landingLink('criar meu servidor grátis', '/contratar?plan=community', 'landing-button landing-button-primary landing-configurator-action');
+  action.dataset.configAction = 'true';
+  summary.append(action, text('p', 'landing-configurator-note', 'Pix ou cartão · servidor criado após a confirmação do pagamento.'));
+
+  configurator.append(controls, summary);
+  section.append(configurator, text('p', 'landing-plan-note', 'Você pode trocar de plano depois pelo painel do cliente.'));
+
+  const sync = (): void => updateConfigurator(section, slider, botCheckbox);
+  slider.addEventListener('input', () => {
+    selectedTierIndex = Number(slider.value);
+    sync();
+  });
+  botCheckbox.addEventListener('change', () => {
+    includeBot = botCheckbox.checked;
+    if (includeBot && selectedTierIndex === 0) {
+      selectedTierIndex = 1;
+      slider.value = '1';
+    }
+    sync();
+  });
+  sync();
   return section;
 }
 
-function planCard(label: string, title: string, price: string, benefits: string[], action: string, href: string, featured = false): HTMLElement {
-  const card = $('article', `landing-plan${featured ? ' featured' : ''}`);
-  const planKey = new URL(href, window.location.origin).searchParams.get('plan');
-  if (planKey) card.dataset.planKey = planKey;
-  card.append(text('span', 'landing-plan-label', label), text('h3', '', title), text('strong', 'landing-plan-price', price));
-  const list = $('ul', 'landing-plan-list');
-  for (const benefit of benefits) list.append(text('li', '', benefit));
-  card.append(list, landingLink(action, href, 'landing-button landing-button-outline'));
-  return card;
+function updateConfigurator(section: HTMLElement, slider: HTMLInputElement, botCheckbox: HTMLInputElement): void {
+  if (includeBot && selectedTierIndex === 0) selectedTierIndex = 1;
+  const tier = configTiers[selectedTierIndex] ?? configTiers[0]!;
+  const planKey = includeBot ? tier.botKey ?? configTiers[1]!.botKey! : tier.basicKey;
+  const priceCents = landingPrices.get(planKey) ?? (includeBot ? tier.botPriceCents : tier.basicPriceCents);
+  const price = section.querySelector('[data-config-price]');
+  const slots = section.querySelector('[data-config-slots]');
+  const title = section.querySelector('[data-config-title]');
+  const action = section.querySelector('[data-config-action]') as HTMLAnchorElement | null;
+  const list = section.querySelector('.landing-configurator-list');
+  const progress = selectedTierIndex / (configTiers.length - 1) * 100;
+
+  slider.value = String(selectedTierIndex);
+  slider.style.setProperty('--landing-slider-progress', `${progress}%`);
+  slider.setAttribute('aria-valuetext', `${tier.slots} slots`);
+  botCheckbox.checked = includeBot;
+  if (slots) slots.textContent = `${tier.slots} slots`;
+  if (title) title.textContent = `${tier.label} · ${tier.slots} slots${includeBot ? ' · Rubinot' : ''}`;
+  if (price) price.textContent = priceCents > 0 ? formatCents(priceCents) : 'gratuito';
+  if (action) {
+    action.href = `/contratar?plan=${encodeURIComponent(planKey)}`;
+    action.textContent = priceCents > 0 ? 'continuar com essa configuração' : 'criar meu servidor grátis';
+  }
+  if (list) {
+    list.replaceChildren(
+      configBenefit(`${tier.slots} slots para o seu time`),
+      configBenefit(includeBot ? 'Rubinot com Hunted List, UP Level e DeathList' : 'Channels e permissões sob seu controle'),
+      configBenefit('Áudio QUIC com fallback WS'),
+      configBenefit('Painel administrativo incluído'),
+    );
+  }
+}
+
+function configBenefit(value: string): HTMLElement {
+  return text('li', '', value);
 }
 
 async function refreshLandingPlans(section: HTMLElement): Promise<void> {
@@ -257,11 +372,11 @@ async function refreshLandingPlans(section: HTMLElement): Promise<void> {
     if (!response.ok) return;
     const body = await response.json() as { plans?: { key: string; priceCents: number }[] };
     for (const plan of body.plans ?? []) {
-      if (plan.priceCents <= 0) continue;
-      const card = section.querySelector(`[data-plan-key="${plan.key}"]`);
-      const price = card?.querySelector('.landing-plan-price');
-      if (price) price.textContent = formatCents(plan.priceCents);
+      if (plan.priceCents > 0) landingPrices.set(plan.key, plan.priceCents);
     }
+    const slider = section.querySelector('input[type="range"]') as HTMLInputElement | null;
+    const botCheckbox = section.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    if (slider && botCheckbox) updateConfigurator(section, slider, botCheckbox);
   } catch {
     // Os preços de fallback continuam visíveis se a API estiver indisponível.
   }
