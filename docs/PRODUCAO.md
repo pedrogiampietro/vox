@@ -207,9 +207,11 @@ na API do Mercado Pago, confere pedido, moeda e valor e então cria o servidor
 Rubinot. Notificações repetidas são idempotentes depois que o pedido já tem
 servidor associado.
 
-Por enquanto, uma conta pode criar um único servidor. A compra paga de uma
-conta que já possui servidor é bloqueada; upgrades e renovação recorrente ficam
-para a próxima etapa, evitando cobrar sem ter a regra comercial implementada.
+Uma conta pode criar vários servidores independentes. Cada contratação paga
+gera um novo servidor vinculado à mesma conta, com sua própria capacidade,
+channels e configuração de bot. Upgrades de um servidor existente e renovação
+recorrente ainda são etapas futuras; por enquanto, uma nova compra representa
+uma nova instância.
 
 Para diagnosticar uma notificação, use o painel de Webhooks do Mercado Pago e
 os logs do serviço. Nunca registre o Access Token, a assinatura secreta ou a

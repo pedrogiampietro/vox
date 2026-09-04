@@ -431,10 +431,6 @@ export class AdminApi {
     if (plan !== 'community') {
       return send(res, 402, { error: 'este plano precisa passar pelo checkout do Mercado Pago antes da criação' });
     }
-    const owned = this.registry.snapshot().filter((server) => server.ownerId === session.ownerId);
-    if (owned.length > 0) {
-      return send(res, 409, { error: 'esta conta já possui um servidor; escolha um plano maior no checkout' });
-    }
     const name = str(body.name).trim() || 'Meu servidor Vox';
     const slug = str(body.slug).trim().toLowerCase();
     const password = str(body.password);
@@ -471,9 +467,6 @@ export class AdminApi {
     if (!plan) return send(res, 400, { error: 'plano pago inválido' });
     if (!plan.enabled) {
       return send(res, 503, { error: 'este plano ainda não está disponível para contratação' });
-    }
-    if (this.registry.snapshot().some((server) => server.ownerId === session.ownerId)) {
-      return send(res, 409, { error: 'esta conta já possui um servidor; upgrades serão liberados em breve' });
     }
     const name = str(body.name).trim() || 'Meu servidor Vox';
     const slug = str(body.slug).trim().toLowerCase();
@@ -544,12 +537,6 @@ export class AdminApi {
         updateOrder(order.id, { status: terminal ? 'failed' : 'pending', paymentId, lastError: terminal ? `pagamento ${payment.status}` : '' });
         return send(res, 200, { ok: true });
       }
-      if (this.registry.snapshot().some((server) => server.ownerId === order.accountId)) {
-        updateOrder(order.id, { status: 'failed', paymentId, lastError: 'a conta já possui um servidor' });
-        console.error(`[vox] pagamento aprovado sem provisionamento: pedido ${order.id} já possui servidor`);
-        return send(res, 200, { ok: true });
-      }
-
       const plan = getBillingPlan(order.plan);
       const hub = this.registry.create({
         name: order.serverName,

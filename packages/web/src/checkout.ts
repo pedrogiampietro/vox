@@ -82,7 +82,7 @@ function renderNav(): HTMLElement {
 
 function renderSteps(): HTMLElement {
   const list = $('div', 'checkout-steps');
-  list.append(stepItem(1, 'conta', 'Crie ou acesse sua conta'), stepItem(2, 'servidor', 'Configure o primeiro servidor'), stepItem(3, 'pronto', 'Entre e administre'));
+  list.append(stepItem(1, 'conta', 'Crie ou acesse sua conta'), stepItem(2, 'servidor', 'Configure seu servidor'), stepItem(3, 'pronto', 'Entre e administre'));
   return list;
 }
 

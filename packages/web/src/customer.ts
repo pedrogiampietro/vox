@@ -131,7 +131,12 @@ function renderDashboard(): HTMLElement {
   logout.type = 'button';
   logout.textContent = 'sair';
   logout.addEventListener('click', logoutAccount);
-  headingRow.append(headingCopy, logout);
+  const headingActions = $('div', 'customer-heading-actions');
+  const addServer = $('a', 'customer-button customer-button-primary') as HTMLAnchorElement;
+  addServer.href = '/#planos';
+  addServer.textContent = 'contratar outro servidor';
+  headingActions.append(addServer, logout);
+  headingRow.append(headingCopy, headingActions);
   shell.append(headingRow, renderStats(), renderDashboardGrid());
   page.append(shell, renderAuthFooter());
   return page;
@@ -187,7 +192,7 @@ function renderServer(server: ServerSummary): HTMLElement {
   open.href = `/app?server=${encodeURIComponent(serverUrl(server))}`;
   open.textContent = 'abrir Vox';
   const manage = $('a', 'customer-button customer-button-ghost');
-  manage.href = '/admin';
+  manage.href = `/admin?server=${server.id}`;
   manage.textContent = 'configurar';
   actions.append(open, manage);
   item.append(copy, occupancy, actions);
@@ -197,11 +202,11 @@ function renderServer(server: ServerSummary): HTMLElement {
 function renderSubscriptionCard(): HTMLElement {
   const card = dashboardCard('assinatura', 'Seu plano e os próximos vencimentos.', 'half');
   const status = $('div', 'customer-subscription-status');
-  status.append(text('span', 'customer-status-dot', '●'), text('strong', '', 'Plano comercial em preparação'));
-  card.append(status, text('p', 'customer-muted-copy', 'Em breve você poderá escolher slots, ativar recursos e acompanhar os dias restantes diretamente por aqui.'));
+  status.append(text('span', 'customer-status-dot', '●'), text('strong', '', 'Contratações independentes'));
+  card.append(status, text('p', 'customer-muted-copy', 'Sua conta pode ter vários servidores. Cada nova contratação mantém seus slots, channels e bot separados.'));
   const action = $('a', 'customer-button customer-button-outline');
   action.href = '/#planos';
-  action.textContent = 'ver planos';
+  action.textContent = 'contratar outro';
   card.append(action);
   return card;
 }
