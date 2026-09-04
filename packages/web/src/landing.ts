@@ -150,7 +150,7 @@ function renderDownload(): HTMLElement {
   const grid = $('div', 'landing-download-grid');
   grid.append(
     downloadCard('web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', landingLink('Abrir Vox', '/app', 'landing-button landing-button-primary')),
-    downloadCard('desktop', 'Windows / Tauri', 'disponível agora', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', downloadPair()),
+    downloadCard('desktop', 'Windows / Tauri', 'disponível agora', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', downloadDesktop()),
     downloadCard('mobile', 'Android e iOS', 'próxima etapa', 'A mesma experiência do Vox chegando ao celular para você acompanhar o time de qualquer lugar.', text('span', 'landing-download-soon', 'roadmap em breve')),
   );
   section.append(grid);
@@ -166,16 +166,44 @@ function downloadCard(kind: string, title: string, status: string, detail: strin
   return card;
 }
 
+/**
+ * Os instaladores saem das releases do GitHub, nao do nosso dominio.
+ *
+ * O motivo e o aviso "normalmente nao e baixado" do Chrome: ele e reputacao,
+ * e a de github.com e incomparavel com a de um dominio novo. `latest/download`
+ * mantem o link fixo — a versao vive na tag, o nome do arquivo nao muda.
+ */
+const RELEASES = 'https://github.com/pedrogiampietro/v0x-desktop/releases';
+const LATEST = `${RELEASES}/latest/download`;
+
 function downloadLink(label: string, href: string): HTMLAnchorElement {
-  const link = landingLink(label, href, 'landing-button landing-button-primary');
-  link.setAttribute('download', '');
-  return link;
+  // Sem `download`: o atributo so vale na mesma origem, e forcar o nome de um
+  // arquivo de outro dominio nao funciona — o navegador ignora e ainda perde o
+  // nome que veio da release.
+  return landingLink(label, href, 'landing-button landing-button-primary');
 }
 
 function downloadPair(): HTMLElement {
   const pair = $('div', 'landing-download-pair');
-  pair.append(downloadLink('Baixar .EXE', '/downloads/v0x-windows-x64-setup.exe'), downloadLink('Baixar .MSI', '/downloads/v0x-windows-x64.msi'));
+  pair.append(
+    downloadLink('Baixar .EXE', `${LATEST}/v0x-windows-x64-setup.exe`),
+    downloadLink('Baixar .MSI', `${LATEST}/v0x-windows-x64.msi`),
+  );
   return pair;
+}
+
+/** Conferir o hash e a unica forma de o usuario validar o que baixou. */
+function downloadDesktop(): HTMLElement {
+  const wrap = $('div', 'landing-download-desktop');
+  wrap.append(downloadPair());
+  const notes = $('div', 'landing-download-notes');
+  const checksums = landingLink('conferir SHA-256', `${LATEST}/SHA256SUMS.txt`, 'landing-download-note');
+  const releases = landingLink('todas as versões', RELEASES, 'landing-download-note');
+  releases.target = '_blank';
+  releases.rel = 'noopener';
+  notes.append(checksums, releases);
+  wrap.append(notes);
+  return wrap;
 }
 
 function renderFeatures(): HTMLElement {

@@ -309,6 +309,45 @@ relatório agora usa `schema: 2` e inclui `voiceRttMs`, `voiceRegion` e
 `voiceQuality` no início e no fim da gravação, permitindo comparar a qualidade
 do áudio com a rota efetivamente usada.
 
+## Instaladores do desktop
+
+Os instaladores do Windows **não ficam mais na VPS**. O CI publica em
+[pedrogiampietro/v0x-desktop](https://github.com/pedrogiampietro/v0x-desktop/releases)
+e o site aponta para `releases/latest/download/`.
+
+O motivo é o aviso "normalmente não é baixado" do Chrome, que é reputação. A
+publicação anterior jogava contra em duas frentes: o arquivo saía de um domínio
+sem histórico, e era recompilado a cada push na `master` — hash novo em todo
+deploy, então nunca acumulava nada.
+
+Agora **só sai release quando a versão muda**. Para publicar uma versão nova:
+
+1. suba `version` em `packages/desktop/src-tauri/tauri.conf.json`;
+2. faça o push na `master`.
+
+Se a tag `v<versão>` já existir, o job não faz nada e diz isso no log. O nome
+dos arquivos não muda entre versões — é o que mantém o link `latest/download`
+fixo e deixa o arquivo acumular reputação.
+
+O job precisa do secret **`DESKTOP_RELEASE_TOKEN`**: um token do GitHub com
+permissão `contents: write` em `v0x-desktop`. Sem ele o job falha de propósito,
+porque os botões do site apontam para as releases e ficariam quebrados.
+
+Cada release leva um `SHA256SUMS.txt`, que é a única forma de quem baixa
+conferir o arquivo enquanto o binário não for assinado.
+
+### Assinatura de código
+
+Nada disso remove o aviso do SmartScreen na execução, e não garante remover o
+do navegador — só assinar resolve de forma determinística. O passo de
+assinatura existe no workflow, mas é no-op sem `WINDOWS_CERT_BASE64`.
+
+Atenção ao mexer nisso: desde 2023 as regras do CA/Browser Forum exigem a chave
+privada em hardware (FIPS 140-2 nível 2). Não existe mais guardar um `.pfx` num
+secret, que é o que o passo atual assume — qualquer certificado novo vai exigir
+reescrever a etapa para assinatura em nuvem (Azure Trusted Signing, Azure Key
+Vault, DigiCert KeyLocker ou SSL.com eSigner).
+
 ## Backup automático
 
 O `vox.service` tira um snapshot do banco sozinho: um 30 segundos depois de

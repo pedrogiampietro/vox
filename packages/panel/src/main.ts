@@ -542,9 +542,11 @@ function auditDetail(detail: Record<string, unknown>): string {
 }
 
 /**
- * Instaladores do desktop. Os arquivos sao publicados pelo CI em /downloads
- * com nome fixo, entao o link nao depende da versao.
+ * Instaladores do desktop, servidos pelas releases do GitHub. O `latest` deixa
+ * o link fixo: a versao vive na tag e o nome do arquivo nao muda.
  */
+const DESKTOP_LATEST = 'https://github.com/pedrogiampietro/v0x-desktop/releases/latest/download';
+
 function renderDownloads(): HTMLElement {
   const box = $('section', 'panel span-12');
   box.append(text('h3', '', 'Aplicativo'));
@@ -552,8 +554,8 @@ function renderDownloads(): HTMLElement {
   const actions = $('div', 'actions');
   actions.append(
     action('Abrir versão web', () => window.open('/app', '_blank', 'noopener')),
-    action('Baixar .EXE', () => window.location.assign('/downloads/v0x-windows-x64-setup.exe')),
-    action('Baixar .MSI', () => window.location.assign('/downloads/v0x-windows-x64.msi')),
+    action('Baixar .EXE', () => window.open(`${DESKTOP_LATEST}/v0x-windows-x64-setup.exe`, '_blank', 'noopener')),
+    action('Baixar .MSI', () => window.open(`${DESKTOP_LATEST}/v0x-windows-x64.msi`, '_blank', 'noopener')),
   );
   box.append(actions);
   return box;

@@ -157,29 +157,63 @@ jobs:
           fi
           REMOTE
 
+  # Os instaladores vao para as releases de pedrogiampietro/v0x-desktop, e nao
+  # mais para /downloads na VPS. Dois motivos, os dois sobre o aviso
+  # "normalmente nao e baixado" do Chrome, que e reputacao:
+  #
+  #   1. Reputacao de origem: github.com tem, um dominio novo nao tem.
+  #   2. Reputacao de arquivo: publicar a cada push trocava o binario (e o
+  #      hash) em todo deploy, entao ele nascia desconhecido toda vez e nunca
+  #      acumulava nada. Agora so sai release quando a versao muda.
+  #
+  # Nada disso substitui assinar o binario, que e o unico caminho deterministico.
   publish-desktop:
-    name: Publish Windows downloads
+    name: Publish Windows release
     needs: [deploy, desktop]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           name: v0x-windows-downloads
           path: desktop-downloads
-      - name: Configure SSH
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      - name: Read desktop version
+        id: version
         run: |
-          install -m 700 -d "$HOME/.ssh"
-          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/id_ed25519"
-          chmod 600 "$HOME/.ssh/id_ed25519"
-          ssh-keyscan -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
-      - name: Publish installers
+          version="$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")"
+          if [ -z "$version" ]; then echo 'versao do desktop vazia' >&2; exit 1; fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+      - name: Check release token
         env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
+          RELEASE_TOKEN: ${{ secrets.DESKTOP_RELEASE_TOKEN }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" 'mkdir -p /opt/vox/packages/web/dist/downloads'
-          scp desktop-downloads/v0x-windows-x64-setup.exe desktop-downloads/v0x-windows-x64.msi "$VPS_USER@$VPS_HOST:/opt/vox/packages/web/dist/downloads/"
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo 'DESKTOP_RELEASE_TOKEN ausente: os botoes de download do site apontam para as releases e ficariam quebrados.' >&2
+            echo 'Crie um token com contents:write em pedrogiampietro/v0x-desktop e salve como secret.' >&2
+            exit 1
+          fi
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.DESKTOP_RELEASE_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TARGET_REPO: pedrogiampietro/v0x-desktop
+        run: |
+          cd desktop-downloads
+          # O hash e a unica forma de quem baixa conferir o que recebeu,
+          # enquanto o binario nao for assinado.
+          sha256sum v0x-windows-x64-setup.exe v0x-windows-x64.msi > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+          if gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG ja existe; nada a publicar."
+            echo 'Suba a versao em packages/desktop/src-tauri/tauri.conf.json para gerar uma nova.'
+            exit 0
+          fi
+
+          notes="$(printf 'Cliente desktop do v0x para Windows.\n\nConfira o download com o SHA256SUMS.txt anexado.\nO site fica em https://v0x.online\n')"
+          gh release create "$TAG" \
+            --repo "$TARGET_REPO" \
+            --title "v0x $TAG" \
+            --notes "$notes" \
+            v0x-windows-x64-setup.exe v0x-windows-x64.msi SHA256SUMS.txt
