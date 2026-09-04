@@ -15,10 +15,27 @@ type ServerSummary = {
 
 type Overview = {
   servers: ServerSummary[];
+  orders: AccountOrder[];
   totals: { clients: number; servers: number };
   role: 'master' | 'owner';
   stamp: number;
 };
+
+type AccountOrder = {
+  id: string;
+  plan: string;
+  kind: 'initial' | 'renewal';
+  amountCents: number;
+  status: 'pending' | 'approved' | 'failed';
+  paidAt: number | null;
+  expiresAt: number | null;
+  paymentMethodId: string;
+  paymentTypeId: string;
+  createdAt: number;
+  server?: { id: number; name: string; slug: string; maxClients: number; url: string };
+};
+
+type AdminTab = 'overview' | 'server' | 'users' | 'channels' | 'bans' | 'bot' | 'billing' | 'tickets';
 
 type ChannelInfo = {
   id: number;
@@ -93,6 +110,7 @@ let botDraft: Partial<{
 }> = {};
 let stream: EventSource | null = null;
 let notice = '';
+let activeTab: AdminTab = 'overview';
 
 const $ = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
   const el = document.createElement(tag);
@@ -196,7 +214,7 @@ function renderMain(): HTMLElement {
   refresh.textContent = 'atualizar';
   refresh.addEventListener('click', () => void refreshAll());
   top.append(refresh);
-  main.append(top);
+  main.append(top, renderTabs());
 
   if (notice) main.append(text('div', notice.startsWith('erro') ? 'error' : 'subtle', notice));
   if (!server) {
@@ -205,24 +223,61 @@ function renderMain(): HTMLElement {
   }
 
   const grid = $('div', 'grid');
-  grid.append(stat('clientes', String(server.clients), `limite ${server.maxClients}`, 'span-3'));
-  grid.append(stat('canais', String(server.channels), server.protected ? 'com senha' : 'aberto', 'span-3'));
-  grid.append(stat('admins', String(server.admins), `servidor #${server.id}`, 'span-3'));
-  grid.append(stat('atualizado', overview ? new Date(overview.stamp).toLocaleTimeString() : '--', 'SSE ativo', 'span-3'));
-
   if (detail) {
-    grid.append(renderServerSettings(detail));
-    grid.append(renderClients(detail));
-    grid.append(renderChannels(detail));
-    grid.append(renderBans(detail));
-    grid.append(renderAnnouncement(detail));
-    if (botState) grid.append(renderBot(detail, botState));
+    if (activeTab === 'overview') {
+      grid.append(stat('clientes', String(server.clients), `limite ${server.maxClients}`, 'span-3'));
+      grid.append(stat('canais', String(server.channels), server.protected ? 'com senha' : 'aberto', 'span-3'));
+      grid.append(stat('admins', String(server.admins), `servidor #${server.id}`, 'span-3'));
+      grid.append(stat('atualizado', overview ? new Date(overview.stamp).toLocaleTimeString() : '--', 'SSE ativo', 'span-3'));
+      grid.append(renderServerSettings(detail), renderClients(detail));
+    } else if (activeTab === 'server') {
+      grid.append(renderServerSettings(detail), renderAnnouncement(detail));
+    } else if (activeTab === 'users') {
+      grid.append(renderClients(detail));
+    } else if (activeTab === 'channels') {
+      grid.append(renderChannels(detail));
+    } else if (activeTab === 'bans') {
+      grid.append(renderBans(detail));
+    } else if (activeTab === 'bot') {
+      grid.append(botState ? renderBot(detail, botState) : emptyTab('Bot', 'Este servidor não possui um bot configurado.'));
+    } else if (activeTab === 'billing') {
+      grid.append(renderBilling(detail));
+    } else if (activeTab === 'tickets') {
+      grid.append(renderTickets());
+    }
   } else {
     grid.append(text('div', 'panel span-12 subtle', 'carregando detalhes...'));
   }
 
   main.append(grid);
   return main;
+}
+
+function renderTabs(): HTMLElement {
+  const nav = $('nav', 'admin-tabs');
+  nav.setAttribute('aria-label', 'Seções do painel');
+  const tabs: [AdminTab, string][] = [
+    ['overview', 'visão geral'],
+    ['server', 'servidor'],
+    ['users', 'usuários'],
+    ['channels', 'canais'],
+    ['bans', 'banimentos'],
+    ['bot', 'bot'],
+    ['billing', 'faturamento'],
+    ['tickets', 'tickets'],
+  ];
+  for (const [id, label] of tabs) {
+    const button = $('button', `tab-button${activeTab === id ? ' active' : ''}`);
+    button.type = 'button';
+    button.textContent = label;
+    button.setAttribute('aria-selected', String(activeTab === id));
+    button.addEventListener('click', () => {
+      activeTab = id;
+      render();
+    });
+    nav.append(button);
+  }
+  return nav;
 }
 
 function stat(label: string, value: string, hint: string, cls: string): HTMLElement {
@@ -328,6 +383,114 @@ function renderBans(server: ServerDetail): HTMLElement {
   }
   box.append(rows);
   return box;
+}
+
+function renderBilling(server: ServerDetail): HTMLElement {
+  const box = $('section', 'panel span-12');
+  box.append(text('h3', '', 'Faturamento do servidor'));
+  const orders = (overview?.orders ?? []).filter((order) => order.server?.id === server.id);
+  if (orders.length === 0) {
+    box.append(text('p', 'subtle', overview?.role === 'master'
+      ? 'Entre com a conta do cliente para consultar pagamentos e renovações deste servidor.'
+      : 'Nenhuma contratação financeira vinculada a este servidor.'));
+    return box;
+  }
+
+  const current = orders.find((order) => order.status === 'approved' && order.expiresAt)
+    ?? orders.find((order) => order.status === 'approved');
+  if (current) {
+    const days = daysRemaining(current.expiresAt);
+    const summary = $('div', 'billing-summary');
+    summary.append(
+      billingMetric('plano', planLabel(current.plan)),
+      billingMetric('último pagamento', `${paymentLabel(current)} · ${formatDate(current.paidAt)}`),
+      billingMetric('vencimento', current.expiresAt
+        ? `${formatDate(current.expiresAt)} · ${days > 0 ? `${days} dias restantes` : 'expirado'}`
+        : 'não informado'),
+    );
+    box.append(summary);
+  }
+
+  const rows = $('div', 'table');
+  for (const order of orders.slice(0, 10)) {
+    const row = $('div', 'rowline billing-row');
+    const info = $('div', '');
+    info.append(
+      text('strong', '', `${order.kind === 'renewal' ? 'Renovação' : 'Contratação'} · ${planLabel(order.plan)}`),
+      text('div', 'mono subtle', `${orderStatusLabel(order.status)} · ${paymentLabel(order)} · ${formatDate(order.paidAt ?? order.createdAt)}`),
+    );
+    row.append(info, text('strong', 'mono billing-amount', formatCents(order.amountCents)));
+    rows.append(row);
+  }
+  box.append(rows);
+  const customer = $('a', 'public-link') as HTMLAnchorElement;
+  customer.href = '/cliente';
+  customer.textContent = 'abrir área do cliente para renovar';
+  box.append(customer);
+  return box;
+}
+
+function renderTickets(): HTMLElement {
+  const box = $('section', 'panel span-12 ticket-panel');
+  box.append(text('h3', '', 'Tickets de suporte'));
+  box.append(text('p', 'subtle', 'Central de atendimento para dúvidas, pagamentos e problemas do servidor.'));
+  const empty = $('div', 'ticket-empty');
+  empty.append(text('strong', '', 'Nenhum ticket aberto'), text('p', 'subtle', 'A abertura de tickets estará disponível em breve.'));
+  const button = $('button', 'ghost');
+  button.type = 'button';
+  button.disabled = true;
+  button.textContent = 'abrir ticket · em breve';
+  empty.append(button);
+  box.append(empty);
+  return box;
+}
+
+function emptyTab(title: string, message: string): HTMLElement {
+  const box = $('section', 'panel span-12');
+  box.append(text('h3', '', title), text('p', 'subtle', message));
+  return box;
+}
+
+function billingMetric(label: string, value: string): HTMLElement {
+  const item = $('div', 'billing-metric');
+  item.append(text('span', 'label', label), text('strong', '', value));
+  return item;
+}
+
+function formatCents(value: number): string {
+  return (value / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function formatDate(value: number | null): string {
+  return value ? new Date(value).toLocaleDateString('pt-BR') : '—';
+}
+
+function daysRemaining(value: number | null): number {
+  return value ? Math.ceil((value - Date.now()) / (24 * 60 * 60 * 1000)) : 0;
+}
+
+function planLabel(plan: string): string {
+  const labels: Record<string, string> = {
+    '50-basic': 'Vox 50 · sem bot',
+    '50-bot': 'Vox 50 · Rubinot',
+    '100-basic': 'Vox 100 · sem bot',
+    '100-bot': 'Vox 100 · Rubinot',
+    '254-basic': 'Vox 254 · sem bot',
+    '254-bot': 'Vox 254 · Rubinot',
+  };
+  return labels[plan] ?? plan;
+}
+
+function paymentLabel(order: AccountOrder): string {
+  if (order.paymentTypeId === 'bank_transfer' || order.paymentMethodId === 'pix') return 'Pix';
+  if (order.paymentTypeId === 'credit_card' || order.paymentMethodId === 'credit_card') return 'Cartão';
+  return order.paymentTypeId || order.paymentMethodId || 'Mercado Pago';
+}
+
+function orderStatusLabel(status: AccountOrder['status']): string {
+  if (status === 'approved') return 'aprovado';
+  if (status === 'failed') return 'falhou';
+  return 'aguardando pagamento';
 }
 
 function renderAnnouncement(server: ServerDetail): HTMLElement {

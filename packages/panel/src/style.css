@@ -53,6 +53,7 @@ body {
 }
 
 .main {
+  min-width: 0;
   padding: 20px;
   display: grid;
   gap: 16px;
@@ -70,6 +71,41 @@ body {
 
 .topline {
   justify-content: space-between;
+}
+
+.admin-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--ink-800);
+  scrollbar-width: thin;
+}
+
+.tab-button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tab-button:hover,
+.tab-button.active {
+  border-color: var(--amber-dim);
+  background: var(--ink-600);
+  color: var(--text);
+}
+
+.tab-button.active {
+  color: var(--amber);
 }
 
 .grid {
@@ -134,6 +170,45 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--ink-700);
+}
+
+.billing-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.billing-metric {
+  display: grid;
+  gap: 5px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--ink-700);
+}
+
+.billing-metric strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.billing-row .billing-amount {
+  color: var(--amber);
+}
+
+.ticket-empty {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r);
+  background: var(--ink-700);
+}
+
+.ticket-empty p {
+  margin: 0;
 }
 
 .subtle {
@@ -216,6 +291,10 @@ body {
   }
 
   .form.two {
+    grid-template-columns: 1fr;
+  }
+
+  .billing-summary {
     grid-template-columns: 1fr;
   }
 }
