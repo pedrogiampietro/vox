@@ -64,6 +64,8 @@ export class Session {
   nickname = '';
   flags = 0;
   channelId: number = NO_CHANNEL;
+  /** Canal para onde o cliente volta depois do AFK automático por mute. */
+  afkReturnChannelId: number = NO_CHANNEL;
   lastSeen = Date.now();
   connectedAt = Date.now();
   platform = 'Web';

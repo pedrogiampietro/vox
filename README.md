@@ -310,6 +310,19 @@ de canais continua na tela e o motivo aparece no cabeçalho; o áudio é liberad
 volta quando o novo snapshot chega. Se a **primeira** conexão nunca completa, ele
 desiste em três tentativas — endereço errado não melhora com insistência.
 
+### AFK e permissões de canais
+
+Quando o cliente desliga microfone e saída de áudio, o servidor move a sessão
+para o canal `AFK`, marcado como `sem voz`, e guarda o canal anterior. Ao
+reativar o áudio, a sessão volta automaticamente para aquele canal. O bloqueio
+é aplicado no servidor e também no relay QUIC; não depende apenas do botão da
+interface.
+
+Na área de permissões existem duas regras independentes: `Canais: ver canais e
+membros` e `Canais: entrar por conta própria`. O grupo `Spy` começa sem as duas
+permissões e recebe apenas o contexto do canal em que estiver. Um moderador
+continua podendo puxá-lo com `Move` ou com os comandos `push`/`masspush` do bot.
+
 ### Desktop
 
 Precisa do toolchain Rust (<https://rustup.rs>) — é o que mantém o instalador na

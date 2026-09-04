@@ -132,6 +132,9 @@ export class Hub {
   ) {
     for (const c of stored.channels) {
       const { password, ...info } = c;
+      // Servidores criados antes do flag de silencio ainda podem ter o AFK
+      // persistido. Atualiza em memoria para que ele ja nasca sem voz.
+      if (info.name === config.afkChannelName) info.flags |= ChannelFlags.VoiceDisabled;
       this.seedChannel(info, password);
     }
     for (const [fp, group] of Object.entries(stored.groups)) this.groups.set(fp, group);
@@ -268,6 +271,7 @@ export class Hub {
     }
     this.deps.onChanged();
     this.broadcast({ t: Op.Permissions, entries: this.permissionList() });
+    this.refreshVisibilitySnapshots();
   }
 
   // ----------------------------------------------------------- inspecao --
@@ -286,6 +290,58 @@ export class Hub {
 
   clientList(): ClientInfo[] {
     return [...this.sessions.values()].map((s) => this.describe(s));
+  }
+
+  /**
+   * Spy pode continuar sendo movido por moderador, mas nao recebe a arvore
+   * inteira nem a lista global de usuarios. Se estiver em um canal, enxerga
+   * somente o caminho ate ele e os membros do proprio canal.
+   */
+  private canViewChannels(s: Session): boolean {
+    if (s.group === Group.Spy) return false;
+    return s.group >= this.permissionFor(PermissionAction.ViewChannels);
+  }
+
+  /** Entrada voluntaria e separada da visibilidade: o owner pode configurar
+   * uma regra diferente, mas o grupo Spy continua dependendo de pull. */
+  private canJoinChannels(s: Session): boolean {
+    if (s.group === Group.Spy) return false;
+    return s.group >= this.permissionFor(PermissionAction.JoinChannel);
+  }
+
+  private channelListFor(s: Session): ChannelInfo[] {
+    if (this.canViewChannels(s)) return this.channelList;
+
+    const visible = new Map<number, ChannelInfo>();
+    let current = this.channels.get(s.channelId);
+    while (current) {
+      visible.set(current.info.id, current.info);
+      current = this.channels.get(current.info.parentId);
+    }
+    return [...visible.values()].sort((a, b) => a.order - b.order || a.id - b.id);
+  }
+
+  private clientListFor(s: Session): ClientInfo[] {
+    if (this.canViewChannels(s)) return this.clientList();
+    return [...this.sessions.values()]
+      .filter((other) => other.id === s.id || (s.channelId !== NO_CHANNEL && other.channelId === s.channelId))
+      .map((other) => this.describe(other));
+  }
+
+  private sendVisibilitySnapshot(s: Session): void {
+    if (!this.isLive(s)) return;
+    s.send(encodeServerMessage({
+      t: Op.Snapshot,
+      channels: this.channelListFor(s),
+      clients: this.clientListFor(s),
+      claims: this.claimList(),
+    }));
+  }
+
+  private refreshVisibilitySnapshots(): void {
+    for (const s of this.sessions.values()) {
+      if (!this.canViewChannels(s)) this.sendVisibilitySnapshot(s);
+    }
   }
 
   // ------------------------------------------------ player info (provider) --
@@ -481,20 +537,37 @@ export class Hub {
   }
 
   private checkAfkOnMute(s: Session): void {
-    if (!this.afkEnabled) return;
     const bothMuted = (s.flags & ClientFlags.MutedMic) !== 0
       && (s.flags & ClientFlags.MutedSpeakers) !== 0;
-    if (!bothMuted) return;
-    const afkCh = this.findOrCreateAfkChannel();
+    const afkCh = [...this.channels.values()].find((ch) => ch.info.name === config.afkChannelName)
+      ?? (this.afkEnabled ? this.findOrCreateAfkChannel() : null);
     if (!afkCh) return;
-    if (s.channelId === afkCh.info.id) return;
-    this.forceMove(s, afkCh.info.id);
+    if (bothMuted) {
+      if (!this.afkEnabled) return;
+      if (s.channelId === afkCh.info.id) return;
+      s.afkReturnChannelId = s.channelId;
+      this.forceMove(s, afkCh.info.id);
+      return;
+    }
+
+    // Ao voltar a ouvir/falar, retorna somente se a ida ao AFK foi feita
+    // automaticamente por este mecanismo. Um AFK manual continua manual.
+    if (s.channelId !== afkCh.info.id || s.afkReturnChannelId === NO_CHANNEL) return;
+    const returnChannelId = s.afkReturnChannelId;
+    s.afkReturnChannelId = NO_CHANNEL;
+    if (this.channels.has(returnChannelId)) this.forceMove(s, returnChannelId);
   }
 
   private findOrCreateAfkChannel(): Channel | null {
     const name = config.afkChannelName;
     for (const ch of this.channels.values()) {
-      if (ch.info.name === name) return ch;
+      if (ch.info.name !== name) continue;
+      if (!(ch.info.flags & ChannelFlags.VoiceDisabled)) {
+        ch.info.flags |= ChannelFlags.VoiceDisabled;
+        this.broadcast({ t: Op.ChannelUpdate, channel: ch.info });
+        this.deps.onChanged();
+      }
+      return ch;
     }
     const info: ChannelInfo = {
       id: this.allocChannelId(),
@@ -503,7 +576,7 @@ export class Hub {
       name,
       topic: 'Canal AFK',
       maxClients: 0,
-      flags: ChannelFlags.Permanent,
+      flags: ChannelFlags.Permanent | ChannelFlags.VoiceDisabled,
     };
     this.channels.set(info.id, { info, password: '', members: new Set() });
     this.broadcast({ t: Op.ChannelAdd, channel: info });
@@ -561,6 +634,7 @@ export class Hub {
 
     const channel = this.channels.get(s.channelId);
     if (!channel) return;
+    if (channel.info.flags & ChannelFlags.VoiceDisabled) return;
 
     if (channel.info.flags & ChannelFlags.Moderated) {
       if (s.group < Group.Moderator && !(s.flags & ClientFlags.HasVoice)) return;
@@ -915,7 +989,9 @@ export class Hub {
     this.deps.claimVoiceKey(s.voiceKey, s);
 
     const home = this.defaultChannel();
-    if (home) {
+    // Spy fica fora de qualquer canal até ser puxado por um moderador. Isso
+    // evita que o lobby inicial revele membros e conversas para ele.
+    if (home && this.canViewChannels(s)) {
       home.members.add(s);
       s.channelId = home.info.id;
     }
@@ -940,9 +1016,9 @@ export class Hub {
 
     s.send(
       encodeServerMessage({
-        t: Op.Snapshot,
-        channels: this.channelList,
-        clients: this.clientList(),
+      t: Op.Snapshot,
+        channels: this.channelListFor(s),
+        clients: this.clientListFor(s),
         claims: this.claimList(),
       }),
     );
@@ -1121,6 +1197,7 @@ export class Hub {
 
   forceMove(target: Session, channelId: number): void {
     if (!this.channels.has(channelId)) return;
+    if (channelId !== this.afkChannelId()) target.afkReturnChannelId = NO_CHANNEL;
     this.leaveChannel(target);
     const ch = this.channels.get(channelId)!;
     ch.members.add(target);
@@ -1154,6 +1231,9 @@ export class Hub {
     const target = this.channels.get(channelId);
     if (!target) return this.fail(s, FailureCode.ChannelNotFound, 'canal inexistente');
     if (s.channelId === channelId) return;
+    if (!this.canJoinChannels(s)) {
+      return this.fail(s, FailureCode.NotPermitted, 'seu grupo nao pode entrar em canais por conta propria');
+    }
     if (target.password && target.password !== password) {
       return this.fail(s, FailureCode.BadPassword, 'senha do canal incorreta');
     }
@@ -1162,6 +1242,7 @@ export class Hub {
     }
 
     this.leaveChannel(s);
+    if (target.info.id !== this.afkChannelId()) s.afkReturnChannelId = NO_CHANNEL;
     if (s.flags & ClientFlags.HasVoice) {
       s.flags &= ~ClientFlags.HasVoice;
       this.broadcast({ t: Op.ClientState, clientId: s.id, flags: s.flags });
@@ -1170,6 +1251,13 @@ export class Hub {
     s.channelId = channelId;
     this.syncVoiceState(s);
     this.broadcast({ t: Op.ClientMove, clientId: s.id, channelId });
+  }
+
+  private afkChannelId(): number {
+    for (const ch of this.channels.values()) {
+      if (ch.info.name === config.afkChannelName) return ch.info.id;
+    }
+    return NO_CHANNEL;
   }
 
   /** Tira a sessao do canal atual e recolhe canais temporarios vazios. */
@@ -1614,7 +1702,9 @@ export class Hub {
         const destChannel = this.findChannelObjByName(channelName);
         if (!destChannel) return this.sendBotResult(s, false, 'canal nao encontrado');
         if (!this.canEnter(target, destChannel)) return this.sendBotResult(s, false, 'usuario nao pode entrar neste canal');
-        this.joinChannel(target, destChannel.info.id, '');
+        // Push do bot e uma movimentacao autorizada, portanto tambem pode
+        // puxar Spy (que nao pode trocar de canal por conta propria).
+        this.forceMove(target, destChannel.info.id);
         this.sendBotResult(s, true, `${target.nickname} movido para ${destChannel.info.name}`);
         break;
       }
@@ -1635,7 +1725,7 @@ export class Hub {
         let count = 0;
         for (const m of sources) {
           if (m.id !== s.id && m.channelId !== destChannel.info.id && this.canEnter(m, destChannel)) {
-            this.joinChannel(m, destChannel.info.id, '');
+            this.forceMove(m, destChannel.info.id);
             count++;
           }
         }
@@ -1936,7 +2026,7 @@ export class Hub {
       stamp: Date.now(),
     });
     for (const s of this.sessions.values()) {
-      if (s.channelId !== channelId) s.send(frame);
+      if (s.channelId !== channelId && this.canViewChannels(s)) s.send(frame);
     }
   }
 
@@ -1988,8 +2078,27 @@ export class Hub {
   private broadcast(m: ServerMessage, except?: Session): void {
     const frame = encodeServerMessage(m);
     for (const s of this.sessions.values()) {
-      if (s !== except) s.send(frame);
+      if (s === except) continue;
+      // Eventos incrementais de canais/clientes carregam ids e estados que
+      // podem revelar a árvore inteira. Para sessões restritas, reenvia uma
+      // visão filtrada completa, mantendo apenas o próprio contexto.
+      if (!this.canViewChannels(s) && this.isChannelVisibilityMessage(m)) {
+        this.sendVisibilitySnapshot(s);
+      } else {
+        s.send(frame);
+      }
     }
+  }
+
+  private isChannelVisibilityMessage(m: ServerMessage): boolean {
+    return m.t === Op.Snapshot
+      || m.t === Op.ChannelAdd
+      || m.t === Op.ChannelRemove
+      || m.t === Op.ChannelUpdate
+      || m.t === Op.ClientAdd
+      || m.t === Op.ClientRemove
+      || m.t === Op.ClientMove
+      || m.t === Op.ClientState;
   }
 
   private fail(s: Session, code: FailureCode, message: string): void {

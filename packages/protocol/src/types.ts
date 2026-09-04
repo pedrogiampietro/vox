@@ -16,8 +16,9 @@
  * 14: Welcome passou a anunciar candidatos de edge para seleção automática.
  * 15: presets de servidor (canais + respawns + fonte do bot num objeto so).
  * 16: editor de servidor e capacidade anunciada no handshake.
+ * 17: permissões de visibilidade/entrada em canais e canal sem voz.
  */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -172,6 +173,8 @@ export const ChannelFlags = {
   Default: 1 << 2,
   /** Canal moderado: so Moderator+ e quem tem HasVoice podem falar. */
   Moderated: 1 << 3,
+  /** Canal totalmente silencioso: nenhum cliente transmite voz. */
+  VoiceDisabled: 1 << 4,
 } as const;
 
 /** Bits do cabecalho de voz. */
@@ -354,6 +357,8 @@ export enum PermissionAction {
   Ban = 6,
   SetGroup = 7,
   SetOtherDescription = 8,
+  ViewChannels = 9,
+  JoinChannel = 10,
   BotPoke = 20,
   BotMassPoke = 21,
   BotPush = 22,
@@ -385,6 +390,8 @@ export const PERMISSION_LABELS: Record<PermissionAction, string> = {
   [PermissionAction.Ban]: 'Banir',
   [PermissionAction.SetGroup]: 'Alterar grupo de outros',
   [PermissionAction.SetOtherDescription]: 'Editar descrição de outros',
+  [PermissionAction.ViewChannels]: 'Canais: ver canais e membros',
+  [PermissionAction.JoinChannel]: 'Canais: entrar por conta própria',
   [PermissionAction.BotPoke]: 'Bot: poke',
   [PermissionAction.BotMassPoke]: 'Bot: masspoke',
   [PermissionAction.BotPush]: 'Bot: push',
@@ -416,6 +423,8 @@ export const DEFAULT_PERMISSIONS: Record<PermissionAction, Group> = {
   [PermissionAction.Ban]: Group.Admin,
   [PermissionAction.SetGroup]: Group.Admin,
   [PermissionAction.SetOtherDescription]: Group.Moderator,
+  [PermissionAction.ViewChannels]: Group.Guest,
+  [PermissionAction.JoinChannel]: Group.Guest,
   [PermissionAction.BotPoke]: Group.Guest,
   [PermissionAction.BotMassPoke]: Group.Moderator,
   [PermissionAction.BotPush]: Group.Moderator,

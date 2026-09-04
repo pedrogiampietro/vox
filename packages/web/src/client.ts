@@ -167,7 +167,9 @@ export class VoxClient {
 
   isVoiceSilenced(c: ClientInfo): boolean {
     const ch = this.channels.get(c.channelId);
-    if (!ch || !(ch.flags & ChannelFlags.Moderated)) return false;
+    if (!ch) return false;
+    if (ch.flags & ChannelFlags.VoiceDisabled) return true;
+    if (!(ch.flags & ChannelFlags.Moderated)) return false;
     return c.group < Group.Moderator && !(c.flags & ClientFlags.HasVoice);
   }
 

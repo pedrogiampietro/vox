@@ -19,6 +19,7 @@ import { WebSocket } from 'ws';
 import {
   ChannelFlags,
   ChatScope,
+  ClientFlags,
   FailureCode,
   FrameKind,
   Group,
@@ -445,6 +446,50 @@ async function main(): Promise<void> {
   check('chat volta para o remetente com o texto intacto', delivered);
   check('chat de servidor alcanca quem esta em outro canal',
     alice.chat.some((c) => c.senderId === bob.id && c.text === line));
+
+  // --- AFK automatico e privacidade do Spy -------------------------------
+
+  const channelBeforeAfk = alice.channelId;
+  alice.send({ t: Op.SetSelfState, flags: ClientFlags.MutedMic | ClientFlags.MutedSpeakers });
+  const enteredAfk = await until('mute duplo move para o AFK', () => {
+    const current = alice.channels.get(alice.channelId);
+    return current?.name === 'AFK';
+  });
+  check('canal AFK e marcado como sem voz',
+    alice.channels.get(alice.channelId)?.flags === (ChannelFlags.Permanent | ChannelFlags.VoiceDisabled));
+  check('entrada no AFK foi observada', enteredAfk);
+
+  alice.send({ t: Op.SetSelfState, flags: 0 });
+  const restoredFromAfk = await until('desmute retorna ao canal anterior', () => alice.channelId === channelBeforeAfk);
+  check('desmutar retorna ao canal anterior', restoredFromAfk);
+
+  if (alice.group >= Group.Owner) {
+    alice.send({ t: Op.SetClientGroup, clientId: bob.id, group: Group.Spy });
+    const spyAssigned = await until('bob recebe grupo Spy', () => bob.clients.get(bob.id)?.group === Group.Spy);
+    check('grupo Spy foi aplicado', spyAssigned);
+
+    const hiddenChannel = [...alice.channels.values()].find((channel) => channel.id !== bob.channelId);
+    if (hiddenChannel) {
+      const visibleOnlyCurrent = await until('Spy recebe apenas o contexto atual', () =>
+        bob.channels.has(hiddenChannel.id) === false,
+      );
+      check('Spy nao enxerga outros canais', visibleOnlyCurrent);
+
+      const failuresBeforeSpyJoin = bob.failures.length;
+      bob.send({ t: Op.JoinChannel, channelId: hiddenChannel.id, password: '' });
+      const spyJoinDenied = await until('Spy nao entra por conta propria', () =>
+        bob.failures.length > failuresBeforeSpyJoin,
+      );
+      check('entrada voluntaria do Spy e recusada', spyJoinDenied
+        && bob.failures.at(-1)?.code === FailureCode.NotPermitted);
+
+      alice.send({ t: Op.MoveClient, clientId: bob.id, channelId: hiddenChannel.id });
+      const spyPulled = await until('moderador consegue puxar o Spy', () => bob.channelId === hiddenChannel.id);
+      check('Spy pode ser puxado por moderador', spyPulled);
+    }
+  } else {
+    console.log('   --    alice nao e owner; testes de Spy/pull foram pulados');
+  }
 
   // --- servidores virtuais e permissoes ------------------------------------
 

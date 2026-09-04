@@ -557,6 +557,7 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
   const members = client.membersOf(ch.id);
   const locked = (ch.flags & ChannelFlags.Password) !== 0;
   const moderated = (ch.flags & ChannelFlags.Moderated) !== 0;
+  const voiceDisabled = (ch.flags & ChannelFlags.VoiceDisabled) !== 0;
   const full = ch.maxClients > 0 && members.length >= ch.maxClients;
   const children = client.childrenOf(ch.id);
   const hasChildren = children.length > 0;
@@ -568,6 +569,7 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
   if (isBotChannel(ch)) row.classList.add('bot-channel');
   if (locked) row.classList.add('locked');
   if (moderated) row.classList.add('moderated');
+  if (voiceDisabled) row.classList.add('voice-disabled');
   if (full) row.classList.add('full');
   row.style.paddingLeft = `${8 + depth * 14}px`;
   row.dataset.channelId = String(ch.id);
@@ -596,13 +598,14 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
     leading.append($('span', 'room-disclosure-placeholder'));
   }
 
-  const glyph = isBotChannel(ch) ? '◆' : locked ? '🔒' : moderated ? '◈' : '#';
+  const glyph = isBotChannel(ch) ? '◆' : voiceDisabled ? '🔇' : locked ? '🔒' : moderated ? '◈' : '#';
   leading.append(text('span', 'idx', glyph));
 
   const info = $('div', 'room-info');
   info.append(text('span', 'name', ch.name));
   const details: string[] = [];
-  if (moderated) details.push('moderado');
+  if (voiceDisabled) details.push('sem voz');
+  else if (moderated) details.push('moderado');
   if (ch.topic) details.push(ch.topic);
   if (details.length > 0) info.append(text('span', 'topic', details.join(' · ')));
 
@@ -1231,7 +1234,8 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
   // top row: name + join button
   const top = $('div', 'channel-info-header');
   const locked = (ch.flags & ChannelFlags.Password) !== 0;
-  const icon = text('span', 'channel-icon', locked ? '🔒' : '#');
+  const voiceDisabled = (ch.flags & ChannelFlags.VoiceDisabled) !== 0;
+  const icon = text('span', 'channel-icon', voiceDisabled ? '🔇' : locked ? '🔒' : '#');
   const nm = text('span', 'channel-name', ch.name);
   top.append(icon, nm);
 
@@ -1276,6 +1280,7 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
   if (ch.flags & ChannelFlags.Permanent) flags.push('Permanente');
   if (ch.flags & ChannelFlags.Default) flags.push('Padrao');
   if (locked) flags.push('Senha');
+  if (voiceDisabled) flags.push('Sem voz');
   if (flags.length > 0) {
     const flagStat = $('div', 'stat-item');
     flagStat.append(text('span', 'stat-label', flags.join(' · ')));
@@ -3152,6 +3157,8 @@ function buildPermissionsSection(body: HTMLElement): void {
     {
       title: 'CANAIS',
       actions: [
+        PermissionAction.ViewChannels,
+        PermissionAction.JoinChannel,
         PermissionAction.CreateTempChannel,
         PermissionAction.CreatePermanentChannel,
         PermissionAction.EditChannel,
@@ -3876,6 +3883,7 @@ function showChannelMenu(e: MouseEvent, ch: ChannelInfo): void {
   if (ch.flags & ChannelFlags.Password) flags.push('🔒');
   if (ch.flags & ChannelFlags.Permanent) flags.push('perm');
   if (ch.flags & ChannelFlags.Default) flags.push('padrão');
+  if (ch.flags & ChannelFlags.VoiceDisabled) flags.push('sem voz');
   if (ch.maxClients > 0) flags.push(`${ch.maxClients} vagas`);
   if (flags.length > 0) {
     head.append(text('div', '', flags.join(' · ')));
@@ -4339,6 +4347,7 @@ function showEditChannelOverlay(ch: ChannelInfo): void {
   if (ch.flags & ChannelFlags.Permanent) flagParts.push('Permanente');
   if (ch.flags & ChannelFlags.Default) flagParts.push('Canal padrão (não removível)');
   if (ch.flags & ChannelFlags.Password) flagParts.push('Protegido por senha');
+  if (ch.flags & ChannelFlags.VoiceDisabled) flagParts.push('Sem voz (todos ficam mutados)');
   flagInfo.textContent = flagParts.length > 0 ? `Flags: ${flagParts.join(', ')}` : 'Sem flags especiais';
   body.append(flagInfo);
 
