@@ -4,10 +4,6 @@ import './landing.css';
 
 const root = document.getElementById('landing');
 
-if (root) {
-  root.append(renderLandingPage());
-}
-
 function renderLandingPage(): HTMLElement {
   const page = $('main', 'landing-page');
   page.append(renderNav());
@@ -438,4 +434,10 @@ async function refreshLandingStatus(page: HTMLElement): Promise<void> {
   } catch {
     // A landing page nao depende do health check para continuar navegavel.
   }
+}
+
+// O configurador usa os dados declarados acima; monte a página somente depois
+// de o módulo concluir a inicialização dessas constantes.
+if (root) {
+  root.append(renderLandingPage());
 }
