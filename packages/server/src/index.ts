@@ -11,6 +11,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
+import type { VoiceEdge } from '@vox/protocol';
 import { adminEnabled, config, tlsEnabled } from './config.js';
 import { AdminApi } from './admin-api.js';
 import { Registry } from './registry.js';
@@ -142,24 +143,74 @@ pulse.unref();
  * nativo, o servidor sobe do mesmo jeito e a voz continua no WebSocket.
  */
 let voice: VoiceEndpoint | null = null;
+
+/**
+ * Mantem os edges regionais e acrescenta a propria origem como uma segunda
+ * rota. Assim, um usuario em outra regiao tambem consegue testar o caminho
+ * direto ate a VPS principal sem precisar de uma terceira maquina.
+ */
+function voiceEndpointWithOrigin(hostname: string): {
+  host: string;
+  port: number;
+  certHash: Uint8Array;
+  edges: VoiceEdge[];
+} {
+  const local = voice?.endpointFor(hostname);
+  const originEdge: VoiceEdge | null = local && local.host && local.port > 0
+    ? {
+        host: local.host,
+        port: local.port,
+        region: config.voiceOriginRegion,
+        certHash: local.certHash,
+      }
+    : null;
+  const edges = [...config.voiceEdges];
+  if (originEdge && !edges.some((edge) => edge.host === originEdge.host && edge.port === originEdge.port)) {
+    edges.push(originEdge);
+  }
+  const primary = edges[0] ?? originEdge;
+  return {
+    host: primary?.host ?? '',
+    port: primary?.port ?? 0,
+    certHash: primary?.certHash ?? new Uint8Array(0),
+    edges,
+  };
+}
+
 if (config.voiceEdges.length > 0) {
-  const primaryEdge = config.voiceEdges[0]!;
-  registry.setVoiceEndpointProvider(() => ({
-    host: primaryEdge.host,
-    port: primaryEdge.port,
-    certHash: new Uint8Array(0),
-    edges: config.voiceEdges,
-  }));
-  console.log(`[vox] ${config.voiceEdges.length} edge(s) regional(is) anunciado(s); principal ${primaryEdge.host}:${primaryEdge.port}`);
-} else startVoiceTransport(registry)
+  // Disponibiliza o edge regional desde o primeiro instante, enquanto o
+  // listener QUIC da origem termina de carregar o certificado.
+  registry.setVoiceEndpointProvider((hostname) => voiceEndpointWithOrigin(hostname));
+}
+
+// O WebTransport local continua ativo mesmo quando existem edges regionais.
+// Ele vira automaticamente mais um candidato no Welcome.
+startVoiceTransport(registry)
   .then((endpoint) => {
     voice = endpoint;
     if (!endpoint) {
-      console.log('[vox] voz no WebSocket (sem WebTransport: falta certificado UDP)');
+      if (config.voiceEdges.length === 0) {
+        console.log('[vox] voz no WebSocket (sem WebTransport: falta certificado UDP)');
+      } else {
+        console.log('[vox] edge(s) regionais ativos; QUIC local da origem indisponível');
+      }
       return;
     }
-    registry.setVoiceEndpointProvider(endpoint.endpointFor);
-    console.log(`[vox] voz por WebTransport em udp/${endpoint.port} (${config.wtHost})`);
+
+    registry.setVoiceEndpointProvider((hostname) => {
+      if (config.voiceEdges.length > 0) return voiceEndpointWithOrigin(hostname);
+      const local = endpoint.endpointFor(hostname);
+      const edges: VoiceEdge[] = local.host && local.port > 0
+        ? [{ host: local.host, port: local.port, region: config.voiceOriginRegion, certHash: local.certHash }]
+        : [];
+      return { ...local, edges };
+    });
+
+    if (config.voiceEdges.length > 0) {
+      console.log(`[vox] ${config.voiceEdges.length + 1} edge(s) de voz anunciados; origem direta em ${config.voiceOriginRegion}`);
+    } else {
+      console.log(`[vox] voz por WebTransport em udp/${endpoint.port} (${config.wtHost})`);
+    }
     if (endpoint.certHash.length > 0) {
       console.log('[vox] publicando o hash do certificado (modo desenvolvimento)');
     }

@@ -33,6 +33,7 @@ No `.env` da VPS principal, acrescente:
 VOX_VOICE_EDGE_HOST=voice-sp.v0x.online
 VOX_VOICE_EDGE_PORT=9987
 VOX_VOICE_EDGE_SECRET=COLOQUE_A_MESMA_CHAVE_NAS_DUAS_MAQUINAS
+VOX_VOICE_ORIGIN_REGION=Origem
 # Opcional quando houver mais de um edge:
 # VOX_VOICE_EDGES=São Paulo=voice-sp.v0x.online:9987,Dallas=voice-dallas.v0x.online:9987
 ```
@@ -50,6 +51,9 @@ Quando houver mais de uma região, cada edge precisa de DNS, certificado,
 UDP/9987 e a mesma chave privada compartilhada. O cliente abre os candidatos
 em paralelo e mantém o primeiro handshake QUIC concluído; isso escolhe a menor
 latência de rota naquele momento, sem depender de uma base fixa de geolocalização.
+Além dos edges configurados, a própria origem é anunciada automaticamente como
+mais um candidato quando o WebTransport local consegue iniciar. Isso permite
+comparar uma VPS regional com a origem sem criar outra máquina.
 
 ## Instalação da VPS em São Paulo
 

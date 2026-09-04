@@ -329,6 +329,7 @@ Tudo por variável de ambiente:
 | `VOX_VOICE_EDGE_PORT` | `9987` | porta UDP do edge anunciada no Welcome |
 | `VOX_VOICE_EDGE_SECRET` | vazio | segredo do link privado edge → origem |
 | `VOX_VOICE_EDGES` | vazio | candidatos `região=host:porta`, escolhidos pela rota mais rápida |
+| `VOX_VOICE_ORIGIN_REGION` | `Origem` | nome exibido quando a própria VPS principal vence a seleção |
 
 Os dados permanentes vivem em `data/vox.db`, um SQLite transacional com tabelas de
 servidores e contas. Para facilitar inspeção e recuperação, o Vox mantém

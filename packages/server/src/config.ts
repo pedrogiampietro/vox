@@ -169,6 +169,8 @@ export const config = {
   voiceEdgeSecret: str('VOX_VOICE_EDGE_SECRET', ''),
   /** Candidatos `regiao=host:porta` para seleção automática no cliente. */
   voiceEdges,
+  /** Nome exibido quando o cliente escolhe o WebTransport da própria origem. */
+  voiceOriginRegion: str('VOX_VOICE_ORIGIN_REGION', 'Origem'),
 
   /**
    * Senha do painel de administracao. Vazia desliga o painel inteiro - e o
