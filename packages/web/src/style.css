@@ -946,6 +946,33 @@ label.field {
   margin-top: 4px;
 }
 
+.bot-status {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bot-on {
+  color: var(--signal);
+}
+
+.bot-off {
+  color: var(--text-faint);
+}
+
+.bot-pending {
+  color: var(--amber);
+}
+
+.bot-sync-hint {
+  display: inline;
+  margin: 0 0 0 10px;
+}
+
+.bot-error {
+  margin: 8px 0 0;
+}
+
 .bot-hunted-add {
   display: grid;
   grid-template-columns: 1fr auto;

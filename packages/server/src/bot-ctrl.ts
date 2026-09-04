@@ -53,16 +53,26 @@ function sanitizeGuildLists(hub: Hub): void {
 
 /** Recria/atualiza o bot para refletir a config atual do hub. */
 export async function applyBotConfig(hub: Hub): Promise<void> {
-  sanitizeGuildLists(hub);
-  if (hub.rubinot) {
-    const cfg = { ...hub.botConfig, huntedNames: hub.rubinot.huntedList };
-    await hub.rubinot.restart(cfg);
-    return;
-  }
-  if (hub.botConfig.enabled && hub.botConfig.world) {
-    const bot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
-    hub.rubinot = bot;
-    await bot.start();
+  try {
+    sanitizeGuildLists(hub);
+    if (hub.rubinot) {
+      const cfg = { ...hub.botConfig, huntedNames: hub.rubinot.huntedList };
+      const restartPromise = hub.rubinot.restart(cfg);
+      hub.broadcastBotState();
+      await restartPromise;
+      return;
+    }
+    if (hub.botConfig.enabled && hub.botConfig.world) {
+      const bot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
+      hub.rubinot = bot;
+      const startPromise = bot.start();
+      hub.broadcastBotState();
+      await startPromise;
+    }
+  } finally {
+    // O painel e o modal dentro do servidor recebem o fim da sincronizacao
+    // (sucesso ou erro), em vez de ficarem presos em um estado antigo.
+    hub.broadcastBotState();
   }
 }
 
@@ -73,7 +83,14 @@ export function startBot(hub: Hub): string | null {
   hub.botConfig.enabled = true;
   if (!hub.rubinot) hub.rubinot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
   if (!hub.rubinot.isRunning) {
-    void hub.rubinot.start().catch((err) => console.error('[bot] falha:', err));
+    const bot = hub.rubinot;
+    void bot.start().then(
+      () => hub.broadcastBotState(),
+      (err: unknown) => {
+        console.error('[bot] falha:', err);
+        hub.broadcastBotState();
+      },
+    );
   }
   return null;
 }
@@ -89,7 +106,9 @@ export async function startBotAndWait(hub: Hub): Promise<string | null> {
   if (hub.rubinot.isRunning) return null;
 
   try {
-    await hub.rubinot.start();
+    const startPromise = hub.rubinot.start();
+    hub.broadcastBotState();
+    await startPromise;
     return null;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

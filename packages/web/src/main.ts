@@ -1762,16 +1762,23 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   body.append(text('h3', '', provider === 'none' ? 'BOT' : `BOT ${provider.toUpperCase()}`));
 
   if (!state) {
-    body.append(text('span', '', 'carregando configuracao...'));
+    body.append(text('span', '', 'Carregando configuração...'));
     return;
   }
 
   const status = $('div', 'settings-row');
   const running = state.running;
+  const starting = state.starting;
   status.append(
-    text('span', '', `estado: ${running ? 'rodando' : 'parado'}`),
+    text('span', `bot-status ${starting ? 'bot-pending' : running ? 'bot-on' : 'bot-off'}`, `estado: ${starting ? 'sincronizando...' : running ? 'ativo' : 'parado'}`),
   );
+  if (starting) {
+    status.append(text('span', 'settings-hint bot-sync-hint', 'validando world, guilds e canais...'));
+  }
   body.append(status);
+  if (!starting && state.error) {
+    body.append(text('div', 'error bot-error', `ultima tentativa: ${state.error}`));
+  }
 
   // ---- config -----------------------------------------------------------
   const cfgHeader = text('h3', '', 'CONEXAO');
@@ -1781,15 +1788,18 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   const worldInput = $('input') as HTMLInputElement;
   worldInput.placeholder = 'ex: Vesperia';
   worldInput.value = state.world;
+  worldInput.disabled = starting;
 
   const channelInput = $('input') as HTMLInputElement;
   channelInput.value = state.channelName || 'bot';
+  channelInput.disabled = starting;
 
   const intervalInput = $('input') as HTMLInputElement;
   intervalInput.type = 'number';
   intervalInput.min = '10';
   intervalInput.step = '5';
   intervalInput.value = String(Math.max(Math.round(state.intervalMs / 1000), 10));
+  intervalInput.disabled = starting;
 
   const grid = $('div', 'bot-grid');
   grid.append(
@@ -1811,6 +1821,9 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   const enemyLvlCb = boolCheckbox(state.alertEnemyLevelUp);
   const enemyOnCb = boolCheckbox(state.alertEnemyOnline);
   const enemyOffCb = boolCheckbox(state.alertEnemyOffline);
+  for (const checkbox of [enemyDeathCb, friendDeathCb, friendLvlCb, enemyLvlCb, enemyOnCb, enemyOffCb]) {
+    checkbox.disabled = starting;
+  }
 
   const alerts = $('div', 'bot-grid');
   alerts.append(
@@ -1833,16 +1846,19 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   levelInput.type = 'number';
   levelInput.min = '0';
   levelInput.value = String(state.globalLevelMin);
+  levelInput.disabled = starting;
 
   const presenceInput = $('input') as HTMLInputElement;
   presenceInput.type = 'number';
   presenceInput.min = '1';
   presenceInput.value = String(Math.max(Math.round(state.presenceSummaryMs / 60_000), 1));
+  presenceInput.disabled = starting;
 
   const deathsCb = boolCheckbox(state.globalDeaths);
   const killsCb = boolCheckbox(state.globalKills);
   const summarizeCb = boolCheckbox(state.summarizePresence);
   const enabledCb = boolCheckbox(state.enabled);
+  for (const checkbox of [deathsCb, killsCb, summarizeCb, enabledCb]) checkbox.disabled = starting;
 
   const broad = $('div', 'bot-grid');
   broad.append(
@@ -1858,9 +1874,11 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   // ---- actions --------------------------------------------------------
   const actions = $('div', 'bot-actions');
   const save = $('button', 'primary');
-  save.textContent = 'salvar configuracao';
+  save.textContent = starting ? 'Sincronizando...' : 'Salvar Configuração';
+  save.disabled = starting;
+  save.setAttribute('aria-busy', String(starting));
   save.addEventListener('click', () => {
-    const cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'friendGuilds' | 'enemyGuilds' | 'running'> = {
+    const cfg: Omit<BotStateInfo, 'hunted' | 'friends' | 'friendGuilds' | 'enemyGuilds' | 'running' | 'starting' | 'error'> = {
       world: worldInput.value.trim(),
       guildName: state.guildName, // legado; guilds sao gerenciadas em listas separadas
       channelName: channelInput.value.trim() || 'bot',
@@ -1884,16 +1902,18 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   actions.append(save);
 
   const startBtn = $('button', 'ghost');
-  startBtn.textContent = running ? 'reiniciar' : 'iniciar';
+  startBtn.textContent = starting ? (running ? 'Reiniciando...' : 'Iniciando...') : running ? 'Reiniciar' : 'Iniciar';
+  startBtn.disabled = starting;
+  startBtn.setAttribute('aria-busy', String(starting));
   startBtn.addEventListener('click', () => {
     client.botControl(BotControlAction.Start);
     setTimeout(rebuild, 200);
   });
   actions.append(startBtn);
 
-  if (running) {
+  if (running && !starting) {
     const stopBtn = $('button', 'ghost danger');
-    stopBtn.textContent = 'parar';
+    stopBtn.textContent = 'Parar';
     stopBtn.addEventListener('click', () => {
       client.botControl(BotControlAction.Stop);
       setTimeout(rebuild, 200);
@@ -1902,7 +1922,8 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   }
 
   const testBtn = $('button', 'ghost');
-  testBtn.textContent = 'enviar teste';
+  testBtn.textContent = 'Enviar Teste';
+  testBtn.disabled = starting;
   testBtn.addEventListener('click', () => client.botControl(BotControlAction.Test));
   actions.append(testBtn);
 
@@ -1940,7 +1961,7 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   const addInput = $('input') as HTMLInputElement;
   addInput.placeholder = 'nome do jogador';
   const addBtn = $('button', 'primary');
-  addBtn.textContent = 'adicionar';
+  addBtn.textContent = 'Adicionar';
   const addAction = () => {
     const name = addInput.value.trim();
     if (!name) return;
@@ -1963,7 +1984,7 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
       const row = $('div', 'bot-name-row');
       row.append(text('span', 'bot-name', name));
       const remove = $('button', 'ghost danger');
-      remove.textContent = 'remover';
+      remove.textContent = 'Remover';
       remove.addEventListener('click', () => {
         client.botControl(BotControlAction.RemoveHunted, name);
         setTimeout(rebuild, 200);
@@ -1988,6 +2009,14 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
     }
     body.append(list);
   }
+
+  // A sincronizacao afeta tambem guilds e lista manual: nenhum controle deve
+  // aceitar uma segunda alteracao enquanto o servidor aplica a primeira.
+  if (starting) {
+    for (const control of body.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement | HTMLTextAreaElement>('input, button, select, textarea')) {
+      control.disabled = true;
+    }
+  }
 }
 
 function buildGuildManager(
@@ -2007,7 +2036,7 @@ function buildGuildManager(
   const input = $('input') as HTMLInputElement;
   input.placeholder = 'nome exato da guild';
   const btn = $('button', 'primary');
-  btn.textContent = 'adicionar';
+  btn.textContent = 'Adicionar';
   const submit = () => {
     const name = input.value.trim();
     if (!name) return;
@@ -2034,7 +2063,7 @@ function buildGuildManager(
     label.append(text('span', '', ` ${name}`));
     rr.append(label);
     const remove = $('button', 'ghost danger');
-    remove.textContent = 'remover';
+    remove.textContent = 'Remover';
     remove.addEventListener('click', () => {
       client.botControl(removeAction, name);
       setTimeout(rebuild, 200);

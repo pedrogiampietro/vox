@@ -266,11 +266,15 @@ function writeBotState(w: Writer, s: BotStateInfo): void {
     .list(s.hunted, (ww, name) => ww.str(name))
     .list(s.friends, (ww, name) => ww.str(name))
     .list(s.friendGuilds, (ww, name) => ww.str(name))
-    .list(s.enemyGuilds, (ww, name) => ww.str(name));
+    .list(s.enemyGuilds, (ww, name) => ww.str(name))
+    // Campos opcionais no fim do frame: clientes antigos continuam lendo o
+    // estado normalmente e clientes novos recebem o status detalhado.
+    .u8(s.starting ? 1 : 0)
+    .str(s.error);
 }
 
 function readBotState(r: Reader): BotStateInfo {
-  return {
+  const state: BotStateInfo = {
     world: r.str(),
     guildName: r.str(),
     channelName: r.str(),
@@ -292,7 +296,14 @@ function readBotState(r: Reader): BotStateInfo {
     friends: r.list((rr) => rr.str()),
     friendGuilds: r.list((rr) => rr.str()),
     enemyGuilds: r.list((rr) => rr.str()),
+    starting: false,
+    error: '',
   };
+  // Compatibilidade com servidores/clientes que ainda nao conhecem esses
+  // campos. Eles foram anexados ao final para nao deslocar a leitura antiga.
+  if (r.remaining > 0) state.starting = r.u8() === 1;
+  if (r.remaining > 0) state.error = r.str();
+  return state;
 }
 
 // ------------------------------------------------------- cliente -> servidor --

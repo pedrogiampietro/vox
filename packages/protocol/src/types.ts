@@ -146,6 +146,10 @@ export interface BotStateInfo {
   friendGuilds: string[];
   enemyGuilds: string[];
   running: boolean;
+  /** Ha uma sincronizacao/reinicio em andamento. */
+  starting: boolean;
+  /** Ultima falha ao iniciar; vazio quando nao ha erro. */
+  error: string;
 }
 
 /** Bits de estado do cliente (auto-declarado, o servidor apenas replica). */

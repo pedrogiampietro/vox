@@ -1471,6 +1471,8 @@ export class Hub {
       alertEnemyOnline: c.alertEnemyOnline,
       alertEnemyOffline: c.alertEnemyOffline,
       running: this.rubinot?.isRunning ?? false,
+      starting: this.rubinot?.isStarting ?? false,
+      error: this.rubinot?.lastStartError ?? '',
       hunted: this.rubinot?.manualHuntedList ?? [...c.huntedNames],
       friends: this.rubinot?.friendsList ?? [],
       friendGuilds: [...c.friendGuilds],
