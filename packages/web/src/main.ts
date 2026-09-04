@@ -908,29 +908,7 @@ function renderTalk(): HTMLElement {
   const serverLabel = text('span', 'name', client.serverName || 'v0x');
   const motd = text('span', 'motd', client.motd || '');
   if (client.notice?.kind === 'error') motd.classList.add('warn');
-  const stat = $('span', 'stat');
-  const connection = client.connection;
-  const usingQuic = connection.voiceTransport === 'quic';
-  const transport = text('span', 'via', usingQuic ? 'QUIC' : 'WS');
-  const voiceRtt = text('b', 'voice-rtt', usingQuic && connection.voiceRtt > 0 ? `${connection.voiceRtt}ms` : '—');
-  const voiceRegion = text('span', 'voice-region', usingQuic ? (connection.voiceRegion || 'edge') : 'voz');
-  const voiceQuality = text('span', `voice-quality ${connection.voiceQuality}`, usingQuic ? voiceQualityLabel(connection.voiceQuality) : 'fallback');
-  stat.append(
-    text('span', '', `ctrl`),
-    text('b', '', `${connection.rtt}ms`),
-    text('span', '', '·'),
-    text('span', 'voice-label', 'voz'),
-    voiceRtt,
-    text('span', '', '·'),
-    transport,
-    text('span', '', '·'),
-    voiceRegion,
-    text('span', '', '·'),
-    voiceQuality,
-    text('span', '', '·'),
-    text('span', '', 'drop'),
-    text('b', '', String(connection.droppedVoice)),
-  );
+  const stat = renderConnectionStatus();
   hdr.append(serverLabel, motd, stat);
   pane.append(hdr);
 
@@ -1071,6 +1049,48 @@ function renderTalk(): HTMLElement {
   pane.append(composer);
 
   return pane;
+}
+
+/**
+ * Atualiza só o indicador no header. O probe QUIC roda a cada dois segundos;
+ * trocar o shell inteiro nesse ritmo fazia o canal aberto perder a posição do
+ * scroll e produzia o flash percebido durante a conexão.
+ */
+function renderConnectionStatus(): HTMLElement {
+  const stat = $('span', 'stat');
+  fillConnectionStatus(stat);
+  return stat;
+}
+
+function updateLiveConnectionStatus(): void {
+  const stat = document.querySelector('.talk > header .stat');
+  if (!(stat instanceof HTMLElement)) return;
+  fillConnectionStatus(stat);
+}
+
+function fillConnectionStatus(stat: HTMLElement): void {
+  const connection = client.connection;
+  const usingQuic = connection.voiceTransport === 'quic';
+  const transport = text('span', 'via', usingQuic ? 'QUIC' : 'WS');
+  const voiceRtt = text('b', 'voice-rtt', usingQuic && connection.voiceRtt > 0 ? `${connection.voiceRtt}ms` : '—');
+  const voiceRegion = text('span', 'voice-region', usingQuic ? (connection.voiceRegion || 'edge') : 'voz');
+  const voiceQuality = text('span', `voice-quality ${connection.voiceQuality}`, usingQuic ? voiceQualityLabel(connection.voiceQuality) : 'fallback');
+  stat.replaceChildren(
+    text('span', '', 'ctrl'),
+    text('b', '', `${connection.rtt}ms`),
+    text('span', '', '·'),
+    text('span', 'voice-label', 'voz'),
+    voiceRtt,
+    text('span', '', '·'),
+    transport,
+    text('span', '', '·'),
+    voiceRegion,
+    text('span', '', '·'),
+    voiceQuality,
+    text('span', '', '·'),
+    text('span', '', 'drop'),
+    text('b', '', String(connection.droppedVoice)),
+  );
 }
 
 function voiceQualityLabel(quality: string): string {
@@ -4405,9 +4425,12 @@ async function refreshServers(): Promise<void> {
 
 // --------------------------------------------------------- boot --
 
-client = new VoxClient(() => {
-  if (view === 'shell') render();
-});
+client = new VoxClient(
+  () => {
+    if (view === 'shell') render();
+  },
+  updateLiveConnectionStatus,
+);
 
 const pokeQueue: { from: string; message: string; stamp: number }[] = [];
 

@@ -833,6 +833,11 @@ label.field {
   font-weight: 500;
 }
 
+.stat .voice-rtt {
+  min-width: 4ch;
+  text-align: right;
+}
+
 .stat .via {
   color: var(--amber);
 }

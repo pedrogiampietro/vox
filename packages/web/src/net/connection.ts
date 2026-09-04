@@ -248,6 +248,7 @@ export class Connection {
 
     if (msg.t === Op.Pong) {
       this.rtt = Math.round(performance.now() - msg.stamp);
+      this.handlers.onVoiceStats?.();
       return;
     }
     if (msg.t === Op.Failure) {

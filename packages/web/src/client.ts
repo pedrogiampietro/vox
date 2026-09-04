@@ -107,7 +107,10 @@ export class VoxClient {
   readonly microphone: Microphone;
   readonly screen: ScreenShare;
 
-  constructor(private readonly onChange: () => void) {
+  constructor(
+    private readonly onChange: () => void,
+    private readonly onLiveConnectionStatus: () => void = () => {},
+  ) {
     this.peers = loadPeerPrefs();
     this.connection = new Connection({
       onState: (link, detail) => {
@@ -123,8 +126,10 @@ export class VoxClient {
       },
       onMessage: (m) => this.apply(m),
       onVoice: (p) => this.mixer?.push(p),
-      onVoiceTransport: () => this.onChange(),
-      onVoiceStats: () => this.onChange(),
+      // Métricas de voz mudam continuamente. A tela atualiza somente o
+      // indicador no header; reconstruir o shell aqui faria o scroll piscar.
+      onVoiceTransport: () => this.onLiveConnectionStatus(),
+      onVoiceStats: () => this.onLiveConnectionStatus(),
     });
     this.microphone = new Microphone((frame) => this.connection.sendVoice(frame));
     this.screen = new ScreenShare(
