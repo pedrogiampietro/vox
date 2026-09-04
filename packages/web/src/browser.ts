@@ -10,6 +10,8 @@ import {
 import { $, text } from './ui/dom.js';
 import { closeMenu, openCustomMenu } from './ui/menu.js';
 
+const SERVER_ADDRESS_PLACEHOLDER = 'ex.: v0x.online ou servidor.v0x.online';
+
 export interface BrowserViewOptions {
   client: VoxClient;
   serverList: ServerStatus[];
@@ -144,9 +146,9 @@ function renderAddForm(options: BrowserViewOptions): HTMLElement {
     form = $('div', 'form-grid');
 
     const lblAddr = $('label', 'field');
-    lblAddr.append(text('span', 'label', 'codigo ou endereco do servidor'));
+    lblAddr.append(text('span', 'label', 'endereco do servidor'));
     const inpAddr = $('input') as HTMLInputElement;
-    inpAddr.placeholder = 'manowar ou manowar.v0x.online';
+    inpAddr.placeholder = SERVER_ADDRESS_PLACEHOLDER;
     inpAddr.setAttribute('autocomplete', 'url');
     lblAddr.classList.add('wide');
     lblAddr.append(inpAddr);
@@ -218,7 +220,7 @@ function showEditFavoriteMenu(anchor: HTMLElement, fav: Favorite, rerender: () =
     return inp;
   }
 
-  const inpAddr = field('codigo ou endereco', fav.address, 'manowar.v0x.online');
+  const inpAddr = field('endereco do servidor', fav.address, SERVER_ADDRESS_PLACEHOLDER);
   const inpNick = field('seu apelido', fav.nickname, 'eu');
   const inpPass = field('senha', fav.password, '', 'password');
 
