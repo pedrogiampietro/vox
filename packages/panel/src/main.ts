@@ -80,7 +80,7 @@ const app = document.getElementById('app')!;
 
 let token = sessionStorage.getItem(TOKEN_KEY) ?? '';
 let overview: Overview | null = null;
-let selectedId = 0;
+let selectedId = Number(new URLSearchParams(location.search).get('server') ?? 0) || 0;
 let detail: ServerDetail | null = null;
 let botState: BotState | null = null;
 let botDraft: Partial<{

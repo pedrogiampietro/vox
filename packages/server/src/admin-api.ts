@@ -424,7 +424,7 @@ export class AdminApi {
         maxClients: hub.settings.maxClients,
         url: publicUrl(hub.settings.slug),
       },
-      adminUrl: '/admin',
+      adminUrl: `/admin?server=${hub.id}`,
     });
   }
 
