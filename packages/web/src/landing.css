@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&display=swap');
 @import '@vox/ui/tokens.css';
 
 /* ---------------------------------------------------------- landing page -- */
@@ -28,7 +28,7 @@
 .landing-configurator-controls h3,
 .landing-configurator-summary h3,
 .landing-cta h2 {
-  font-family: 'Cinzel', Georgia, serif;
+  font-family: 'DM Serif Display', Georgia, serif;
 }
 
 .landing-shell {
@@ -83,6 +83,8 @@
 .landing-nav a:not(.landing-button) {
   color: var(--text-dim);
   font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   text-decoration: none;
   transition: color var(--dur) var(--ease);
 }
@@ -102,6 +104,8 @@
   color: var(--text);
   font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   text-decoration: none;
   transition: transform 120ms var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
@@ -179,7 +183,7 @@
   font-size: clamp(48px, 6vw, 82px);
   line-height: 0.98;
   letter-spacing: -0.035em;
-  font-weight: 800;
+  font-weight: 400;
 }
 
 .landing-title .accent {
