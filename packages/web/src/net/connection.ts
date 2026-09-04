@@ -626,6 +626,11 @@ const DEFAULT_PORT = 9987;
  * Vazio significa "a origem desta pagina", que e o certo na web (dev server e
  * build servido pelo proprio Vox). No desktop nao existe origem para herdar,
  * entao vazio cai na maquina local.
+ *
+ * Um dominio sem porta e a forma normal de acessar um servidor publicado:
+ * no navegador ele herda HTTPS e, no Tauri, precisa ser convertido para
+ * `wss` na porta 443. A porta 9987 e interna do Node e normalmente nao fica
+ * exposta pela VPS, que recebe a conexao publica no Caddy/HTTPS.
  */
 /** Hostname do socket de controle: o canal de voz mora no mesmo host. */
 function hostOf(wsUrl: string): string {
@@ -656,9 +661,22 @@ function resolveUrl(address: string, serverId = 0): string {
 
   const host = raw.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
   const hasPort = host.endsWith(']') ? false : /:\d+$/.test(host);
+  const explicitSecure = /^https:\/\//i.test(raw);
+  const explicitInsecure = /^http:\/\//i.test(raw);
+  const localHost = /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|::1|\[::1\])$/i.test(host);
   // Endereco escrito a mao herda o esquema da pagina: em https, ws:// seria
-  // bloqueado como conteudo misto antes mesmo de sair do navegador.
-  const scheme = !isDesktopShell && location.protocol === 'https:' ? 'wss' : 'ws';
-  const port = hasPort ? '' : (!isDesktopShell && location.protocol === 'https:' ? '' : `:${DEFAULT_PORT}`);
+  // bloqueado como conteudo misto antes mesmo de sair do navegador. No
+  // desktop, dominios publicos usam a porta HTTPS do reverse proxy; somente
+  // hosts locais continuam apontando para a porta de desenvolvimento 9987.
+  const scheme = explicitSecure
+    ? 'wss'
+    : explicitInsecure
+      ? 'ws'
+      : !isDesktopShell && location.protocol === 'https:'
+        ? 'wss'
+        : isDesktopShell && !localHost
+          ? 'wss'
+          : 'ws';
+  const port = hasPort || scheme === 'wss' ? '' : `:${DEFAULT_PORT}`;
   return `${scheme}://${host}${port}${path}`;
 }
