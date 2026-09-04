@@ -615,7 +615,12 @@ export class Connection {
  * origem HTTP normal mas nao tem servidor Vox nenhum atras.
  */
 export const isDesktopShell =
-  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  typeof window !== 'undefined' && (
+    '__TAURI_INTERNALS__' in window
+    // O Tauri pode não expor o global quando withGlobalTauri não está
+    // habilitado. A origem oficial do WebView2 continua sendo confiável.
+    || location.hostname === 'tauri.localhost'
+  );
 
 /** Porta padrao do Vox, a mesma do TS3. */
 const DEFAULT_PORT = 9987;
