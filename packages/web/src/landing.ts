@@ -12,8 +12,10 @@ function renderLandingPage(): HTMLElement {
   const page = $('main', 'landing-page');
   page.append(renderNav());
   const shell = $('div', 'landing-shell');
-  shell.append(renderHero(), renderTrustBar(), renderDownload(), renderFeatures(), renderFlow(), renderPlans(), renderCta(), renderFooter());
+  const plans = renderPlans();
+  shell.append(renderHero(), renderTrustBar(), renderDownload(), renderFeatures(), renderFlow(), plans, renderCta(), renderFooter());
   page.append(shell);
+  void refreshLandingPlans(plans);
   void refreshLandingStatus(page);
   return page;
 }
@@ -227,20 +229,46 @@ function renderPlans(): HTMLElement {
   const grid = $('div', 'landing-plan-grid');
   grid.append(
     planCard('comunidade', 'Para testar com o time', 'gratuito', ['10 slots', 'Channels essenciais', 'Áudio em tempo real', 'Acesso pelo navegador'], 'começar agora', '/contratar?plan=community'),
-    planCard('privado', 'Para sua guilda', 'sob consulta', ['Até 50 slots', 'Servidor dedicado', 'Permissões e grupos', 'Bot Rubinot configurável'], 'falar sobre o Vox', '/contratar?plan=private', true),
-    planCard('war room', 'Para operações maiores', 'sob medida', ['Até 100 slots', 'Estrutura para vários times', 'Edges regionais', 'Rubinot e módulos futuros'], 'montar estrutura', '/contratar?plan=war'),
+    planCard('50 slots', 'Vox 50', 'R$ 29,90', ['Sem bot', 'Channels e permissões', 'Áudio QUIC + WS', 'Painel administrativo'], 'contratar', '/contratar?plan=50-basic'),
+    planCard('50 slots · Rubinot', 'Vox 50 Rubinot', 'R$ 69,90', ['Bot Rubinot', 'Hunted List, UP Level e DeathList', 'Channels prontos', 'Painel administrativo'], 'contratar', '/contratar?plan=50-bot', true),
+    planCard('100 slots', 'Vox 100', 'R$ 50,90', ['Sem bot', 'Mais espaço para a guilda', 'Áudio QUIC + WS', 'Painel administrativo'], 'contratar', '/contratar?plan=100-basic'),
+    planCard('100 slots · Rubinot', 'Vox 100 Rubinot', 'R$ 99,90', ['Bot Rubinot', 'Relatórios automáticos', 'Channels prontos', 'Painel administrativo'], 'contratar', '/contratar?plan=100-bot'),
+    planCard('254 slots', 'Vox 254', 'R$ 100,00', ['Sem bot', 'Capacidade máxima', 'Edges regionais', 'Painel administrativo'], 'contratar', '/contratar?plan=254-basic'),
+    planCard('254 slots · Rubinot', 'Vox 254 Rubinot', 'R$ 150,00', ['Bot Rubinot', 'Capacidade máxima', 'Relatórios e alertas', 'Painel administrativo'], 'contratar', '/contratar?plan=254-bot'),
   );
-  section.append(grid, text('p', 'landing-plan-note', 'A tabela inicial de slots está pronta para o checkout. Os planos pagos ainda serão conectados à contratação e à cobrança automática.'));
+  section.append(grid, text('p', 'landing-plan-note', 'Planos mensais · pagamento via Pix ou cartão · servidor criado após a confirmação do Mercado Pago.'));
   return section;
 }
 
 function planCard(label: string, title: string, price: string, benefits: string[], action: string, href: string, featured = false): HTMLElement {
   const card = $('article', `landing-plan${featured ? ' featured' : ''}`);
+  const planKey = new URL(href, window.location.origin).searchParams.get('plan');
+  if (planKey) card.dataset.planKey = planKey;
   card.append(text('span', 'landing-plan-label', label), text('h3', '', title), text('strong', 'landing-plan-price', price));
   const list = $('ul', 'landing-plan-list');
   for (const benefit of benefits) list.append(text('li', '', benefit));
   card.append(list, landingLink(action, href, 'landing-button landing-button-outline'));
   return card;
+}
+
+async function refreshLandingPlans(section: HTMLElement): Promise<void> {
+  try {
+    const response = await fetch('/api/billing/plans');
+    if (!response.ok) return;
+    const body = await response.json() as { plans?: { key: string; priceCents: number }[] };
+    for (const plan of body.plans ?? []) {
+      if (plan.priceCents <= 0) continue;
+      const card = section.querySelector(`[data-plan-key="${plan.key}"]`);
+      const price = card?.querySelector('.landing-plan-price');
+      if (price) price.textContent = formatCents(plan.priceCents);
+    }
+  } catch {
+    // Os preços de fallback continuam visíveis se a API estiver indisponível.
+  }
+}
+
+function formatCents(value: number): string {
+  return (value / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 function renderCta(): HTMLElement {

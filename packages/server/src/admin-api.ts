@@ -19,6 +19,7 @@ import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
+import { botConfigFromEnv } from '../../bot/src/bot.js';
 import {
   billingPlans,
   createMercadoPagoPreference,
@@ -549,14 +550,24 @@ export class AdminApi {
         return send(res, 200, { ok: true });
       }
 
+      const plan = getBillingPlan(order.plan);
       const hub = this.registry.create({
         name: order.serverName,
         slug: order.serverSlug,
         ownerId: order.accountId,
         password: order.serverPassword,
-        maxClients: getBillingPlan(order.plan)?.slots ?? 10,
+        maxClients: plan?.slots ?? 10,
         motd: 'Bem-vindo ao seu servidor Vox.',
       });
+      if (plan?.botEnabled) {
+        const envBot = botConfigFromEnv();
+        hub.botConfig = envBot && !hub.botConfig.world
+          ? { ...envBot, enabled: true }
+          : { ...hub.botConfig, enabled: true };
+        hub.ensureChannel(hub.botConfig.channelName || 'bot');
+        applyBotConfig(hub);
+        this.registry.scheduleSave();
+      }
       updateOrder(order.id, { status: 'approved', paymentId, serverId: hub.id, lastError: '' });
       this.broadcastState();
       console.log(`[vox] pagamento aprovado: pedido ${order.id}, servidor ${hub.id}`);

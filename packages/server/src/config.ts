@@ -197,8 +197,12 @@ export const config = {
   /** Checkout Pro do Mercado Pago. Segredos ficam somente no .env da VPS. */
   mpAccessToken: str('VOX_MP_ACCESS_TOKEN', ''),
   mpWebhookSecret: str('VOX_MP_WEBHOOK_SECRET', ''),
-  mpPrivatePriceCents: cents('VOX_MP_PRIVATE_PRICE'),
-  mpWarPriceCents: cents('VOX_MP_WAR_PRICE'),
+  mp50NoBotPriceCents: cents('VOX_MP_50_NO_BOT_PRICE'),
+  mp50BotPriceCents: cents('VOX_MP_50_BOT_PRICE'),
+  mp100NoBotPriceCents: cents('VOX_MP_100_NO_BOT_PRICE'),
+  mp100BotPriceCents: cents('VOX_MP_100_BOT_PRICE'),
+  mp254NoBotPriceCents: cents('VOX_MP_254_NO_BOT_PRICE'),
+  mp254BotPriceCents: cents('VOX_MP_254_BOT_PRICE'),
   publicOrigin: str('VOX_PUBLIC_ORIGIN', `https://${str('VOX_BASE_DOMAIN', 'v0x.online')}`).replace(/\/$/, ''),
   mpWebhookUrl: str(
     'VOX_MP_WEBHOOK_URL',

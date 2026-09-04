@@ -4,7 +4,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { database } from './sqlite.js';
 
-export type PaidPlan = 'private' | 'war';
+export type PaidPlan = '50-basic' | '50-bot' | '100-basic' | '100-bot' | '254-basic' | '254-bot';
 export type BillingOrderStatus = 'pending' | 'approved' | 'failed';
 
 export interface BillingPlan {
@@ -12,6 +12,7 @@ export interface BillingPlan {
   label: string;
   title: string;
   slots: number;
+  botEnabled: boolean;
   priceCents: number;
   enabled: boolean;
 }
@@ -42,8 +43,17 @@ export interface MercadoPagoPayment {
 }
 
 const plans: Record<PaidPlan, Omit<BillingPlan, 'priceCents' | 'enabled'> & { priceCents: number }> = {
-  private: { key: 'private', label: 'privado', title: 'Para sua guilda', slots: 50, priceCents: config.mpPrivatePriceCents },
-  war: { key: 'war', label: 'war room', title: 'Para operações maiores', slots: 100, priceCents: config.mpWarPriceCents },
+  '50-basic': { key: '50-basic', label: '50 slots · sem bot', title: 'Vox 50', slots: 50, botEnabled: false, priceCents: config.mp50NoBotPriceCents },
+  '50-bot': { key: '50-bot', label: '50 slots · com Rubinot', title: 'Vox 50 Rubinot', slots: 50, botEnabled: true, priceCents: config.mp50BotPriceCents },
+  '100-basic': { key: '100-basic', label: '100 slots · sem bot', title: 'Vox 100', slots: 100, botEnabled: false, priceCents: config.mp100NoBotPriceCents },
+  '100-bot': { key: '100-bot', label: '100 slots · com Rubinot', title: 'Vox 100 Rubinot', slots: 100, botEnabled: true, priceCents: config.mp100BotPriceCents },
+  '254-basic': { key: '254-basic', label: '254 slots · sem bot', title: 'Vox 254', slots: 254, botEnabled: false, priceCents: config.mp254NoBotPriceCents },
+  '254-bot': { key: '254-bot', label: '254 slots · com Rubinot', title: 'Vox 254 Rubinot', slots: 254, botEnabled: true, priceCents: config.mp254BotPriceCents },
+};
+
+const legacyAliases: Record<string, PaidPlan> = {
+  private: '50-bot',
+  war: '100-bot',
 };
 
 export function billingPlans(): BillingPlan[] {
@@ -54,7 +64,7 @@ export function billingPlans(): BillingPlan[] {
 }
 
 export function getBillingPlan(value: string): BillingPlan | undefined {
-  const plan = plans[value as PaidPlan];
+  const plan = plans[legacyAliases[value] ?? value as PaidPlan];
   if (!plan) return undefined;
   return {
     ...plan,

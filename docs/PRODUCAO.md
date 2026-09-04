@@ -170,8 +170,12 @@ Adicione ao `/opt/vox/.env` (substitua os valores de exemplo):
 ```ini
 VOX_MP_ACCESS_TOKEN=APP_USR-...
 VOX_MP_WEBHOOK_SECRET=...
-VOX_MP_PRIVATE_PRICE=29.90
-VOX_MP_WAR_PRICE=59.90
+VOX_MP_50_NO_BOT_PRICE=29.90
+VOX_MP_50_BOT_PRICE=69.90
+VOX_MP_100_NO_BOT_PRICE=50.90
+VOX_MP_100_BOT_PRICE=99.90
+VOX_MP_254_NO_BOT_PRICE=100.00
+VOX_MP_254_BOT_PRICE=150.00
 VOX_PUBLIC_ORIGIN=https://v0x.online
 VOX_MP_WEBHOOK_URL=https://v0x.online/api/payments/mercadopago/webhook
 ```
