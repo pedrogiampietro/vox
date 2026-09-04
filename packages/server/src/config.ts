@@ -46,6 +46,13 @@ function bool(name: string, fallback: boolean): boolean {
   return raw === '1' || raw.toLowerCase() === 'true';
 }
 
+function cents(name: string): number {
+  const raw = process.env[name];
+  if (!raw) return 0;
+  const value = Number(raw.replace(',', '.'));
+  return Number.isFinite(value) && value > 0 ? Math.round(value * 100) : 0;
+}
+
 /**
  * Lista no formato `regiao=host:porta,regiao2=host:porta`.
  * O formato simples deixa a configuração legível no .env e permite que o
@@ -186,6 +193,17 @@ export const config = {
    * todo mundo vira o mesmo IP e o limite por IP derruba o servidor inteiro.
    */
   trustProxy: bool('VOX_TRUST_PROXY', false),
+
+  /** Checkout Pro do Mercado Pago. Segredos ficam somente no .env da VPS. */
+  mpAccessToken: str('VOX_MP_ACCESS_TOKEN', ''),
+  mpWebhookSecret: str('VOX_MP_WEBHOOK_SECRET', ''),
+  mpPrivatePriceCents: cents('VOX_MP_PRIVATE_PRICE'),
+  mpWarPriceCents: cents('VOX_MP_WAR_PRICE'),
+  publicOrigin: str('VOX_PUBLIC_ORIGIN', `https://${str('VOX_BASE_DOMAIN', 'v0x.online')}`).replace(/\/$/, ''),
+  mpWebhookUrl: str(
+    'VOX_MP_WEBHOOK_URL',
+    `${str('VOX_PUBLIC_ORIGIN', `https://${str('VOX_BASE_DOMAIN', 'v0x.online')}`).replace(/\/$/, '')}/api/payments/mercadopago/webhook`,
+  ),
 } as const;
 
 export const tlsEnabled = config.tlsCert !== '' && config.tlsKey !== '';

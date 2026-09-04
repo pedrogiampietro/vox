@@ -7,6 +7,15 @@ type Plan = { key: PlanKey; label: string; title: string; price: string; slots: 
 type Account = { id: number; email: string; createdAt: number };
 type Overview = { account: Account | null; servers: { id: number }[] };
 type ProvisionResult = { server: { slug: string; name: string; maxClients: number; url: string }; adminUrl: string };
+type OrderResult = {
+  id: string;
+  plan: PlanKey;
+  amountCents: number;
+  status: 'pending' | 'approved' | 'failed';
+  server?: { slug: string; name: string; maxClients: number; url: string };
+  adminUrl?: string;
+  error?: string;
+};
 
 const plans: Record<PlanKey, Plan> = {
   community: { key: 'community', label: 'comunidade', title: 'Para testar com o time', price: 'gratuito', slots: '10 slots', paid: false, detail: 'O essencial para colocar a primeira call no ar.' },
@@ -18,19 +27,23 @@ const TOKEN_KEY = 'vox.customer.token';
 const root = document.getElementById('checkout');
 const params = new URLSearchParams(location.search);
 const planParam = params.get('plan');
+const orderId = params.get('order') ?? '';
 const selectedPlan = planParam && Object.prototype.hasOwnProperty.call(plans, planParam)
   ? plans[planParam as PlanKey]
   : plans.community;
 let token = sessionStorage.getItem(TOKEN_KEY) ?? '';
-let step: 1 | 2 | 3 = token ? 2 : 1;
+let step: 1 | 2 | 3 = token ? orderId ? 3 : 2 : 1;
 let authMode: 'login' | 'register' = 'register';
 let notice = '';
 let busy = false;
 let account: Account | null = null;
 let provision: ProvisionResult | null = null;
+let order: OrderResult | null = null;
+let pollingOrder = false;
 
 if (root) {
   render();
+  void hydrateBillingPlans();
   if (token) void hydrateSession();
 }
 
@@ -120,10 +133,27 @@ function renderServerStep(): HTMLElement {
 
 function renderSuccessStep(): HTMLElement {
   const section = $('section', 'checkout-success');
+  if (orderId && !provision) {
+    if (order?.status === 'failed') {
+      section.append(text('span', 'checkout-kicker', 'PASSO 03 · PAGAMENTO'), text('h1', '', 'O pagamento não foi concluído.'), text('p', 'checkout-lede', 'Nenhum servidor foi criado. Você pode voltar aos planos e tentar novamente.'));
+      const back = $('a', 'checkout-button checkout-outline'); back.href = '/#planos'; back.textContent = 'voltar para planos';
+      section.append(back);
+      return section;
+    }
+    section.append(
+      text('span', 'checkout-kicker', 'PASSO 03 · PAGAMENTO'),
+      text('h1', '', order?.status === 'approved' ? 'Pagamento confirmado.' : 'Aguardando confirmação.'),
+      text('p', 'checkout-lede', order?.status === 'approved'
+        ? 'O Mercado Pago confirmou a cobrança. Estamos finalizando a criação do seu servidor.'
+        : 'O pagamento foi iniciado. Assim que o Mercado Pago confirmar, o Vox cria seu servidor automaticamente.'),
+      text('p', 'checkout-security-note', pollingOrder ? 'verificando o status do pagamento…' : 'Você pode fechar esta página; o pedido fica salvo na sua conta.'),
+    );
+    return section;
+  }
   section.append(text('span', 'checkout-kicker', 'PASSO 03 · TUDO PRONTO'), text('h1', '', 'Seu servidor está no ar.'), text('p', 'checkout-lede', 'A conta já é a dona do servidor. Use o endereço abaixo para entrar com o seu time.'));
   if (provision) {
     const address = $('div', 'checkout-address');
-    address.append(text('span', 'checkout-address-label', 'ENDEREÇO DO SERVIDOR'), text('strong', '', provision.server.url), text('span', 'mono', `${provision.server.maxClients} slots · plano comunidade`));
+    address.append(text('span', 'checkout-address-label', 'ENDEREÇO DO SERVIDOR'), text('strong', '', provision.server.url), text('span', 'mono', `${provision.server.maxClients} slots · plano ${selectedPlan.label}`));
     section.append(address);
     const actions = $('div', 'checkout-actions');
     const open = $('a', 'checkout-button checkout-primary'); open.href = `/app?server=${encodeURIComponent(provision.server.url)}`; open.textContent = 'entrar no Vox';
@@ -149,7 +179,7 @@ function summaryRow(label: string, value: string): HTMLElement {
 }
 
 function renderFooter(): HTMLElement {
-  const footer = $('footer', 'checkout-footer'); footer.append(text('span', '', 'v0x · contratação segura por etapas'), text('span', 'mono', 'Mercado Pago em breve para Pix e cartão')); return footer;
+  const footer = $('footer', 'checkout-footer'); footer.append(text('span', '', 'v0x · contratação segura por etapas'), text('span', 'mono', 'pagamento protegido pelo Mercado Pago')); return footer;
 }
 
 function field(label: string, placeholder: string, type: string): { wrap: HTMLElement; input: HTMLInputElement } {
@@ -174,21 +204,80 @@ async function hydrateSession(): Promise<void> {
     if (!response.ok) throw new Error('sessão expirada');
     const body = await response.json() as Overview;
     account = body.account;
-    step = 2;
+    step = orderId ? 3 : 2;
     render();
+    if (orderId) void pollOrder();
   } catch { token = ''; account = null; sessionStorage.removeItem(TOKEN_KEY); step = 1; render(); }
 }
 
 async function provisionServer(name: string, slug: string, password: string): Promise<void> {
   if (busy) return;
-  if (selectedPlan.paid) { notice = 'O checkout do Mercado Pago será ativado assim que os preços e credenciais forem configurados.'; render(); return; }
   busy = true; notice = ''; render();
   try {
+    if (selectedPlan.paid) {
+      const response = await fetch('/api/account/checkout', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ plan: selectedPlan.key, name, slug, password }) });
+      const body = await response.json() as { orderId?: string; initPoint?: string; error?: string };
+      if (!response.ok || !body.orderId || !body.initPoint) throw new Error(body.error || 'não foi possível iniciar o pagamento');
+      window.location.assign(body.initPoint);
+      return;
+    }
     const response = await fetch('/api/account/provision', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ plan: selectedPlan.key, name, slug, password }) });
     const body = await response.json() as ProvisionResult & { error?: string };
     if (!response.ok) throw new Error(body.error || 'não foi possível criar o servidor');
     provision = body; step = 3; busy = false; render();
   } catch (error) { busy = false; notice = error instanceof Error ? error.message : String(error); render(); }
+}
+
+async function hydrateBillingPlans(): Promise<void> {
+  try {
+    const response = await fetch('/api/billing/plans');
+    if (!response.ok) return;
+    const body = await response.json() as { plans?: { key: PlanKey; priceCents: number }[] };
+    for (const remote of body.plans ?? []) {
+      const local = plans[remote.key];
+      if (local && remote.priceCents > 0) local.price = formatCents(remote.priceCents);
+    }
+    if (!busy && step !== 2) render();
+  } catch {
+    // O checkout gratuito continua funcionando mesmo sem o catálogo de preços.
+  }
+}
+
+async function pollOrder(): Promise<void> {
+  if (!orderId || !token || pollingOrder) return;
+  pollingOrder = true;
+  for (let attempt = 0; attempt < 48; attempt++) {
+    try {
+      const response = await fetch(`/api/account/orders/${encodeURIComponent(orderId)}`, { headers: { authorization: `Bearer ${token}` } });
+      const body = await response.json() as OrderResult;
+      if (!response.ok) throw new Error(body.error || 'não foi possível consultar o pedido');
+      order = body;
+      if (body.status === 'approved' && body.server) {
+        provision = { server: body.server, adminUrl: body.adminUrl ?? `/admin?server=${body.server.slug}` };
+        pollingOrder = false;
+        busy = false;
+        render();
+        return;
+      }
+      if (body.status === 'failed') break;
+      render();
+    } catch (error) {
+      notice = error instanceof Error ? error.message : String(error);
+      break;
+    }
+    await delay(2500);
+  }
+  pollingOrder = false;
+  busy = false;
+  render();
+}
+
+function formatCents(value: number): string {
+  return (value / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function slugify(value: string): string {

@@ -19,6 +19,17 @@ import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
+import {
+  billingPlans,
+  createMercadoPagoPreference,
+  createOrder,
+  findOrder,
+  getBillingPlan,
+  getMercadoPagoPayment,
+  updateOrder,
+  validWebhookSignature,
+  type BillingOrder,
+} from './billing.js';
 
 /** Corpo maior que isto so pode ser abuso: o painel manda objetos minusculos. */
 const MAX_BODY_BYTES = 16 * 1024;
@@ -35,6 +46,8 @@ export class AdminApi {
   /** Token -> expiracao. Em memoria: reiniciar o servidor desloga o painel. */
   private readonly tokens = new Map<string, { expires: number; ownerId: number | null }>();
   private readonly attempts = new Map<string, Attempts>();
+  /** Evita provisionar duas vezes quando o Mercado Pago repete em paralelo. */
+  private readonly processingOrders = new Set<string>();
   /** Conexoes SSE abertas, para empurrar o estado ao vivo. */
   private readonly streams = new Map<ServerResponse, number | null>();
 
@@ -61,7 +74,9 @@ export class AdminApi {
   handle(req: IncomingMessage, res: ServerResponse, path: string, ip: string): boolean {
     if (!path.startsWith('/api/')) return false;
 
-    if (!adminEnabled) {
+    const publicBillingRoute = path === '/api/billing/plans'
+      || path === '/api/payments/mercadopago/webhook';
+    if (!adminEnabled && !publicBillingRoute) {
       send(res, 503, { error: 'painel desligado: defina VOX_ADMIN_PASSWORD' });
       return true;
     }
@@ -80,6 +95,13 @@ export class AdminApi {
     ip: string,
   ): Promise<void> {
     const method = req.method ?? 'GET';
+
+    if (path === '/api/billing/plans' && method === 'GET') {
+      return send(res, 200, { plans: billingPlans(), checkout: billingPlans().some((plan) => plan.enabled) });
+    }
+    if (path === '/api/payments/mercadopago/webhook' && method === 'POST') {
+      return this.mercadoPagoWebhook(req, res);
+    }
 
     if (path === '/api/login' && method === 'POST') {
       return this.login(req, res, ip);
@@ -110,6 +132,15 @@ export class AdminApi {
 
     if (path === '/api/account/provision' && method === 'POST') {
       return this.provisionAccountServer(req, res, session);
+    }
+
+    if (path === '/api/account/checkout' && method === 'POST') {
+      return this.createAccountCheckout(req, res, session);
+    }
+
+    const orderMatch = /^\/api\/account\/orders\/([a-z0-9-]+)$/.exec(path);
+    if (orderMatch && method === 'GET') {
+      return this.accountOrder(res, session, orderMatch[1]!);
     }
 
     if (path === '/api/stream' && method === 'GET') {
@@ -428,6 +459,113 @@ export class AdminApi {
     });
   }
 
+  private async createAccountCheckout(
+    req: IncomingMessage,
+    res: ServerResponse,
+    session: { ownerId: number | null },
+  ): Promise<void> {
+    if (session.ownerId === null) return send(res, 403, { error: 'somente contas de cliente podem contratar' });
+    const body = await readJson(req);
+    const plan = getBillingPlan(str(body.plan).trim().toLowerCase());
+    if (!plan) return send(res, 400, { error: 'plano pago inválido' });
+    if (!plan.enabled) {
+      return send(res, 503, { error: 'este plano ainda não está disponível para contratação' });
+    }
+    if (this.registry.snapshot().some((server) => server.ownerId === session.ownerId)) {
+      return send(res, 409, { error: 'esta conta já possui um servidor; upgrades serão liberados em breve' });
+    }
+    const name = str(body.name).trim() || 'Meu servidor Vox';
+    const slug = str(body.slug).trim().toLowerCase();
+    const password = str(body.password);
+    const account = findAccountById(session.ownerId);
+    if (!account) return send(res, 403, { error: 'conta inexistente' });
+    const order = createOrder({
+      accountId: session.ownerId,
+      plan: plan.key,
+      amountCents: plan.priceCents,
+      serverName: name,
+      serverSlug: slug,
+      serverPassword: password,
+    });
+    try {
+      const preference = await createMercadoPagoPreference(order, account.email);
+      return send(res, 201, {
+        orderId: order.id,
+        status: order.status,
+        amountCents: order.amountCents,
+        initPoint: preference.initPoint,
+      });
+    } catch (error) {
+      updateOrder(order.id, { status: 'failed', lastError: error instanceof Error ? error.message : 'erro ao criar preferência' });
+      return send(res, 502, { error: error instanceof Error ? error.message : 'não foi possível iniciar o pagamento' });
+    }
+  }
+
+  private accountOrder(res: ServerResponse, session: { ownerId: number | null }, id: string): void {
+    if (session.ownerId === null) return void send(res, 403, { error: 'somente contas de cliente podem consultar pedidos' });
+    const order = findOrder(id);
+    if (!order || order.accountId !== session.ownerId) return void send(res, 404, { error: 'pedido inexistente' });
+    return void send(res, 200, publicOrder(order, this.registry));
+  }
+
+  private async mercadoPagoWebhook(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!config.mpAccessToken || !config.mpWebhookSecret) {
+      return send(res, 503, { error: 'webhook Mercado Pago ainda não configurado' });
+    }
+    const body = await readJson(req);
+    const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+    const data = isObject(body.data) ? body.data : {};
+    const dataId = str(data.id) || query.get('data.id') || query.get('data_id') || '';
+    const requestId = header(req, 'x-request-id');
+    const signature = header(req, 'x-signature');
+    if (!dataId || !validWebhookSignature(signature, requestId, dataId)) {
+      return send(res, 401, { error: 'assinatura do webhook inválida' });
+    }
+    if (str(body.type) !== 'payment' && str(body.topic) !== 'payment') {
+      return send(res, 200, { ok: true });
+    }
+
+    const payment = await getMercadoPagoPayment(dataId);
+    const orderId = payment.external_reference || '';
+    const order = orderId ? findOrder(orderId) : undefined;
+    if (!order) return send(res, 200, { ok: true });
+    if (order.status === 'approved' && order.serverId !== null) return send(res, 200, { ok: true });
+    if (this.processingOrders.has(order.id)) return send(res, 200, { ok: true });
+    this.processingOrders.add(order.id);
+    try {
+      if (payment.currency_id !== 'BRL' || Math.round(Number(payment.transaction_amount) * 100) !== order.amountCents) {
+        updateOrder(order.id, { status: 'failed', paymentId: String(payment.id ?? dataId), lastError: 'valor ou moeda do pagamento não conferem' });
+        return send(res, 200, { ok: true });
+      }
+      const paymentId = String(payment.id ?? dataId);
+      if (payment.status !== 'approved') {
+        const terminal = payment.status === 'rejected' || payment.status === 'cancelled' || payment.status === 'refunded' || payment.status === 'charged_back';
+        updateOrder(order.id, { status: terminal ? 'failed' : 'pending', paymentId, lastError: terminal ? `pagamento ${payment.status}` : '' });
+        return send(res, 200, { ok: true });
+      }
+      if (this.registry.snapshot().some((server) => server.ownerId === order.accountId)) {
+        updateOrder(order.id, { status: 'failed', paymentId, lastError: 'a conta já possui um servidor' });
+        console.error(`[vox] pagamento aprovado sem provisionamento: pedido ${order.id} já possui servidor`);
+        return send(res, 200, { ok: true });
+      }
+
+      const hub = this.registry.create({
+        name: order.serverName,
+        slug: order.serverSlug,
+        ownerId: order.accountId,
+        password: order.serverPassword,
+        maxClients: getBillingPlan(order.plan)?.slots ?? 10,
+        motd: 'Bem-vindo ao seu servidor Vox.',
+      });
+      updateOrder(order.id, { status: 'approved', paymentId, serverId: hub.id, lastError: '' });
+      this.broadcastState();
+      console.log(`[vox] pagamento aprovado: pedido ${order.id}, servidor ${hub.id}`);
+      return send(res, 200, { ok: true });
+    } finally {
+      this.processingOrders.delete(order.id);
+    }
+  }
+
   private allowAttempt(ip: string): boolean {
     const now = Date.now();
     const entry = this.attempts.get(ip);
@@ -500,6 +638,30 @@ function publicAccount(account: { id: number; email: string; createdAt: number }
   return { id: account.id, email: account.email, createdAt: account.createdAt };
 }
 
+function publicOrder(order: BillingOrder, registry: Registry): unknown {
+  const hub = order.serverId === null ? undefined : registry.get(order.serverId);
+  return {
+    id: order.id,
+    plan: order.plan,
+    amountCents: order.amountCents,
+    status: order.status,
+    preferenceId: order.preferenceId,
+    paymentId: order.paymentId,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    server: hub
+      ? {
+          id: hub.id,
+          slug: hub.settings.slug,
+          name: hub.settings.name,
+          maxClients: hub.settings.maxClients,
+          url: publicUrl(hub.settings.slug),
+        }
+      : undefined,
+    adminUrl: hub ? `/admin?server=${hub.id}` : undefined,
+  };
+}
+
 // -------------------------------------------------------------- utilidades --
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -542,6 +704,15 @@ function matches(given: string, expected: string): boolean {
 
 function str(v: unknown): string {
   return typeof v === 'string' ? v : '';
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+function header(req: IncomingMessage, name: string): string {
+  const value = req.headers[name];
+  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
 }
 
 function int(v: unknown, fallback: number): number {

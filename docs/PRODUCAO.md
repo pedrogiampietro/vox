@@ -156,6 +156,61 @@ systemctl restart vox.service
 O `.env`, `/etc/caddy` e os dados ficam fora do Git e não são sobrescritos pelo
 deploy.
 
+## Checkout Pro do Mercado Pago
+
+O checkout pago usa o Checkout Pro: o Vox cria uma preferência no servidor e
+redireciona o cliente para o Mercado Pago, onde ele pode escolher Pix ou
+cartão. O servidor do cliente só é criado depois que o webhook confirma um
+pagamento aprovado. O retorno do navegador não é usado como prova de pagamento.
+
+### Variáveis na VPS
+
+Adicione ao `/opt/vox/.env` (substitua os valores de exemplo):
+
+```ini
+VOX_MP_ACCESS_TOKEN=APP_USR-...
+VOX_MP_WEBHOOK_SECRET=...
+VOX_MP_PRIVATE_PRICE=29.90
+VOX_MP_WAR_PRICE=59.90
+VOX_PUBLIC_ORIGIN=https://v0x.online
+VOX_MP_WEBHOOK_URL=https://v0x.online/api/payments/mercadopago/webhook
+```
+
+O Access Token é um segredo de servidor: não vai para o frontend, screenshots,
+chat, GitHub ou arquivo `.env.example`. A Public Key pode permanecer pública,
+mas não substitui o Access Token para criar preferências pelo backend. O Client
+ID/Client Secret são necessários para um fluxo OAuth/marketplace; não são o
+par usado neste checkout que recebe na própria conta Vox.
+
+No painel do Mercado Pago, abra Webhooks da aplicação de produção, informe
+exatamente a URL acima, marque o evento `Pagamentos` e salve. Depois revele a
+assinatura secreta gerada e coloque-a em `VOX_MP_WEBHOOK_SECRET`. A assinatura
+é usada para rejeitar notificações falsificadas.
+
+Após alterar o `.env`:
+
+```bash
+systemctl restart vox.service
+systemctl is-active vox.service
+journalctl -u vox.service -n 50 --no-pager | grep -Ei 'Mercado Pago|pagamento|erro'
+```
+
+Abra `https://v0x.online/api/billing/plans`: os planos pagos devem aparecer com
+`enabled: true`. Faça um pedido de teste com valor real somente quando os
+preços e a conta estiverem conferidos. O webhook esperado é um `POST` do
+Mercado Pago em `/api/payments/mercadopago/webhook`; o Vox consulta o pagamento
+na API do Mercado Pago, confere pedido, moeda e valor e então cria o servidor
+Rubinot. Notificações repetidas são idempotentes depois que o pedido já tem
+servidor associado.
+
+Por enquanto, uma conta pode criar um único servidor. A compra paga de uma
+conta que já possui servidor é bloqueada; upgrades e renovação recorrente ficam
+para a próxima etapa, evitando cobrar sem ter a regra comercial implementada.
+
+Para diagnosticar uma notificação, use o painel de Webhooks do Mercado Pago e
+os logs do serviço. Nunca registre o Access Token, a assinatura secreta ou a
+senha do servidor nos logs.
+
 ## Migração para outra VPS
 
 ### 1. Fazer backup na máquina antiga

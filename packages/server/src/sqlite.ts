@@ -19,6 +19,14 @@ database.exec(`
     id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL, created_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS payment_orders (
+    id TEXT PRIMARY KEY, account_id INTEGER NOT NULL, plan TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL, server_name TEXT NOT NULL,
+    server_slug TEXT NOT NULL, server_password TEXT NOT NULL,
+    status TEXT NOT NULL, preference_id TEXT NOT NULL, payment_id TEXT NOT NULL,
+    server_id INTEGER, last_error TEXT NOT NULL, created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
 `);
 
 // Migracoes incrementais — cada uma roda so se a coluna ainda nao existe.
