@@ -47,6 +47,7 @@ import {
 } from './ui/icons.js';
 import { closeMenu, openMenu } from './ui/menu.js';
 import { keyLabel, loadPttKey, savePttKey } from './ui/ptt.js';
+import { isDesktopShell } from './net/connection.js';
 
 // ------------------------------------------------------------------- state --
 
@@ -691,6 +692,38 @@ function currentMainOf(c: ClientInfo): string {
 }
 
 /**
+ * Resolve icones hospedados pelo servidor conectado.
+ *
+ * No navegador, `/icons/foo.png` pode parecer correto porque a pagina e o
+ * servidor costumam compartilhar a origem. No Tauri, a pagina vive em
+ * `tauri.localhost`; sem esta conversao o WebView procura o arquivo dentro do
+ * pacote do app, em vez de buscar no dominio Vox.
+ */
+function serverAssetUrl(source: string): string {
+  const value = source.trim();
+  if (!value || /^(?:data|blob):/i.test(value) || /^[a-z][a-z\d+.-]*:/i.test(value)) return value;
+
+  const address = client.favorite?.address?.trim() ?? '';
+  let origin = '';
+  try {
+    if (!address) {
+      origin = isDesktopShell ? 'http://127.0.0.1:9987' : location.origin;
+    } else if (/^wss?:\/\//i.test(address)) {
+      origin = new URL(address.replace(/^ws:/i, 'http:').replace(/^wss:/i, 'https:')).origin;
+    } else if (/^https?:\/\//i.test(address)) {
+      origin = new URL(address).origin;
+    } else {
+      const host = address.replace(/\/+$/, '');
+      const local = /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|::1|\[::1\])(?::\d+)?$/i.test(host);
+      origin = `${local || /:\d+$/.test(host) ? 'http' : 'https'}://${host}`;
+    }
+    return new URL(value, `${origin}/`).toString();
+  } catch {
+    return value;
+  }
+}
+
+/**
  * Retorna o PlayerInfo cacheado apenas se ele corresponde ao Main atual
  * da descricao. Isso evita mostrar dados velhos quando o usuario troca de
  * char antes do bot ter tempo de atualizar.
@@ -765,7 +798,8 @@ function renderPeer(c: ClientInfo): HTMLElement {
   // rank badge — mostra se o grupo tem icone ou se nao e guest
   if (gdef.icon) {
     const iconImg = $('img') as HTMLImageElement;
-    iconImg.src = gdef.icon;
+    iconImg.src = serverAssetUrl(gdef.icon);
+    iconImg.onerror = () => iconImg.remove();
     iconImg.title = gdef.name;
     iconImg.style.cssText = 'width:14px;height:14px;object-fit:contain;flex-shrink:0;';
     row.append(iconImg);
@@ -785,7 +819,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
   if (pInfo && (pInfo.vocation || pInfo.level > 0 || pInfo.name)) {
     if (pInfo.vocation) {
       const vocIcon = $('img') as HTMLImageElement;
-      vocIcon.src = `/icons/${pInfo.vocation.toLowerCase()}.png`;
+      vocIcon.src = serverAssetUrl(`/icons/${pInfo.vocation.toLowerCase()}.png`);
       vocIcon.alt = pInfo.vocation;
       vocIcon.title = `${pInfo.name} (${pInfo.vocation})`;
       vocIcon.className = 'peer-voc';
@@ -1273,7 +1307,8 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
 
       if (mgdef.icon) {
         const mIcon = $('img') as HTMLImageElement;
-        mIcon.src = mgdef.icon;
+        mIcon.src = serverAssetUrl(mgdef.icon);
+        mIcon.onerror = () => mIcon.remove();
         mIcon.style.cssText = 'width:12px;height:12px;object-fit:contain;';
         item.append(mIcon);
       } else if (m.group > Group.Guest) {
@@ -1303,7 +1338,8 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
 
   if (gdef.icon) {
     const icon = $('img') as HTMLImageElement;
-    icon.src = gdef.icon;
+    icon.src = serverAssetUrl(gdef.icon);
+    icon.onerror = () => icon.remove();
     icon.style.cssText = 'width:18px;height:18px;object-fit:contain;';
     top.append(icon);
   }
@@ -1357,7 +1393,8 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
   groupVal.style.gap = '4px';
   if (gdef.icon) {
     const gi = $('img') as HTMLImageElement;
-    gi.src = gdef.icon;
+    gi.src = serverAssetUrl(gdef.icon);
+    gi.onerror = () => gi.remove();
     gi.style.cssText = 'width:14px;height:14px;object-fit:contain;';
     groupVal.append(gi);
   }
@@ -1405,7 +1442,7 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     label.style.gap = '6px';
     if (pi.vocation) {
       const vi = document.createElement('img');
-      vi.src = `/icons/${pi.vocation.toLowerCase()}.png`;
+      vi.src = serverAssetUrl(`/icons/${pi.vocation.toLowerCase()}.png`);
       vi.alt = pi.vocation;
       vi.title = pi.vocation;
       vi.style.cssText = 'width:16px;height:16px;object-fit:contain;';
@@ -3421,7 +3458,8 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
     const iconArea = $('div', 'group-icon-area');
     if (edit.icon) {
       const img = $('img') as HTMLImageElement;
-      img.src = edit.icon;
+      img.src = serverAssetUrl(edit.icon);
+      img.onerror = () => img.remove();
       img.style.cssText = 'width:32px;height:32px;object-fit:contain;border-radius:var(--r);';
       iconArea.append(img);
     } else {
@@ -3574,7 +3612,8 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
     const tgdef = client.groupDef(target.group);
     if (tgdef.icon) {
       const iconImg = $('img') as HTMLImageElement;
-      iconImg.src = tgdef.icon;
+      iconImg.src = serverAssetUrl(tgdef.icon);
+      iconImg.onerror = () => iconImg.remove();
       iconImg.title = tgdef.name;
       iconImg.style.cssText = 'width:16px;height:16px;object-fit:contain;';
       nickRow.append(iconImg);
@@ -3796,7 +3835,8 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
         const isPromoteToOwner = g.id === Group.Owner && target.group !== Group.Owner;
         if (g.icon) {
           const gIcon = $('img') as HTMLImageElement;
-          gIcon.src = g.icon;
+          gIcon.src = serverAssetUrl(g.icon);
+          gIcon.onerror = () => gIcon.remove();
           gIcon.style.cssText = 'width:14px;height:14px;object-fit:contain;';
           gBtn.append(gIcon);
         }
