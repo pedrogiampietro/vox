@@ -4368,6 +4368,9 @@ function showEditServerOverlay(): void {
   maxInput.min = String(Math.max(1, client.clients.size));
   maxInput.max = '4096';
   maxInput.value = String(Math.max(client.maxClients, client.clients.size));
+  maxInput.readOnly = true;
+  maxInput.disabled = true;
+  maxInput.title = 'A capacidade é definida pelo plano contratado';
   maxLabel.append(maxInput);
   maxRow.append(maxLabel);
   body.append(maxRow);
@@ -4382,15 +4385,10 @@ function showEditServerOverlay(): void {
   const saveBtn = $('button', 'primary');
   saveBtn.textContent = 'salvar alterações';
   saveBtn.addEventListener('click', () => {
-    const maxClients = Number(maxInput.value);
-    if (!Number.isFinite(maxClients) || maxClients < client.clients.size || maxClients > 4096) {
-      maxInput.focus();
-      return;
-    }
     client.editServer(
       nameInput.value.trim() || client.serverName,
       motdInput.value.trim(),
-      Math.round(maxClients),
+      client.maxClients,
     );
     overlay.remove();
   });

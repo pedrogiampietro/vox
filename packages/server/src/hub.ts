@@ -646,8 +646,8 @@ export class Hub {
         if (!this.allow(s, Group.Owner)) break;
         this.settings.name = clean(m.name, 64) || this.settings.name;
         this.settings.motd = clean(m.motd, 256);
-        // Nunca derruba a capacidade abaixo de quem já está conectado.
-        this.settings.maxClients = Math.max(this.sessions.size, clamp(m.maxClients, 1, 4096));
+        // A capacidade pertence ao plano e só pode ser alterada pelo painel
+        // master. O campo legado do frame é ignorado deliberadamente.
         this.deps.forceSave();
         this.broadcast({
           t: Op.ServerUpdate,
