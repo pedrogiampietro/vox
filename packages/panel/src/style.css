@@ -264,6 +264,101 @@ body {
   margin: 0;
 }
 
+.ticket-compose,
+.ticket-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--ink-700);
+}
+
+.ticket-compose {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(280px, 1.3fr) auto;
+  align-items: end;
+}
+
+.ticket-compose textarea,
+.ticket-actions textarea {
+  min-height: 42px;
+  resize: vertical;
+}
+
+.ticket-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.ticket-header,
+.ticket-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ticket-title {
+  display: grid;
+  gap: 3px;
+}
+
+.ticket-status {
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ticket-status-open { color: var(--amber); border-color: var(--amber-dim); }
+.ticket-status-waiting { color: #9ec7ff; border-color: rgba(158, 199, 255, 0.35); }
+.ticket-status-resolved { color: var(--signal); border-color: rgba(91, 214, 143, 0.35); }
+.ticket-status-closed { color: var(--text-faint); }
+
+.ticket-messages {
+  display: grid;
+  gap: 7px;
+}
+
+.ticket-message {
+  padding: 9px 10px;
+  border-left: 2px solid var(--line-strong);
+  background: var(--ink-800);
+}
+
+.ticket-message-master { border-left-color: var(--amber); }
+
+.ticket-message-meta {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.ticket-message p {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ticket-actions {
+  align-items: end;
+}
+
+.ticket-actions textarea {
+  flex: 1 1 300px;
+}
+
+.ticket-status-select {
+  min-height: 36px;
+}
+
 .subtle {
   color: var(--text-faint);
 }
@@ -485,6 +580,10 @@ body {
   }
 
   .billing-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .ticket-compose {
     grid-template-columns: 1fr;
   }
 }

@@ -59,6 +59,25 @@ type ClientInfo = {
 };
 
 type Ban = { fingerprint: string; until: number; reason: string };
+type TicketStatus = 'open' | 'waiting' | 'resolved' | 'closed';
+type TicketMessage = {
+  id: number;
+  authorRole: 'owner' | 'master';
+  authorAccountId: number | null;
+  body: string;
+  createdAt: number;
+};
+type Ticket = {
+  id: string;
+  accountId: number;
+  serverId: number | null;
+  serverName: string;
+  subject: string;
+  status: TicketStatus;
+  createdAt: number;
+  updatedAt: number;
+  messages: TicketMessage[];
+};
 
 type BotState = {
   provider: string;
@@ -105,6 +124,7 @@ let overview: Overview | null = null;
 let selectedId = Number(new URLSearchParams(location.search).get('server') ?? 0) || 0;
 let detail: ServerDetail | null = null;
 let botState: BotState | null = null;
+let tickets: Ticket[] = [];
 let botDraft: Partial<{
   world: string;
   guildName: string;
@@ -283,7 +303,7 @@ function renderMain(): HTMLElement {
     } else if (activeTab === 'billing') {
       grid.append(renderBilling(detail));
     } else if (activeTab === 'tickets') {
-      grid.append(renderTickets());
+      grid.append(renderTickets(server));
     }
   } else {
     grid.append(text('div', 'panel span-12 subtle', 'carregando detalhes...'));
@@ -482,19 +502,146 @@ function renderBilling(server: ServerDetail): HTMLElement {
   return box;
 }
 
-function renderTickets(): HTMLElement {
+function renderTickets(server: ServerSummary): HTMLElement {
   const box = $('section', 'panel span-12 ticket-panel');
   box.append(text('h3', '', 'Tickets de suporte'));
   box.append(text('p', 'subtle', 'Central de atendimento para dúvidas, pagamentos e problemas do servidor.'));
-  const empty = $('div', 'ticket-empty');
-  empty.append(text('strong', '', 'Nenhum ticket aberto'), text('p', 'subtle', 'A abertura de tickets estará disponível em breve.'));
-  const button = $('button', 'ghost');
-  button.type = 'button';
-  button.disabled = true;
-  button.textContent = 'Abrir Ticket · Em Breve';
-  empty.append(button);
-  box.append(empty);
+
+  if (overview?.role === 'owner') {
+    const compose = $('form', 'ticket-compose');
+    const subject = input('assunto', '', 'text', 'Ex.: problema ao conectar no QUIC');
+    const message = $('textarea') as HTMLTextAreaElement;
+    message.placeholder = 'Descreva o que aconteceu…';
+    message.rows = 4;
+    const send = $('button', 'primary');
+    send.type = 'submit';
+    send.textContent = 'Abrir Ticket';
+    compose.append(subject.wrap, message, send);
+    compose.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!subject.input.value.trim() || !message.value.trim()) return;
+      send.disabled = true;
+      void api<{ ticket: Ticket }>('/api/tickets', {
+        method: 'POST',
+        body: JSON.stringify({ serverId: server.id, subject: subject.input.value, message: message.value }),
+      }).then(() => {
+        showToast('Ticket aberto com sucesso.', 'success');
+        return loadTickets();
+      }).then(() => render()).catch((error) => {
+        send.disabled = false;
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      });
+    });
+    box.append(compose);
+  }
+
+  // A aba é central da conta: o servidor selecionado só define o vínculo do
+  // novo chamado; tickets de outros servidores continuam visíveis aqui.
+  const visible = tickets;
+  const list = $('div', 'ticket-list');
+  if (visible.length === 0) {
+    const empty = $('div', 'ticket-empty');
+    empty.append(text('strong', '', 'Nenhum ticket aberto'), text('p', 'subtle', 'Quando precisar de ajuda, abra um ticket acima.'));
+    list.append(empty);
+  }
+  for (const ticket of visible) list.append(renderTicket(ticket));
+  box.append(list);
   return box;
+}
+
+function renderTicket(ticket: Ticket): HTMLElement {
+  const card = $('article', 'ticket-card');
+  const header = $('div', 'ticket-header');
+  const title = $('div', 'ticket-title');
+  title.append(text('strong', '', ticket.subject), text('span', 'mono subtle', `${ticket.serverName} · ${formatDateTime(ticket.updatedAt)}`));
+  const status = text('span', `ticket-status ticket-status-${ticket.status}`, ticketStatusLabel(ticket.status));
+  header.append(title, status);
+  card.append(header);
+
+  const messages = $('div', 'ticket-messages');
+  for (const message of ticket.messages) {
+    const item = $('div', `ticket-message ticket-message-${message.authorRole}`);
+    const meta = message.authorRole === 'master' ? 'Suporte Vox' : 'Você';
+    item.append(text('span', 'ticket-message-meta', `${meta} · ${formatDateTime(message.createdAt)}`), text('p', '', message.body));
+    messages.append(item);
+  }
+  card.append(messages);
+
+  if (ticket.status !== 'closed') {
+    const actions = $('div', 'ticket-actions');
+    const reply = $('textarea') as HTMLTextAreaElement;
+    reply.placeholder = 'Responder ao ticket…';
+    reply.rows = 2;
+    const replyButton = $('button', 'ghost');
+    replyButton.type = 'button';
+    replyButton.textContent = 'Responder';
+    replyButton.addEventListener('click', () => {
+      if (!reply.value.trim()) return;
+      replyButton.disabled = true;
+      void api<{ ticket: Ticket }>(`/api/tickets/${encodeURIComponent(ticket.id)}/reply`, {
+        method: 'POST',
+        body: JSON.stringify({ message: reply.value }),
+      }).then(() => {
+        showToast('Resposta enviada.', 'success');
+        return loadTickets();
+      }).then(() => render()).catch((error) => {
+        replyButton.disabled = false;
+        showToast(error instanceof Error ? error.message : String(error), 'error');
+      });
+    });
+    actions.append(reply, replyButton);
+    if (overview?.role === 'master') {
+      const select = $('select', 'ticket-status-select') as HTMLSelectElement;
+      for (const value of ['open', 'waiting', 'resolved', 'closed'] as TicketStatus[]) {
+        const option = $('option') as HTMLOptionElement;
+        option.value = value;
+        option.textContent = ticketStatusLabel(value);
+        option.selected = value === ticket.status;
+        select.append(option);
+      }
+      select.addEventListener('change', () => {
+        void api<{ ticket: Ticket }>(`/api/tickets/${encodeURIComponent(ticket.id)}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: select.value }),
+        }).then(() => {
+          showToast('Status do ticket atualizado.', 'success');
+          return loadTickets();
+        }).then(() => render()).catch((error) => {
+          showToast(error instanceof Error ? error.message : String(error), 'error');
+        });
+      });
+      actions.append(select);
+    } else {
+      const close = $('button', 'ghost');
+      close.type = 'button';
+      close.textContent = 'Fechar Ticket';
+      close.addEventListener('click', () => {
+        void api(`/api/tickets/${encodeURIComponent(ticket.id)}/status`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: 'closed' }),
+        }).then(() => {
+          showToast('Ticket fechado.', 'success');
+          return loadTickets();
+        }).then(() => render()).catch((error) => {
+          showToast(error instanceof Error ? error.message : String(error), 'error');
+        });
+      });
+      actions.append(close);
+    }
+    card.append(actions);
+  }
+  return card;
+}
+
+function ticketStatusLabel(status: TicketStatus): string {
+  if (status === 'waiting') return 'Aguardando resposta';
+  if (status === 'resolved') return 'Resolvido';
+  if (status === 'closed') return 'Fechado';
+  return 'Aberto';
+}
+
+function formatDateTime(value: number): string {
+  return new Date(value).toLocaleString('pt-BR');
 }
 
 function emptyTab(title: string, message: string): HTMLElement {
@@ -795,7 +942,17 @@ async function refreshAll(): Promise<void> {
   await loadOverview();
   if (!selectedId) selectedId = overview?.servers[0]?.id ?? 0;
   if (selectedId) await loadDetail(selectedId);
+  await loadTickets();
   render();
+}
+
+async function loadTickets(): Promise<void> {
+  try {
+    const body = await api<{ tickets: Ticket[] }>('/api/tickets');
+    tickets = body.tickets;
+  } catch {
+    tickets = [];
+  }
 }
 
 async function loadOverview(): Promise<void> {

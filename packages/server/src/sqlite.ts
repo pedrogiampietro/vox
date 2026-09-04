@@ -27,6 +27,17 @@ database.exec(`
     server_id INTEGER, last_error TEXT NOT NULL, created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS support_tickets (
+    id TEXT PRIMARY KEY, account_id INTEGER NOT NULL, server_id INTEGER,
+    subject TEXT NOT NULL, status TEXT NOT NULL,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS support_ticket_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id TEXT NOT NULL,
+    author_role TEXT NOT NULL, author_account_id INTEGER, body TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE
+  );
 `);
 
 // Migracoes incrementais — cada uma roda so se a coluna ainda nao existe.

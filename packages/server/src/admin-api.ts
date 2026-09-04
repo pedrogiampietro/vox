@@ -19,6 +19,7 @@ import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
 import { applyBotConfig, providerFor, startBot, stopBot, testBot } from './bot-ctrl.js';
+import { addTicketMessage, createTicket, getTicket, listTickets, updateTicketStatus, type TicketStatus } from './tickets.js';
 import {
   BILLING_PERIOD_MS,
   billingPlans,
@@ -131,6 +132,21 @@ export class AdminApi {
 
     if (path === '/api/overview' && method === 'GET') {
       return send(res, 200, this.overview(session));
+    }
+
+    if (path === '/api/tickets' && method === 'GET') {
+      return send(res, 200, { tickets: listTickets(session.ownerId) });
+    }
+    if (path === '/api/tickets' && method === 'POST') {
+      return this.createSupportTicket(req, res, session);
+    }
+
+    const ticketMatch = /^\/api\/tickets\/([a-z0-9-]+)(?:\/(reply|status))?$/.exec(path);
+    if (ticketMatch && method === 'POST' && ticketMatch[2] === 'reply') {
+      return this.replySupportTicket(req, res, session, ticketMatch[1]!);
+    }
+    if (ticketMatch && method === 'PATCH' && ticketMatch[2] === 'status') {
+      return this.changeSupportTicketStatus(req, res, session, ticketMatch[1]!);
     }
 
     if (path === '/api/account/provision' && method === 'POST') {
@@ -557,6 +573,80 @@ export class AdminApi {
     const order = findOrder(id);
     if (!order || order.accountId !== session.ownerId) return void send(res, 404, { error: 'pedido inexistente' });
     return void send(res, 200, publicOrder(order, this.registry));
+  }
+
+  private async createSupportTicket(
+    req: IncomingMessage,
+    res: ServerResponse,
+    session: { ownerId: number | null },
+  ): Promise<void> {
+    if (session.ownerId === null) return send(res, 403, { error: 'somente contas de cliente podem abrir tickets' });
+    const body = await readJson(req);
+    const subject = str(body.subject).trim().slice(0, 120);
+    const message = str(body.message).trim().slice(0, 4000);
+    if (subject.length < 3) return send(res, 400, { error: 'informe um assunto com pelo menos 3 caracteres' });
+    if (message.length < 3) return send(res, 400, { error: 'descreva o problema com pelo menos 3 caracteres' });
+
+    const requestedServerId = Number(body.serverId);
+    const serverId = Number.isInteger(requestedServerId) && requestedServerId > 0 ? requestedServerId : null;
+    if (serverId !== null) {
+      const hub = this.registry.get(serverId);
+      if (!hub || hub.settings.ownerId !== session.ownerId) {
+        return send(res, 404, { error: 'servidor inexistente' });
+      }
+    }
+    return send(res, 201, { ticket: createTicket({ accountId: session.ownerId, serverId, subject, body: message }) });
+  }
+
+  private async replySupportTicket(
+    req: IncomingMessage,
+    res: ServerResponse,
+    session: { ownerId: number | null },
+    id: string,
+  ): Promise<void> {
+    const ticket = getTicket(id);
+    if (!ticket || (session.ownerId !== null && ticket.accountId !== session.ownerId)) {
+      return send(res, 404, { error: 'ticket inexistente' });
+    }
+    if (ticket.status === 'closed') return send(res, 409, { error: 'este ticket está fechado' });
+    const body = await readJson(req);
+    const message = str(body.message).trim().slice(0, 4000);
+    if (message.length < 3) return send(res, 400, { error: 'mensagem muito curta' });
+    const updated = addTicketMessage(
+      id,
+      session.ownerId === null ? 'master' : 'owner',
+      session.ownerId,
+      message,
+    );
+    return updated
+      ? send(res, 200, { ticket: updated })
+      : send(res, 404, { error: 'ticket inexistente' });
+  }
+
+  private async changeSupportTicketStatus(
+    req: IncomingMessage,
+    res: ServerResponse,
+    session: { ownerId: number | null },
+    id: string,
+  ): Promise<void> {
+    const ticket = getTicket(id);
+    if (!ticket || (session.ownerId !== null && ticket.accountId !== session.ownerId)) {
+      return send(res, 404, { error: 'ticket inexistente' });
+    }
+    const body = await readJson(req);
+    const status = str(body.status) as TicketStatus;
+    if (!['open', 'waiting', 'resolved', 'closed'].includes(status)) {
+      return send(res, 400, { error: 'status de ticket inválido' });
+    }
+    // O cliente pode encerrar o próprio chamado; reabrir ou resolver é ação do
+    // suporte master, para não esconder um problema ainda não atendido.
+    if (session.ownerId !== null && status !== 'closed') {
+      return send(res, 403, { error: 'somente o suporte pode alterar este status' });
+    }
+    const updated = updateTicketStatus(id, status);
+    return updated
+      ? send(res, 200, { ticket: updated })
+      : send(res, 404, { error: 'ticket inexistente' });
   }
 
   private async mercadoPagoWebhook(req: IncomingMessage, res: ServerResponse): Promise<void> {
