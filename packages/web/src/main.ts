@@ -2214,7 +2214,82 @@ function renderStatisticsPanel(): HTMLElement {
     occupied.append(rows);
   }
   panel.append(occupied);
+  panel.append(renderVoiceQualityPanel());
   return panel;
+}
+
+/**
+ * Qualidade da voz agora e nos ultimos minutos.
+ *
+ * A serie e o ponto: um numero isolado nao diz se a chamada esta piorando, e e
+ * exatamente isso que se quer saber antes de culpar a internet de alguem.
+ */
+function renderVoiceQualityPanel(): HTMLElement {
+  const panel = $('section', 'claims-panel voice-panel');
+  panel.append(text('h3', '', 'qualidade da voz'));
+
+  const connection = client.connection;
+  const history = client.voiceHistory;
+  if (history.length < 2) {
+    panel.append(text('div', 'claims-empty', 'medindo — a série aparece depois de alguns segundos em chamada'));
+    return panel;
+  }
+
+  const summary = $('div', 'voice-series');
+  summary.append(
+    voiceSeries('jitter', history.map((sample) => sample.jitterMs), `${connection.rxJitterMs.toFixed(0)}ms`, 40),
+    voiceSeries('perda', history.map((sample) => sample.lossPct), `${connection.rxLossPct.toFixed(1)}%`, 5),
+    voiceSeries('rtt voz', history.map((sample) => (sample.voiceRttMs || sample.rttMs)), `${connection.voiceRtt || connection.rtt}ms`, 120),
+  );
+  panel.append(summary);
+
+  const senders = client.voiceSenders.filter((sender) => sender.receivedPackets > 0);
+  if (senders.length > 0) {
+    const rows = $('div', 'voice-senders');
+    for (const sender of [...senders].sort((a, b) => b.jitterMs - a.jitterMs)) {
+      const row = $('div', 'voice-sender');
+      const who = client.clients.get(sender.clientId)?.nickname ?? `#${sender.clientId}`;
+      row.append(
+        text('span', 'voice-sender-name', who),
+        text('span', 'voice-sender-metric', `jit ${sender.jitterMs.toFixed(0)}ms`),
+        text('span', `voice-sender-metric${sender.lossPct > 5 ? ' bad' : sender.lossPct > 1 ? ' warn' : ''}`,
+          `perda ${sender.lossPct.toFixed(1)}%`),
+        text('span', 'voice-sender-metric', `${sender.lostPackets} perdidos`),
+      );
+      rows.append(row);
+    }
+    panel.append(rows);
+  }
+  return panel;
+}
+
+/**
+ * Linha da serie em SVG. `reference` e o valor que ocupa o topo quando a serie
+ * inteira esta abaixo dele — sem isso, uma chamada boa desenharia um serrote
+ * dramatico feito de variacao de decimo de milissegundo.
+ */
+function voiceSeries(label: string, values: number[], current: string, reference: number): HTMLElement {
+  const wrap = $('div', 'voice-serie');
+  const head = $('div', 'voice-serie-head');
+  head.append(text('span', 'voice-serie-label', label), text('b', '', current));
+  wrap.append(head);
+
+  const max = Math.max(reference, ...values);
+  const step = values.length > 1 ? 100 / (values.length - 1) : 100;
+  const points = values
+    .map((value, index) => `${(index * step).toFixed(2)},${(24 - (value / max) * 24).toFixed(2)}`)
+    .join(' ');
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 24');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('class', 'voice-spark');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  line.setAttribute('points', points);
+  svg.append(line);
+  wrap.append(svg);
+  wrap.append(text('span', 'voice-serie-scale', `máx ${max.toFixed(max < 10 ? 1 : 0)}`));
+  return wrap;
 }
 
 function formatRemaining(expiresAt: number): string {

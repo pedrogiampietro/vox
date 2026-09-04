@@ -51,6 +51,12 @@ const MAX_INFLIGHT_DATAGRAMS = 8;
 /** Espera entre tentativas: 1s, 2s, 4s... ate o teto. */
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15_000;
+/**
+ * Primeira tentativa depois de uma sessao ja estabelecida. Curta de proposito:
+ * a causa mais comum de queda em sessao ativa e um solucao de rede que ja
+ * passou, e esperar um segundo por ele e o que faz a queda virar percebida.
+ */
+const RETRY_FIRST_MS = 250;
 const OPEN_TIMEOUT_MS = 8000;
 /**
  * Se nunca chegamos a entrar, o endereco provavelmente esta errado - insistir
@@ -122,7 +128,30 @@ export class Connection {
   /** Pior perda de recepcao medida pelo mixer, em %. */
   rxLossPct = 0;
 
-  constructor(private readonly handlers: ConnectionHandlers) {}
+  constructor(private readonly handlers: ConnectionHandlers) {
+    // O navegador sabe antes de nos que a rede voltou ou que a aba acordou.
+    // Sem isso, uma queda no fim do backoff custa ate 15s de espera boba.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => this.retryNow('rede de volta'));
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) this.retryNow('janela ativa');
+      });
+    }
+  }
+
+  /**
+   * Antecipa a proxima tentativa. So faz sentido enquanto esperamos o backoff:
+   * conectado ou desistido, nao ha o que antecipar.
+   */
+  private retryNow(reason: string): void {
+    if (this.retryTimer === null || !this.target || this.closedByUser) return;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.handlers.onState('connecting', `${reason} - tentando agora`);
+    this.open();
+  }
 
   get online(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
@@ -219,13 +248,19 @@ export class Connection {
       return;
     }
 
-    const step = Math.min(RETRY_BASE_MS * 2 ** (this.attempt - 1), RETRY_MAX_MS);
+    // `attempt` volta a zero no Welcome, entao attempt <= 0 aqui significa
+    // "caiu logo depois de estar dentro" — o caso do solucao de rede.
+    const step = this.everOnline && this.attempt <= 0
+      ? RETRY_FIRST_MS
+      : Math.min(RETRY_BASE_MS * 2 ** Math.max(this.attempt - 1, 0), RETRY_MAX_MS);
     // Jitter evita que todo mundo volte no mesmo instante quando o servidor sobe.
     const delay = Math.round(step * (0.8 + Math.random() * 0.4));
 
     this.handlers.onState(
       'connecting',
-      `${reason || 'conexao perdida'} - nova tentativa em ${Math.round(delay / 1000)}s`,
+      delay < 1000
+        ? `${reason || 'conexao perdida'} - reconectando`
+        : `${reason || 'conexao perdida'} - nova tentativa em ${Math.round(delay / 1000)}s`,
     );
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;

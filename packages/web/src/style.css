@@ -1347,6 +1347,99 @@ label.field {
 
 .claim-meta,
 .claim-note,
+.voice-series {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.voice-serie {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.voice-serie-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.voice-serie-label {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.voice-serie-head b {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.voice-spark {
+  width: 100%;
+  height: 26px;
+  display: block;
+}
+
+/* vector-effect mantem a espessura da linha apesar do preserveAspectRatio=none. */
+.voice-spark polyline {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.voice-serie-scale {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.voice-senders {
+  display: grid;
+  gap: 4px;
+}
+
+.voice-sender {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.voice-sender-name {
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-sender-metric {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.voice-sender-metric.warn { color: var(--amber); }
+.voice-sender-metric.bad { color: var(--alert); }
+
+@media (max-width: 680px) {
+  .voice-series { grid-template-columns: 1fr; }
+}
+
 .claims-empty {
   color: var(--text-faint);
   font-size: 11px;

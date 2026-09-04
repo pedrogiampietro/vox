@@ -38,6 +38,8 @@ const VOLUME_KEY = 'vox.peers';
 const VOICE_SAMPLE_MS = 2_000;
 /** ~5 minutos de historico — o suficiente para comparar antes e depois. */
 const VOICE_HISTORY_SAMPLES = 150;
+/** Queda mais curta que isto nao chega a soltar o microfone. */
+const MIC_RELEASE_DELAY_MS = 1_500;
 
 /** Um ponto da serie de qualidade da voz. */
 export interface VoiceSample {
@@ -124,6 +126,8 @@ export class VoxClient {
   private mixer: VoiceMixer | null = null;
   /** Fecha a janela de medicao de jitter/perda em cadencia fixa. */
   private voiceSampler: ReturnType<typeof setInterval> | null = null;
+  /** Espera antes de soltar o microfone numa queda; ver suspend(). */
+  private micRelease: ReturnType<typeof setTimeout> | null = null;
   private senderStats: VoiceSenderStats[] = [];
   private readonly history: VoiceSample[] = [];
   private recorder: VoiceRecorder | null = null;
@@ -151,6 +155,7 @@ export class VoxClient {
         // Reconectando: cala o audio mas deixa a arvore na tela, senao a
         // interface pisca vazia a cada oscilacao de rede.
         if (link === 'connecting') this.suspend();
+        if (link === 'online') this.cancelMicRelease();
         if (wasOnline && link !== 'online') this.play('lost');
         this.onChange();
       },
@@ -302,13 +307,38 @@ export class VoxClient {
     this.groupDefs = [...DEFAULT_GROUP_DEFS];
     this.botState = null;
     this.screen.close();
-    this.suspend();
-  }
-
-  /** Solta os recursos de audio mantendo o estado visivel do servidor. */
-  private suspend(): void {
+    // Offline de verdade: nao ha reconexao a caminho para justificar segurar o
+    // dispositivo, entao o microfone sai na hora.
+    this.cancelMicRelease();
     this.mixer?.clear();
     void this.microphone.stop();
+  }
+
+  /**
+   * Solta os recursos de audio mantendo o estado visivel do servidor.
+   *
+   * O mixer some na hora: os ids de cliente sao por sessao, entao os
+   * decodificadores antigos nao servem para ninguem depois de reconectar.
+   *
+   * O microfone e o contrario — parar e reabrir pisca o indicador do
+   * navegador, solta o dispositivo e pode engasgar na volta. Numa queda de
+   * meio segundo isso e barulho puro, entao ele so e liberado se a ausencia
+   * durar. Enquanto isso, os quadros capturados sao descartados no envio,
+   * que ja ignora socket fechado.
+   */
+  private suspend(): void {
+    this.mixer?.clear();
+    if (this.micRelease !== null) return;
+    this.micRelease = setTimeout(() => {
+      this.micRelease = null;
+      void this.microphone.stop();
+    }, MIC_RELEASE_DELAY_MS);
+  }
+
+  private cancelMicRelease(): void {
+    if (this.micRelease === null) return;
+    clearTimeout(this.micRelease);
+    this.micRelease = null;
   }
 
   // -------------------------------------------------------- qualidade --
