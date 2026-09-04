@@ -4403,6 +4403,11 @@ function describeConnectionError(err: unknown): string {
   return String(err);
 }
 
+function directServerFromUrl(): string {
+  const address = new URLSearchParams(location.search).get('server')?.trim() ?? '';
+  return address;
+}
+
 // Probe servers on browser view
 async function refreshServers(): Promise<void> {
   serverList = [];
@@ -4524,8 +4529,21 @@ void initNotifications();
 // Initial render
 render();
 
+const directServer = directServerFromUrl();
+if (directServer) {
+  void connectTo({
+    id: `direct-${Date.now().toString(36)}`,
+    label: directServer,
+    address: directServer,
+    serverId: 0,
+    nickname: 'eu',
+    password: '',
+    lastUsed: Date.now(),
+  });
+}
+
 // Probe known servers for occupancy
-void refreshServers();
+if (!directServer) void refreshServers();
 
 // Enumerate audio devices (needs mic permission first)
 void enumerateDevices();
