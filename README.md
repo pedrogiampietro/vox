@@ -326,6 +326,9 @@ npm run build --workspace=@vox/desktop
 ```
 
 Os bundles são gerados em `packages/desktop/src-tauri/target/release/bundle/`.
+No CI, o job Windows normaliza os instaladores e publica automaticamente os
+arquivos em `/downloads` da VPS depois do deploy em `master`; a landing page e
+o painel usam esses mesmos caminhos estáveis.
 O checkout já preserva o plano escolhido; o plano gratuito cria o servidor e
 vincula o dono à conta. Pix e cartão aguardam a configuração do Mercado Pago.
 

@@ -28,7 +28,16 @@ Já existe:
 - Múltiplos servidores virtuais por processo.
 - API admin com login, overview, ações de moderação e stream SSE.
 - Wrapper desktop Tauri usando a mesma base web.
-- Bot multi-provider com Rubinot e DeusOT, usando o mesmo contrato normalizado.
+- Bot multi-provider com Rubinot e DeusOT, usando o mesmo contrato normalizado,
+  provisionamento por preset e configuração isolada por servidor.
+- Checkout com Mercado Pago, provisionamento de planos e painel financeiro com
+  faturas, vencimento e renovação.
+- Central de Tickets persistida no SQLite, com mensagens, status e escopo por
+  conta/servidor.
+- Edges regionais de voz com seleção automática, RTT dedicado, região,
+  qualidade e fallback para a próxima rota.
+- Build Windows do desktop no CI, com publicação automática dos instaladores
+  `.EXE` e `.MSI` em `/downloads`.
 
 Principais lacunas:
 
