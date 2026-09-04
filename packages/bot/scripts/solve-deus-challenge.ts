@@ -8,9 +8,9 @@
 
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { launchPersistentContext } from 'cloakbrowser';
 import type { Page } from 'playwright-core';
-import { scraperProfileDir } from '../src/scrapers/browser.js';
 
 type Provider = 'deusot' | 'deusold';
 
@@ -22,6 +22,9 @@ const BASE_URL: Record<Provider, string> = {
 const DEFAULT_PATH = '/community/worlds';
 const TIMEOUT_MS = 45_000;
 const POLL_MS = 750;
+const PROJECT_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const PROFILE_ROOT = process.env['VOX_SCRAPER_PROFILE_DIR']?.trim()
+  || resolve(PROJECT_ROOT, 'data', 'scraper-profiles');
 
 function providerArg(): Provider {
   const value = process.argv[2]?.trim().toLowerCase() || 'deusot';
@@ -65,7 +68,7 @@ async function waitForClear(page: Page, provider: Provider): Promise<void> {
 async function main(): Promise<void> {
   const provider = providerArg();
   const baseUrl = BASE_URL[provider];
-  const serviceProfile = scraperProfileDir(provider);
+  const serviceProfile = resolve(PROFILE_ROOT, provider);
   const manualProfile = resolve(serviceProfile, 'manual-browser');
   const storageStatePath = resolve(serviceProfile, 'storage-state.json');
   const proxy = process.env['VOX_CHALLENGE_PROXY']?.trim();
