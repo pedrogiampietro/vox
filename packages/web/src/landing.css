@@ -436,6 +436,67 @@
   letter-spacing: -0.06em;
 }
 
+.landing-download-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.landing-download-card {
+  min-height: 270px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(22, 21, 19, 0.72);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), transform 120ms var(--ease);
+}
+
+.landing-download-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--amber-dim);
+  background: var(--ink-800);
+}
+
+.landing-download-status {
+  align-self: flex-start;
+  margin-top: 7px;
+  color: var(--signal);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.landing-download-desktop .landing-download-status,
+.landing-download-mobile .landing-download-status { color: var(--text-faint); }
+
+.landing-download-card h3 {
+  margin: 28px 0 12px;
+  color: var(--text);
+  font-size: 19px;
+  letter-spacing: -0.03em;
+}
+
+.landing-download-card p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.landing-download-actions {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.landing-download-actions .landing-button { width: 100%; }
+.landing-download-soon { color: var(--text-faint); font-family: var(--mono); font-size: 10px; }
+
 .landing-feature-grid,
 .landing-plan-grid,
 .landing-steps {
@@ -682,6 +743,7 @@
   }
 
   .landing-trust,
+  .landing-download-grid,
   .landing-feature-grid,
   .landing-plan-grid,
   .landing-steps {

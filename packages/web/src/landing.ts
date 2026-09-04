@@ -12,7 +12,7 @@ function renderLandingPage(): HTMLElement {
   const page = $('main', 'landing-page');
   page.append(renderNav());
   const shell = $('div', 'landing-shell');
-  shell.append(renderHero(), renderTrustBar(), renderFeatures(), renderFlow(), renderPlans(), renderCta(), renderFooter());
+  shell.append(renderHero(), renderTrustBar(), renderDownload(), renderFeatures(), renderFlow(), renderPlans(), renderCta(), renderFooter());
   page.append(shell);
   void refreshLandingStatus(page);
   return page;
@@ -28,6 +28,7 @@ function renderNav(): HTMLElement {
   links.append(
     landingLink('recursos', '#recursos'),
     landingLink('como funciona', '#como-funciona'),
+    landingLink('download', '#download'),
     landingLink('planos', '#planos'),
   );
 
@@ -144,6 +145,29 @@ function trustMetric(index: string, title: string, detail: string): HTMLElement 
   return item;
 }
 
+function renderDownload(): HTMLElement {
+  const section = $('section', 'landing-section landing-download');
+  section.id = 'download';
+  section.append(sectionIntro('baixe e escolha seu jeito', 'O Vox acompanha a sua rotina de jogo.'));
+  const grid = $('div', 'landing-download-grid');
+  grid.append(
+    downloadCard('web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', landingLink('abrir Vox', '/app', 'landing-button landing-button-primary')),
+    downloadCard('desktop', 'Windows / Tauri', 'em preparação', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', text('span', 'landing-download-soon', 'build desktop em breve')),
+    downloadCard('mobile', 'Android e iOS', 'próxima etapa', 'A mesma experiência do Vox chegando ao celular para você acompanhar o time de qualquer lugar.', text('span', 'landing-download-soon', 'roadmap em breve')),
+  );
+  section.append(grid);
+  return section;
+}
+
+function downloadCard(kind: string, title: string, status: string, detail: string, action: HTMLElement): HTMLElement {
+  const card = $('article', `landing-download-card landing-download-${kind}`);
+  card.append(text('span', 'landing-card-number', kind === 'web' ? '01' : kind === 'desktop' ? '02' : '03'), text('span', 'landing-download-status', status), text('h3', '', title), text('p', '', detail));
+  const actions = $('div', 'landing-download-actions');
+  actions.append(action);
+  card.append(actions);
+  return card;
+}
+
 function renderFeatures(): HTMLElement {
   const section = $('section', 'landing-section landing-features');
   section.id = 'recursos';
@@ -190,11 +214,11 @@ function renderPlans(): HTMLElement {
   section.append(sectionIntro('planos', 'Comece pequeno. Cresça quando o time pedir mais espaço.'));
   const grid = $('div', 'landing-plan-grid');
   grid.append(
-    planCard('comunidade', 'Para testar com o time', 'gratuito', ['Channels essenciais', 'Áudio em tempo real', 'Acesso pelo navegador'], 'começar agora', '/app'),
-    planCard('privado', 'Para sua guilda', 'sob consulta', ['Servidor dedicado', 'Permissões e grupos', 'Bot e canais organizados'], 'falar sobre o Vox', '/app', true),
-    planCard('war room', 'Para operações maiores', 'sob medida', ['Estrutura para vários times', 'Edges regionais', 'Suporte de implantação'], 'montar estrutura', '/app'),
+    planCard('comunidade', 'Para testar com o time', 'gratuito', ['10 slots', 'Channels essenciais', 'Áudio em tempo real', 'Acesso pelo navegador'], 'começar agora', '/app'),
+    planCard('privado', 'Para sua guilda', 'sob consulta', ['Até 50 slots', 'Servidor dedicado', 'Permissões e grupos', 'Bot Rubinot configurável'], 'falar sobre o Vox', '/app', true),
+    planCard('war room', 'Para operações maiores', 'sob medida', ['Até 100 slots', 'Estrutura para vários times', 'Edges regionais', 'Rubinot e módulos futuros'], 'montar estrutura', '/app'),
   );
-  section.append(grid, text('p', 'landing-plan-note', 'Os planos comerciais serão conectados ao checkout na próxima etapa. Por enquanto, você já pode entrar e testar a experiência do Vox.'));
+  section.append(grid, text('p', 'landing-plan-note', 'A tabela inicial de slots está pronta para o checkout. Os planos pagos ainda serão conectados à contratação e à cobrança automática.'));
   return section;
 }
 

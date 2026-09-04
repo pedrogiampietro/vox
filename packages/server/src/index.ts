@@ -95,6 +95,11 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
 
+  // Area comercial do cliente. O cliente de voz continua separado em /app.
+  if ((path === '/cliente' || path === '/cliente/') && hasWeb) {
+    return serveStatic(WEB_ROOT, 'customer.html', res);
+  }
+
   // O Caddy consulta isto antes de emitir TLS sob demanda para um subdominio.
   // So slugs existentes podem gerar certificados, evitando abuso do dominio.
   if (path === '/internal/caddy-ask') {

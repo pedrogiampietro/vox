@@ -16,7 +16,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Group, RemoveReason } from '@vox/protocol';
 import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
-import { ensureAccount, findAccount, verifyPassword } from './accounts.js';
+import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 
@@ -87,11 +87,21 @@ export class AdminApi {
     if (path === '/api/account/login' && method === 'POST') {
       return this.accountLogin(req, res, ip);
     }
+    if (path === '/api/account/register' && method === 'POST') {
+      return this.accountRegister(req, res, ip);
+    }
 
     const session = this.authorized(req);
     if (!session) {
       send(res, 401, { error: 'nao autenticado' });
       return;
+    }
+
+    if (path === '/api/account/me' && method === 'GET') {
+      const account = session.ownerId === null ? undefined : findAccountById(session.ownerId);
+      return account
+        ? send(res, 200, { id: account.id, email: account.email, createdAt: account.createdAt, role: 'owner' })
+        : send(res, 403, { error: 'sessao sem conta de cliente' });
     }
 
     if (path === '/api/overview' && method === 'GET') {
@@ -352,7 +362,26 @@ export class AdminApi {
     const token = randomBytes(32).toString('hex');
     this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: account.id });
     this.pruneTokens();
-    send(res, 200, { token, role: 'owner', expiresIn: config.adminSessionMs });
+    send(res, 200, { token, role: 'owner', expiresIn: config.adminSessionMs, account: publicAccount(account) });
+  }
+
+  private async accountRegister(req: IncomingMessage, res: ServerResponse, ip: string): Promise<void> {
+    if (!this.allowAttempt(ip)) return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
+    const body = await readJson(req);
+    const email = str(body.email).trim().toLowerCase();
+    const password = str(body.password);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return send(res, 400, { error: 'informe um email valido' });
+    }
+    if (password.length < 8) {
+      return send(res, 400, { error: 'a senha precisa ter no minimo 8 caracteres' });
+    }
+    const account = createAccount(email, password);
+    if (!account) return send(res, 409, { error: 'este email ja esta cadastrado' });
+    const token = randomBytes(32).toString('hex');
+    this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: account.id });
+    this.pruneTokens();
+    send(res, 201, { token, role: 'owner', expiresIn: config.adminSessionMs, account: publicAccount(account) });
   }
 
   private allowAttempt(ip: string): boolean {
@@ -396,7 +425,9 @@ export class AdminApi {
     const servers = session.ownerId === null
       ? all
       : all.filter((server) => server.ownerId === session.ownerId);
+    const account = session.ownerId === null ? undefined : findAccountById(session.ownerId);
     return {
+      account: account ? publicAccount(account) : null,
       servers,
       totals: {
         clients: servers.reduce((total, server) => total + server.clients, 0),
@@ -419,6 +450,10 @@ export class AdminApi {
     this.streams.set(res, session.ownerId);
     req.on('close', () => this.streams.delete(res));
   }
+}
+
+function publicAccount(account: { id: number; email: string; createdAt: number }): { id: number; email: string; createdAt: number } {
+  return { id: account.id, email: account.email, createdAt: account.createdAt };
 }
 
 // -------------------------------------------------------------- utilidades --

@@ -17,6 +17,11 @@ export function findAccount(email: string): Account | undefined {
   return database.prepare('SELECT id, email, password_hash AS passwordHash, created_at AS createdAt FROM accounts WHERE email = ?').get(normalizeEmail(email)) as Account | undefined;
 }
 
+export function findAccountById(id: number): Account | undefined {
+  importLegacy();
+  return database.prepare('SELECT id, email, password_hash AS passwordHash, created_at AS createdAt FROM accounts WHERE id = ?').get(id) as Account | undefined;
+}
+
 export function createAccount(email: string, password: string): Account | null {
   const normalized = normalizeEmail(email);
   if (!normalized || password.length < 8 || findAccount(normalized)) return null;

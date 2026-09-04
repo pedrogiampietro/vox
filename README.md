@@ -101,7 +101,7 @@ Em produção, a entrada pública fica organizada assim:
 
 - `https://v0x.online/` — landing page e apresentação do Vox.
 - `https://v0x.online/app` — área para entrar nos servidores.
-- `https://v0x.online/cliente` — atalho para a área do cliente.
+- `https://v0x.online/cliente` — área do cliente, com cadastro, login e visão dos servidores vinculados.
 - `https://v0x.online/admin` — painel administrativo.
 - `https://servidor.v0x.online/` — acesso direto ao servidor virtual.
 
