@@ -998,7 +998,7 @@ function renderTalk(): HTMLElement {
     const row = $('div', 'line');
     if (isSystem) row.classList.add('system');
     if (line.scope === ChatScope.Private) row.classList.add('dm');
-    const isBot = line.senderId === 0 && line.senderName === 'rubinot';
+    const isBot = line.senderId === 0 && (line.senderName === 'rubinot' || line.senderName === 'deusot');
     const parsed = isBot ? parseBotLine(line.text) : null;
     if (isBot) {
       row.classList.add('bot');
@@ -1390,7 +1390,7 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     addRow('Descrição:', c.description);
   }
 
-  // Info do Main via bot Rubinot. So mostra se o nome bate com o Main atual
+  // Info do Main via o provider do bot. So mostra se o nome bate com o Main atual
   // da descricao — evita mostrar dados velhos quando o usuario troca o Main.
   const pi = playerInfoFor(c);
   if (pi && pi.name) {
@@ -1710,7 +1710,8 @@ function buildBotSection(body: HTMLElement, rebuild: () => void): void {
   if (client.botState === null) client.getBotState();
   const state = client.botState;
 
-  body.append(text('h3', '', 'BOT RUBINOT'));
+  const provider = client.preset.bot.provider;
+  body.append(text('h3', '', provider === 'none' ? 'BOT' : `BOT ${provider.toUpperCase()}`));
 
   if (!state) {
     body.append(text('span', '', 'carregando configuracao...'));

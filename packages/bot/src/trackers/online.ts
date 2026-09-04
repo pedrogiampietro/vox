@@ -1,4 +1,4 @@
-import { fetchWorldOnline, type RubinotOnlinePlayer } from '../scrapers/rubinot.js';
+import type { GameProvider } from '../scrapers/provider.js';
 
 export interface OnlineEvent {
   type: 'login' | 'logout' | 'levelup';
@@ -18,12 +18,15 @@ export class OnlineTracker {
   private prev = new Map<string, PlayerSnapshot>();
   private initialized = false;
 
-  constructor(private readonly worldName: string) {}
+  constructor(
+    private readonly provider: GameProvider,
+    private readonly worldName: string,
+  ) {}
 
   async poll(signal?: AbortSignal): Promise<OnlineEvent[]> {
-    const detail = await fetchWorldOnline(this.worldName, signal);
+    const players = await this.provider.fetchWorldOnline(this.worldName, signal);
     const current = new Map<string, PlayerSnapshot>();
-    for (const p of detail.players) {
+    for (const p of players) {
       current.set(p.name, { level: p.level, vocation: p.vocation });
     }
 

@@ -1,12 +1,29 @@
 /**
- * Operacoes de ciclo de vida do bot Rubinot compartilhadas entre o painel
- * admin e as chamadas de owner vindas do cliente. Mantidas aqui para nao
- * duplicar `new RubinotBot(...)`, restart e stop em dois lugares.
+ * Operacoes de ciclo de vida do bot compartilhadas entre o painel admin e as
+ * chamadas de owner vindas do cliente. Mantidas aqui para nao duplicar
+ * `new RubinotBot(...)`, restart e stop em dois lugares.
+ *
+ * De qual OT os dados vem sai do preset ativo do servidor — ver providerFor.
  */
 
 import { RubinotBot } from '../../bot/src/bot.js';
+import { deusotProvider } from '../../bot/src/scrapers/deusot.js';
+import { rubinotProvider } from '../../bot/src/scrapers/rubinot.js';
+import type { GameProvider } from '../../bot/src/scrapers/provider.js';
 import type { Hub } from './hub.js';
 import type { StoredBotConfig } from './persistence.js';
+
+/**
+ * Fonte de dados do preset ativo. Presets com `provider: 'none'` nao tem API
+ * conhecida; nesses o bot nao deveria estar ligado, mas se estiver caimos no
+ * Rubinot em vez de derrubar o servidor.
+ */
+export function providerFor(hub: Hub): GameProvider {
+  switch (hub.activePreset().bot.provider) {
+    case 'deusot': return deusotProvider;
+    default: return rubinotProvider;
+  }
+}
 
 /**
  * Garante que a mesma guild nao aparece em friendGuilds e enemyGuilds.
@@ -34,7 +51,7 @@ export function applyBotConfig(hub: Hub): void {
     return;
   }
   if (hub.botConfig.enabled && hub.botConfig.world) {
-    const bot = new RubinotBot(hub, hub.botConfig);
+    const bot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
     hub.rubinot = bot;
     void bot.start().catch((err) => console.error('[bot] falha:', err));
   }
@@ -42,7 +59,7 @@ export function applyBotConfig(hub: Hub): void {
 
 export function startBot(hub: Hub): void {
   hub.botConfig.enabled = true;
-  if (!hub.rubinot) hub.rubinot = new RubinotBot(hub, hub.botConfig);
+  if (!hub.rubinot) hub.rubinot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
   if (!hub.rubinot.isRunning) {
     void hub.rubinot.start().catch((err) => console.error('[bot] falha:', err));
   }
@@ -55,9 +72,11 @@ export function stopBot(hub: Hub): void {
 
 /** Publica um alerta de teste no canal do bot. */
 export function testBot(hub: Hub): void {
+  const provider = providerFor(hub);
   const channelId = hub.ensureChannel(hub.botConfig.channelName || 'bot');
-  hub.channelAnnounce(channelId, 'rubinot', '[test] alerta de teste do Rubinot');
-  hub.serverChannelAnnounce(channelId, 'rubinot', '[test] alerta de teste do Rubinot');
+  const message = `[test] alerta de teste do ${provider.label}`;
+  hub.channelAnnounce(channelId, provider.id, message);
+  hub.serverChannelAnnounce(channelId, provider.id, message);
 }
 
 export function currentBotConfig(hub: Hub): StoredBotConfig {

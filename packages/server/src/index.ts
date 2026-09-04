@@ -20,6 +20,7 @@ import { attachEdgeWebSocket } from './edge-relay.js';
 import { startVoiceTransport, type VoiceEndpoint } from './transport-wt.js';
 import { RubinotBot, botConfigFromEnv } from '../../bot/src/bot.js';
 import { shutdownRubinotClient } from '../../bot/src/scrapers/rubinot.js';
+import { providerFor } from './bot-ctrl.js';
 
 // --------------------------------------------------------------- estado --
 
@@ -282,7 +283,7 @@ server.listen(config.port, config.host, () => {
         ? envCfg
         : null;
     if (cfg && cfg.enabled && cfg.world) {
-      const bot = new RubinotBot(hub, cfg);
+      const bot = new RubinotBot(hub, cfg, providerFor(hub));
       hub.rubinot = bot;
       bot.start().catch((err) => console.error(`[bot] servidor ${hub.id}: falha ao iniciar:`, err));
     }

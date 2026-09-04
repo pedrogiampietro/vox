@@ -13,6 +13,7 @@
  */
 
 import initCycleTLS, { type CycleTLSClient } from 'cycletls';
+import { epochToMs, normalizeVocation, normalizeVocationNumber, type GameProvider } from './provider.js';
 
 const BASE = 'https://rubinot.com.br';
 const UA =
@@ -268,3 +269,59 @@ export async function fetchCharacter(
   console.log(`[rubinot] fetchCharacter "${name}" -> lvl=${level} voc="${vocation}" world="${world}"`);
   return { name: parsedName, level, vocation, world, online };
 }
+
+// --------------------------------------------------------------- provider --
+
+/**
+ * Adaptador pro contrato comum do bot. A API do Rubinot ja entrega tudo em
+ * JSON, entao aqui so traduzimos nomes de campo e normalizamos a vocation —
+ * que vem como numero no roster da guild e como texto na lista de online.
+ */
+export const rubinotProvider: GameProvider = {
+  id: 'rubinot',
+  label: 'Rubinot',
+
+  async fetchWorldOnline(world, signal) {
+    const detail = await fetchWorldOnline(world, signal);
+    return detail.players.map((p) => ({
+      name: p.name,
+      level: p.level,
+      vocation: normalizeVocation(p.vocation),
+    }));
+  },
+
+  // A API nao filtra por world; quem consome ja descarta o que nao interessa.
+  async fetchDeaths(_world, signal) {
+    const page = await fetchDeaths(1, signal);
+    return page.data.map((d) => ({
+      victim: d.victim,
+      level: d.level,
+      killedBy: d.killed_by,
+      killerIsPlayer: d.is_player === 1,
+      world: d.worldName,
+      timestamp: epochToMs(Number(d.time)),
+    }));
+  },
+
+  async fetchGuild(name, signal) {
+    const guild = await fetchGuild(name, signal);
+    if (!guild) return null;
+    return {
+      name: guild.name,
+      members: guild.members.map((m) => ({
+        name: m.name,
+        level: m.level,
+        vocation: normalizeVocationNumber(m.vocation),
+        isOnline: m.isOnline,
+      })),
+    };
+  },
+
+  async fetchCharacter(name, signal) {
+    const char = await fetchCharacter(name, signal);
+    if (!char) return null;
+    return { ...char, vocation: normalizeVocation(char.vocation) };
+  },
+
+  close: shutdownRubinotClient,
+};

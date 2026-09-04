@@ -61,6 +61,8 @@ type ClientInfo = {
 type Ban = { fingerprint: string; until: number; reason: string };
 
 type BotState = {
+  provider: string;
+  providerLabel: string;
   config: {
     world: string;
     guildName: string;
@@ -86,6 +88,9 @@ type ServerDetail = {
   motd: string;
   password: string;
   maxClients: number;
+  presetId: string;
+  provider: string;
+  providerLabel: string;
   channels: ChannelInfo[];
   clients: ClientInfo[];
   bans: Ban[];
@@ -586,7 +591,7 @@ function renderAnnouncement(server: ServerDetail): HTMLElement {
 
 function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   const box = $('section', 'panel span-12');
-  box.append(text('h3', '', 'Bot Rubinot'));
+  box.append(text('h3', '', `Bot ${bot.providerLabel || server.providerLabel || 'Vox'}`));
 
   const statusLine = $('div', 'toolbar');
   const statusLabel = text('span', bot.running ? 'bot-status bot-on' : 'bot-status bot-off', bot.running ? 'ativo' : 'parado');

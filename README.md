@@ -208,6 +208,19 @@ skip
 stop
 ```
 
+### Providers do bot
+
+O bot usa o provider definido pelo preset do servidor. O preset `Rubinot` usa
+a API JSON do Rubinot; o preset `DeusOT` consulta as páginas públicas do DeusOT
+e oferece os mundos Andromeda, Eclipse, Sirius e Titan. Para trocar a fonte,
+o owner abre as configurações do servidor no cliente, seleciona o preset e
+aplica. Ao mudar entre providers, o bot é parado de propósito: informe o mundo
+correto na aba `Bot` e ligue-o novamente para evitar alertas de outro OT.
+
+O provider também é usado para online, mortes, guilds e fichas de personagens;
+os eventos publicados no Vox permanecem no mesmo formato, independentemente da
+fonte.
+
 Para busca por nome e links do SoundCloud, instale `yt-dlp` alem do `ffmpeg`, ou
 defina `VOX_YTDLP=/caminho/para/yt-dlp`. O jukebox nao usa YouTube nem cookies;
 links diretos de audio continuam funcionando sem o extrator.

@@ -26,7 +26,7 @@ import type { RespawnCatalogGroup } from './respawns.js';
  * nao tem fonte de dados conhecida, e forcar o scraper do Rubinot num OT
  * diferente so produziria lixo.
  */
-export type BotProvider = 'rubinot' | 'none';
+export type BotProvider = 'rubinot' | 'deusot' | 'none';
 
 export interface PresetBotConfig {
   provider: BotProvider;
@@ -158,6 +158,27 @@ export const RUBINOT_PRESET: ServerPreset = {
   groups: RUBINOT_GROUP_DEFS,
 };
 
+// ------------------------------------------------------------------ deusot --
+
+/**
+ * DeusOT (deusot.com). Mesma estrutura do Rubinot — canais, cargos e catalogo
+ * de respawn sao os mesmos, porque e o mesmo tipo de OT global. O que muda e
+ * so a fonte: o site nao tem API JSON, mas renderiza HTML no servidor, entao o
+ * bot raspa as paginas publicas.
+ *
+ * Tem quatro mundos (Andromeda, Eclipse, Sirius, Titan); o dono escolhe o dele
+ * na aba Bot, por isso `world` fica vazio aqui.
+ */
+export const DEUSOT_PRESET: ServerPreset = {
+  id: 'deusot',
+  name: 'DeusOT',
+  description: 'OT global com 4 mundos. Bot le mortes, level up e presenca do site do DeusOT.',
+  version: 1,
+  channels: RUBINOT_CHANNELS,
+  respawns: RESPAWN_CATALOG,
+  bot: { provider: 'deusot', channelName: 'bot' },
+};
+
 // -------------------------------------------------------------------- vazio --
 
 /**
@@ -207,7 +228,7 @@ export const BLANK_PRESET: ServerPreset = {
 
 // ----------------------------------------------------------------- registro --
 
-export const SERVER_PRESETS: ServerPreset[] = [RUBINOT_PRESET, BLANK_PRESET];
+export const SERVER_PRESETS: ServerPreset[] = [RUBINOT_PRESET, DEUSOT_PRESET, BLANK_PRESET];
 
 export function findPreset(id: string): ServerPreset | undefined {
   return SERVER_PRESETS.find((p) => p.id === id);
@@ -357,7 +378,8 @@ function parseRespawnGroups(raw: unknown): RespawnCatalogGroup[] {
 function parseBot(raw: unknown): PresetBotConfig {
   if (!raw || typeof raw !== 'object') return { provider: 'none' };
   const o = raw as Record<string, unknown>;
-  const provider: BotProvider = o.provider === 'rubinot' ? 'rubinot' : 'none';
+  const provider: BotProvider =
+    o.provider === 'rubinot' || o.provider === 'deusot' ? o.provider : 'none';
   return {
     provider,
     world: str(o.world, 32),

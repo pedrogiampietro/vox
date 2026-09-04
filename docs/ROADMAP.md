@@ -28,6 +28,7 @@ Já existe:
 - Múltiplos servidores virtuais por processo.
 - API admin com login, overview, ações de moderação e stream SSE.
 - Wrapper desktop Tauri usando a mesma base web.
+- Bot multi-provider com Rubinot e DeusOT, usando o mesmo contrato normalizado.
 
 Principais lacunas:
 
@@ -109,6 +110,8 @@ Principais lacunas:
 
 ### Bots e Integrações
 
+- Finalizar o hardening dos providers Rubinot/DeusOT e adicionar novos OTs sem
+  espalhar regras específicas pelo bot.
 - API de eventos: usuário entrou/saiu, mensagem, poke, channel move, moderação.
 - Registro de comandos com permissões.
 - Webhooks de entrada e saída.

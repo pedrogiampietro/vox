@@ -1,4 +1,4 @@
-import { fetchDeaths, type RubinotDeath } from '../scrapers/rubinot.js';
+import type { GameProvider, ProviderDeath } from '../scrapers/provider.js';
 
 export interface DeathEvent {
   victim: string;
@@ -13,27 +13,30 @@ export class DeathTracker {
   private seenKeys = new Set<string>();
   private initialized = false;
 
-  private key(d: RubinotDeath): string {
-    return `${d.victim}|${d.time}|${d.killed_by}`;
+  constructor(
+    private readonly provider: GameProvider,
+    private world: string,
+  ) {}
+
+  /** Reaponta pro mundo novo sem perder o que ja foi visto. */
+  setWorld(world: string): void {
+    this.world = world;
+  }
+
+  private key(d: ProviderDeath): string {
+    return `${d.victim}|${d.timestamp}|${d.killedBy}`;
   }
 
   async poll(signal?: AbortSignal): Promise<DeathEvent[]> {
-    const page = await fetchDeaths(1, signal);
+    const deaths = await this.provider.fetchDeaths(this.world, signal);
     const newDeaths: DeathEvent[] = [];
 
-    for (const d of page.data) {
+    for (const d of deaths) {
       const k = this.key(d);
       if (this.seenKeys.has(k)) continue;
       this.seenKeys.add(k);
       if (this.initialized) {
-        newDeaths.push({
-          victim: d.victim,
-          level: d.level,
-          killedBy: d.killed_by,
-          killerIsPlayer: d.is_player === 1,
-          world: d.worldName,
-          timestamp: Number(d.time),
-        });
+        newDeaths.push({ ...d });
       }
     }
 

@@ -42,7 +42,7 @@ import {
   parsePreset,
   serializePreset,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, ServerPreset, VoiceEdge } from '@vox/protocol';
+import type { BotProvider, BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, PresetBotConfig, ServerMessage, ServerPreset, VoiceEdge } from '@vox/protocol';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
@@ -93,7 +93,7 @@ export class Hub {
   private groupDefs: GroupDef[];
   private bans: StoredBan[] = [];
   private readonly descriptions = new Map<string, string>();
-  /** Cache do bot Rubinot: nome do char (lower) -> info recente. */
+  /** Cache do bot: nome do char (lower) -> info recente. */
   private readonly playerInfoByName = new Map<string, PlayerInfo>();
   /** Overrides sobre DEFAULT_PERMISSIONS. Ausencia = usar default. */
   private readonly permissions = new Map<PermissionAction, Group>();
@@ -103,7 +103,7 @@ export class Hub {
 
   afkEnabled = config.afkEnabled;
 
-  /** Referencia ao bot Rubinot, quando ativo. */
+  /** Referencia ao bot do provider ativo, quando ligado. */
   rubinot: {
     addHunted(n: string): void;
     removeHunted(n: string): void;
@@ -170,6 +170,8 @@ export class Hub {
   private setPreset(s: Session, presetId: string, custom: string): void {
     if (s.group < Group.Owner) return this.fail(s, FailureCode.NotPermitted, 'so o owner troca o preset');
 
+    const previousProvider = this.activePreset().bot.provider;
+
     if (custom) {
       let parsed: ServerPreset | null = null;
       try {
@@ -194,9 +196,39 @@ export class Hub {
       if (!canonicalRespawnIn(preset, claim.respawn)) this.claims.delete(id);
     }
 
+    this.retargetBot(previousProvider, preset.bot);
+
     this.broadcast(this.presetStateMessage());
     this.broadcast({ t: Op.RespClaims, claims: this.claimList() });
+    this.broadcast({ t: Op.BotState, state: this.botState() });
     this.deps.forceSave();
+  }
+
+  /**
+   * Reaponta o bot quando o preset troca a fonte de dados.
+   *
+   * O world configurado pertence ao OT anterior — "Drakaria" nao existe no
+   * DeusOT — e um world que a fonte nao reconhece faz o bot rodar sem nunca
+   * casar nada, silenciosamente. Preferimos parar e limpar: o dono escolhe o
+   * mundo novo na aba Bot e liga de novo, sabendo o que esta fazendo.
+   */
+  private retargetBot(previous: BotProvider, bot: PresetBotConfig): void {
+    if (previous === bot.provider) return;
+
+    this.rubinot?.stop();
+    // Descartado de proposito: o provider e fixo na instancia, entao o bot
+    // precisa ser reconstruido pra passar a ler do OT novo.
+    this.rubinot = null;
+    this.botConfig = {
+      ...this.botConfig,
+      world: bot.world ?? '',
+      channelName: bot.channelName ?? this.botConfig.channelName,
+      enabled: false,
+    };
+    console.log(
+      `[bot] preset trocou a fonte (${previous} -> ${bot.provider}); bot parado, defina o world e ligue de novo`,
+    );
+    this.deps.onChanged();
   }
 
   /** Grupo minimo pra executar `action`. Vem do override, senao do default. */
@@ -241,12 +273,12 @@ export class Hub {
     return [...this.sessions.values()].map((s) => this.describe(s));
   }
 
-  // -------------------------------------------------- player info (Rubinot) --
+  // ------------------------------------------------ player info (provider) --
 
   /**
    * Extrai "Main: <nome>" das descricoes armazenadas. Retorna map de
-   * nome-lowercase -> fingerprints[]. O bot Rubinot itera essa lista pra
-   * saber quais chars procurar no worldOnline.
+   * nome-lowercase -> fingerprints[]. O bot itera essa lista pra saber quais
+   * chars procurar no worldOnline do provider ativo.
    */
   trackedMains(): Map<string, string[]> {
     const out = new Map<string, string[]>();
@@ -1745,7 +1777,7 @@ export class Hub {
         break;
       }
       case 'hunt': {
-        if (!this.rubinot) return this.sendBotResult(s, false, 'bot rubinot nao esta ativo');
+        if (!this.rubinot) return this.sendBotResult(s, false, 'bot nao esta ativo');
         if (args.length < 1) return this.sendBotResult(s, false, 'uso: hunt <nome>');
         const name = args.join(' ');
         this.rubinot.addHunted(name);
@@ -1753,7 +1785,7 @@ export class Hub {
         break;
       }
       case 'unhunt': {
-        if (!this.rubinot) return this.sendBotResult(s, false, 'bot rubinot nao esta ativo');
+        if (!this.rubinot) return this.sendBotResult(s, false, 'bot nao esta ativo');
         if (args.length < 1) return this.sendBotResult(s, false, 'uso: unhunt <nome>');
         const name = args.join(' ');
         this.rubinot.removeHunted(name);
@@ -1761,7 +1793,7 @@ export class Hub {
         break;
       }
       case 'hunted': {
-        if (!this.rubinot) return this.sendBotResult(s, false, 'bot rubinot nao esta ativo');
+        if (!this.rubinot) return this.sendBotResult(s, false, 'bot nao esta ativo');
         const list = this.rubinot.huntedList;
         if (list.length === 0) return this.sendBotResult(s, true, 'hunted list vazia');
         this.sendBotResult(s, true, `hunted list (${list.length}):\n${list.join('\n')}`);

@@ -18,7 +18,7 @@ import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
-import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
+import { applyBotConfig, providerFor, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { botConfigFromEnv } from '../../bot/src/bot.js';
 import {
   BILLING_PERIOD_MS,
@@ -193,9 +193,13 @@ export class AdminApi {
     // ---- servidor ----------------------------------------------------------
 
     if (action === '' && method === 'GET') {
+      const provider = providerFor(hub);
       return send(res, 200, {
         ...hub.settings,
         url: publicUrl(hub.settings.slug),
+        presetId: hub.activePreset().id,
+        provider: provider.id,
+        providerLabel: provider.label,
         password: hub.settings.password ? '(definida)' : '',
         channels: hub.channelList,
         clients: hub.clientList(),
@@ -288,7 +292,10 @@ export class AdminApi {
     // ---- bot ---------------------------------------------------------------
 
     if (action === '/bot' && method === 'GET') {
+      const provider = providerFor(hub);
       return send(res, 200, {
+        provider: provider.id,
+        providerLabel: provider.label,
         config: hub.botConfig,
         running: hub.rubinot?.isRunning ?? false,
         hunted: hub.rubinot?.huntedList ?? hub.botConfig.huntedNames,

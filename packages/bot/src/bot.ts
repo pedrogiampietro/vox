@@ -1,5 +1,5 @@
 /**
- * Bot Rubinot — rastreia jogadores e posta notificacoes nos canais do v0x.
+ * Bot Vox — rastreia jogadores e posta notificacoes nos canais do v0x.
  *
  * Configuravel pelo painel admin ou por variaveis de ambiente (fallback):
  *   BOT_WORLD        world do Rubinot (ex: "Vesperia")
@@ -12,7 +12,9 @@
 import type { Hub } from '../../server/src/hub.js';
 import { DeathTracker, type DeathEvent } from './trackers/deaths.js';
 import { OnlineTracker, type OnlineEvent } from './trackers/online.js';
-import { fetchCharacter, fetchGuild, type RubinotCharacter } from './scrapers/rubinot.js';
+import { rubinotProvider } from './scrapers/rubinot.js';
+import { normalizeVocation } from './scrapers/provider.js';
+import type { GameProvider, ProviderCharacter } from './scrapers/provider.js';
 
 // ---------------------------------------------------------------- config --
 
@@ -82,7 +84,8 @@ interface PlayerTag {
 interface GuildMemberSnap {
   name: string;
   level: number;
-  vocation: number;
+  /** Codigo curto ja normalizado pelo provider (EK/ED/MS/RP/MK). */
+  vocation: string;
   isOnline: boolean;
 }
 
@@ -123,7 +126,7 @@ const REPORT_TIME_ZONE = 'America/Sao_Paulo';
 const MAX_REPORT_ROWS = 120;
 
 export class RubinotBot {
-  private deaths = new DeathTracker();
+  private deaths: DeathTracker;
   private online: OnlineTracker;
   /** Nome (lower) -> guild + kind. Fonte unica pra decidir amigo/inimigo/tag. */
   private readonly tags = new Map<string, PlayerTag>();
@@ -143,11 +146,17 @@ export class RubinotBot {
   private readonly deathLog: DeathRecord[] = [];
   private reportDay = '';
 
+  /**
+   * `provider` decide de qual OT os dados vem. O padrao e o Rubinot pra que
+   * servidores que nunca escolheram preset continuem funcionando igual.
+   */
   constructor(
     private readonly hub: Hub,
     private cfg: BotConfig,
+    private readonly provider: GameProvider = rubinotProvider,
   ) {
-    this.online = new OnlineTracker(cfg.world);
+    this.deaths = new DeathTracker(provider, cfg.world);
+    this.online = new OnlineTracker(provider, cfg.world);
     this.seedManualEnemies();
   }
 
@@ -220,8 +229,8 @@ export class RubinotBot {
   async restart(newCfg: BotConfig): Promise<void> {
     this.stop();
     this.cfg = newCfg;
-    this.deaths = new DeathTracker();
-    this.online = new OnlineTracker(newCfg.world);
+    this.deaths = new DeathTracker(this.provider, newCfg.world);
+    this.online = new OnlineTracker(this.provider, newCfg.world);
     this.tags.clear();
     this.seedManualEnemies();
     this.pendingLogins.length = 0;
@@ -283,7 +292,7 @@ export class RubinotBot {
   }
 
   /** Cache de scraping do char individual (fetchCharacter). */
-  private readonly charCache = new Map<string, { info: RubinotCharacter; fetchedAt: number }>();
+  private readonly charCache = new Map<string, { info: ProviderCharacter; fetchedAt: number }>();
   /** Fila de nomes pra buscar via fetchCharacter (throttle 1 por tick). */
   private readonly charFetchQueue: string[] = [];
 
@@ -291,7 +300,7 @@ export class RubinotBot {
    * Percorre os "Main: <nome>" registrados via descricao dos usuarios e
    * atualiza voc/level/online. Fonte primaria: worldOnline (rapido, sem
    * request extra). Fallback: pagina publica do char (fetchCharacter), com
-   * cache TTL pra nao spammar Rubinot.
+   * cache TTL para nao sobrecarregar a fonte de dados.
    */
   private refreshPlayerInfos(): void {
     const mains = this.hub.trackedMains();
@@ -320,7 +329,7 @@ export class RubinotBot {
       if (guildMember) {
         this.hub.updatePlayerInfo(nameLower, {
           name: guildMember.name,
-          vocation: normalizeVocationNumber(guildMember.vocation),
+          vocation: guildMember.vocation,
           level: guildMember.level,
           online: guildMember.isOnline,
         });
@@ -355,7 +364,7 @@ export class RubinotBot {
 
   private async fetchOfflineChar(nameLower: string): Promise<void> {
     try {
-      const info = await fetchCharacter(nameLower, this.ac.signal);
+      const info = await this.provider.fetchCharacter(nameLower, this.ac.signal);
       if (!info) {
         // Pagina nao existe / sem dados. Cache "vazio" pra evitar refetch imediato.
         this.charCache.set(nameLower, {
@@ -593,8 +602,8 @@ export class RubinotBot {
 
   private post(text: string, global: boolean): void {
     const chId = this.hub.ensureChannel(this.cfg.channelName);
-    this.hub.channelAnnounce(chId, 'rubinot', text);
-    if (global) this.hub.serverChannelAnnounce(chId, 'rubinot', text);
+    this.hub.channelAnnounce(chId, this.provider.id, text);
+    if (global) this.hub.serverChannelAnnounce(chId, this.provider.id, text);
     console.log(`[bot] ${text}`);
   }
 
@@ -646,7 +655,11 @@ export class RubinotBot {
 
   private async syncGuild(name: string, kind: 'friend' | 'enemy'): Promise<void> {
     try {
-      const guild = await fetchGuild(name, this.ac.signal);
+      const guild = await this.provider.fetchGuild(name, this.ac.signal);
+      if (!guild) {
+        console.error(`[bot] guild ${kind} "${name}" nao encontrada em ${this.provider.label}`);
+        return;
+      }
       let added = 0;
       for (const m of guild.members) {
         const key = m.name.toLowerCase();
@@ -676,40 +689,6 @@ function names(events: OnlineEvent[]): string {
   const list = events.slice(0, 8).map((ev) => ev.player);
   const extra = events.length - list.length;
   return extra > 0 ? `${list.join(', ')} +${extra}` : list.join(', ');
-}
-
-/**
- * Rubinot expõe as vocations pelo enum interno:
- *   0=None, 1=Sorcerer, 2=Druid, 3=Paladin, 4=Knight,
- *   5=Master Sorcerer, 6=Elder Druid, 7=Royal Paladin, 8=Elite Knight,
- *   9=Monk, 10=Exalted Monk.
- * Base e promovido caem no mesmo icone (EK/RP/MS/ED/MK).
- */
-function normalizeVocationNumber(n: number): string {
-  switch (n) {
-    case 1: case 5: return 'MS';
-    case 2: case 6: return 'ED';
-    case 3: case 7: return 'RP';
-    case 4: case 8: return 'EK';
-    case 9: case 10: return 'MK';
-    default: return '';
-  }
-}
-
-/** Rubinot manda voc como "Elite Knight"/"Master Sorcerer"/etc. Curte pra EK/ED/MS/RP/MK. */
-function normalizeVocation(v: string): string {
-  const lower = v.toLowerCase();
-  if (lower.includes('elite knight')) return 'EK';
-  if (lower.includes('elder druid')) return 'ED';
-  if (lower.includes('master sorcerer')) return 'MS';
-  if (lower.includes('royal paladin')) return 'RP';
-  if (lower.includes('monk')) return 'MK';
-  // Vocacoes base (baixo level, sem promocao) mapeiam pro icone da promovida.
-  if (lower.includes('knight')) return 'EK';
-  if (lower.includes('druid')) return 'ED';
-  if (lower.includes('sorcerer')) return 'MS';
-  if (lower.includes('paladin')) return 'RP';
-  return '';
 }
 
 function highestLevel(entries: LevelUpRecord[]): LevelUpRecord | undefined {
