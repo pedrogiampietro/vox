@@ -23,7 +23,7 @@ const BASE_URL: Record<Provider, string> = {
 const DEFAULT_PATH = '/community/worlds';
 const TIMEOUT_MS = 45_000;
 const POLL_MS = 750;
-const PROJECT_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+const PROJECT_ROOT = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
 const PROFILE_ROOT = process.env['VOX_SCRAPER_PROFILE_DIR']?.trim()
   || resolve(PROJECT_ROOT, 'data', 'scraper-profiles');
 
