@@ -225,9 +225,6 @@ export class AdminApi {
 
     if (action === '' && method === 'PATCH') {
       const body = await readJson(req);
-      if (body.presetId !== undefined && session.ownerId !== null) {
-        return send(res, 403, { error: 'somente o master pode trocar o provider do servidor' });
-      }
       const requestedPreset = body.presetId === undefined ? '' : str(body.presetId).trim();
       if (requestedPreset && !findPreset(requestedPreset)) {
         return send(res, 400, { error: 'preset desconhecido' });
@@ -389,6 +386,17 @@ export class AdminApi {
         if (!hub.botConfig.huntedNames.some((n) => n.toLowerCase() === name.toLowerCase())) {
           hub.botConfig.huntedNames.push(name);
         }
+      }
+      this.registry.scheduleSave();
+      hub.broadcastBotState();
+      return send(res, 200, { ok: true });
+    }
+
+    if (action === '/bot' && rest === 'hunted' && method === 'DELETE') {
+      if (hub.rubinot) {
+        hub.rubinot.clearHunted();
+      } else {
+        hub.botConfig.huntedNames = [];
       }
       this.registry.scheduleSave();
       hub.broadcastBotState();

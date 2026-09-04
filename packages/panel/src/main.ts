@@ -301,9 +301,9 @@ function renderMain(): HTMLElement {
     } else if (activeTab === 'bans') {
       grid.append(renderBans(detail));
     } else if (activeTab === 'bot') {
-      grid.append(botState && botState.provider !== 'none'
+      grid.append(botState
         ? renderBot(detail, botState)
-        : emptyTab('Bot', 'Este servidor não possui um provider de bot ativo. Escolha Rubinot ou DeusOT na aba Servidor.'));
+        : emptyTab('Bot', 'Não foi possível carregar o estado do bot.'));
     } else if (activeTab === 'billing') {
       grid.append(renderBilling(detail));
     } else if (activeTab === 'tickets') {
@@ -374,32 +374,10 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
   const pass = input('senha', '', 'password', server.password ? 'definida; preencha para trocar' : 'vazio = aberto');
   const preset = $('label', 'form');
   preset.append(text('span', 'label', 'provider do bot e preset'));
-  if (overview?.role === 'master') {
-    const presetSelect = $('select') as HTMLSelectElement;
-    if (!SERVER_PRESETS.some((option) => option.id === server.presetId)) {
-      const custom = $('option') as HTMLOptionElement;
-      custom.value = server.presetId;
-      custom.textContent = 'Personalizado (somente pelo cliente)';
-      custom.selected = true;
-      custom.disabled = true;
-      presetSelect.append(custom);
-    }
-    for (const option of SERVER_PRESETS) {
-      const item = $('option') as HTMLOptionElement;
-      item.value = option.id;
-      item.textContent = option.name;
-      item.selected = option.id === server.presetId;
-      presetSelect.append(item);
-    }
-    preset.append(presetSelect);
-    preset.dataset.presetField = 'true';
-  } else {
-    preset.append(text('strong', '', server.providerLabel || 'Sem bot'));
-  }
+  preset.append(text('strong', '', server.providerLabel || 'Sem bot'));
   const save = $('button', 'primary');
   save.textContent = 'Salvar';
   save.addEventListener('click', () => {
-    const selectedPreset = (preset.querySelector('select') as HTMLSelectElement | null)?.value;
     void api(`/api/servers/${server.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -409,9 +387,6 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
         ...(overview?.role === 'master'
           ? {
               maxClients: Number(max.input.value) || server.maxClients,
-              ...(selectedPreset && SERVER_PRESETS.some((option) => option.id === selectedPreset)
-                ? { presetId: selectedPreset }
-                : {}),
             }
           : {}),
         ...(pass.input.value ? { password: pass.input.value } : {}),
@@ -781,6 +756,48 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   const box = $('section', 'panel span-12');
   box.append(text('h3', '', `Bot ${bot.providerLabel || server.providerLabel || 'Vox'}`));
 
+  const providerField = $('label', 'form bot-provider-field');
+  providerField.append(text('span', 'label', 'Provider do bot'));
+  const providerSelect = $('select') as HTMLSelectElement;
+  if (!SERVER_PRESETS.some((option) => option.id === server.presetId)) {
+    const custom = $('option') as HTMLOptionElement;
+    custom.value = server.presetId;
+    custom.textContent = 'Personalizado (somente pelo cliente)';
+    custom.selected = true;
+    custom.disabled = true;
+    providerSelect.append(custom);
+  }
+  for (const option of SERVER_PRESETS) {
+    const item = $('option') as HTMLOptionElement;
+    item.value = option.id;
+    item.textContent = option.name;
+    item.selected = option.id === server.presetId;
+    providerSelect.append(item);
+  }
+  providerSelect.addEventListener('change', () => {
+    const selectedPreset = providerSelect.value;
+    providerSelect.disabled = true;
+    void api(`/api/servers/${server.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ presetId: selectedPreset }),
+    }).then(() => {
+      botDraft = {};
+      const label = SERVER_PRESETS.find((option) => option.id === selectedPreset)?.name ?? selectedPreset;
+      showToast(`Provider alterado para ${label}. O bot foi parado; revise o world antes de iniciar.`, 'success');
+      return loadDetail(server.id);
+    }).catch((error) => {
+      providerSelect.disabled = false;
+      showToast(error instanceof Error ? error.message : String(error), 'error');
+    });
+  });
+  providerField.append(providerSelect);
+  box.append(providerField);
+
+  if (bot.provider === 'none') {
+    box.append(text('p', 'subtle', 'Este servidor está sem bot. Selecione Rubinot ou DeusOT para habilitar um provider.'));
+    return box;
+  }
+
   const statusLine = $('div', 'toolbar');
   const statusLabel = text('span', bot.running ? 'bot-status bot-on' : 'bot-status bot-off', bot.running ? 'ativo' : 'parado');
   statusLine.append(statusLabel);
@@ -891,6 +908,24 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
     if (e.key === 'Enter') addBtn.click();
   });
   addRow.append(addInput, addBtn);
+  if (bot.hunted.length > 0) {
+    const clearBtn = $('button', 'danger');
+    clearBtn.textContent = 'Limpar Lista Manual';
+    clearBtn.title = 'Remove os jogadores adicionados manualmente; guilds inimigas continuam configuradas.';
+    clearBtn.addEventListener('click', () => {
+      if (!window.confirm('Remover todos os jogadores adicionados manualmente? As guilds inimigas continuarão configuradas.')) return;
+      clearBtn.disabled = true;
+      void api(`/api/servers/${server.id}/bot/hunted`, { method: 'DELETE' })
+        .then(() => {
+          showToast('Lista manual limpa.', 'success');
+          return loadDetail(server.id);
+        }).catch((error) => {
+          clearBtn.disabled = false;
+          showToast(error instanceof Error ? error.message : String(error), 'error');
+        });
+    });
+    addRow.append(clearBtn);
+  }
   huntedSection.append(addRow);
 
   const list = $('div', 'table');

@@ -263,6 +263,18 @@ export class RubinotBot {
     this.refreshInfoChannels();
   }
 
+  /** Remove apenas nomes adicionados manualmente; guilds inimigas continuam ativas. */
+  clearHunted(): void {
+    let changed = false;
+    for (const [key, tag] of this.tags) {
+      if (tag.kind === 'enemy' && !tag.guild) {
+        this.tags.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) this.refreshInfoChannels();
+  }
+
   /** Lista combinada, para clientes antigos e persistencia. */
   get huntedList(): string[] {
     return this.enemiesList;

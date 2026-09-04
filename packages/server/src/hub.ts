@@ -107,6 +107,7 @@ export class Hub {
   rubinot: {
     addHunted(n: string): void;
     removeHunted(n: string): void;
+    clearHunted(): void;
     huntedList: string[];
     friendsList: string[];
     enemiesList: string[];
@@ -158,7 +159,7 @@ export class Hub {
     return findPreset(this.presetId) ?? findPreset(DEFAULT_PRESET_ID)!;
   }
 
-  /** Troca um preset embutido pelo painel master, sem expor presets arbitrários. */
+  /** Troca um preset embutido pelo painel, sem expor presets arbitrários. */
   setBuiltinPresetFromAdmin(presetId: string): boolean {
     const preset = findPreset(clean(presetId, 48));
     if (!preset) return false;
