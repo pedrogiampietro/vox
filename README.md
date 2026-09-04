@@ -329,6 +329,11 @@ Os bundles são gerados em `packages/desktop/src-tauri/target/release/bundle/`.
 No CI, o job Windows normaliza os instaladores e publica automaticamente os
 arquivos em `/downloads` da VPS depois do deploy em `master`; a landing page e
 o painel usam esses mesmos caminhos estáveis.
+Sem assinatura digital, o Windows pode exibir o SmartScreen para um aplicativo
+novo mesmo que o arquivo seja legítimo. Para assinar no CI, cadastre os secrets
+`WINDOWS_CERT_BASE64` (PFX em Base64) e `WINDOWS_CERT_PASSWORD`; a assinatura
+com timestamp será aplicada ao `.EXE` e ao `.MSI`. A reputação do SmartScreen
+ainda é construída com os primeiros downloads.
 O checkout já preserva o plano escolhido; o plano gratuito cria o servidor e
 vincula o dono à conta. Pix e cartão aguardam a configuração do Mercado Pago.
 

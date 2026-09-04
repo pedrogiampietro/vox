@@ -158,6 +158,14 @@ export class Hub {
     return findPreset(this.presetId) ?? findPreset(DEFAULT_PRESET_ID)!;
   }
 
+  /** Troca um preset embutido pelo painel master, sem expor presets arbitrários. */
+  setBuiltinPresetFromAdmin(presetId: string): boolean {
+    const preset = findPreset(clean(presetId, 48));
+    if (!preset) return false;
+    this.applyPreset(preset, false);
+    return true;
+  }
+
   private presetStateMessage(): ServerMessage {
     const preset = this.activePreset();
     return {
@@ -170,8 +178,6 @@ export class Hub {
   private setPreset(s: Session, presetId: string, custom: string): void {
     if (s.group < Group.Owner) return this.fail(s, FailureCode.NotPermitted, 'so o owner troca o preset');
 
-    const previousProvider = this.activePreset().bot.provider;
-
     if (custom) {
       let parsed: ServerPreset | null = null;
       try {
@@ -180,18 +186,23 @@ export class Hub {
         parsed = null;
       }
       if (!parsed) return this.fail(s, FailureCode.Malformed, 'preset invalido ou grande demais');
-      this.customPreset = parsed;
-      this.presetId = parsed.id;
+      this.applyPreset(parsed, true);
+      return;
     } else {
       const builtin = findPreset(clean(presetId, 48));
       if (!builtin) return this.fail(s, FailureCode.Malformed, 'preset desconhecido');
-      this.customPreset = null;
-      this.presetId = builtin.id;
+      this.applyPreset(builtin, false);
+      return;
     }
+  }
+
+  private applyPreset(preset: ServerPreset, custom: boolean): void {
+    const previousProvider = this.activePreset().bot.provider;
+    this.customPreset = custom ? preset : null;
+    this.presetId = preset.id;
 
     // Claims do preset antigo apontariam pra respawns que sumiram do catalogo;
     // manter isso deixaria o painel com linhas impossiveis de liberar.
-    const preset = this.activePreset();
     for (const [id, claim] of [...this.claims]) {
       if (!canonicalRespawnIn(preset, claim.respawn)) this.claims.delete(id);
     }

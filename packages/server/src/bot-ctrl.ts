@@ -9,6 +9,7 @@
 import { RubinotBot } from '../../bot/src/bot.js';
 import { deusotProvider } from '../../bot/src/scrapers/deusot.js';
 import { rubinotProvider } from '../../bot/src/scrapers/rubinot.js';
+import type { BotProvider } from '@vox/protocol';
 import type { GameProvider } from '../../bot/src/scrapers/provider.js';
 import type { Hub } from './hub.js';
 import type { StoredBotConfig } from './persistence.js';
@@ -23,6 +24,12 @@ export function providerFor(hub: Hub): GameProvider {
     case 'deusot': return deusotProvider;
     default: return rubinotProvider;
   }
+}
+
+/** Identidade exibida no painel, inclusive para presets sem bot. */
+export function providerInfoFor(hub: Hub): { id: BotProvider; label: string } {
+  const id = hub.activePreset().bot.provider;
+  return id === 'none' ? { id, label: 'Sem bot' } : { id, label: providerFor(hub).label };
 }
 
 /**

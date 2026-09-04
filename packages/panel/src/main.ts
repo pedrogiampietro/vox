@@ -1,5 +1,5 @@
 import './style.css';
-import { Group, GROUP_NAMES } from '@vox/protocol';
+import { Group, GROUP_NAMES, SERVER_PRESETS } from '@vox/protocol';
 
 type ServerSummary = {
   id: number;
@@ -125,6 +125,8 @@ let selectedId = Number(new URLSearchParams(location.search).get('server') ?? 0)
 let detail: ServerDetail | null = null;
 let botState: BotState | null = null;
 let tickets: Ticket[] = [];
+let ticketDraft = { subject: '', message: '' };
+const ticketReplyDrafts = new Map<string, string>();
 let botDraft: Partial<{
   world: string;
   guildName: string;
@@ -299,7 +301,9 @@ function renderMain(): HTMLElement {
     } else if (activeTab === 'bans') {
       grid.append(renderBans(detail));
     } else if (activeTab === 'bot') {
-      grid.append(botState ? renderBot(detail, botState) : emptyTab('Bot', 'Este servidor não possui um bot configurado.'));
+      grid.append(botState && botState.provider !== 'none'
+        ? renderBot(detail, botState)
+        : emptyTab('Bot', 'Este servidor não possui um provider de bot ativo. Escolha Rubinot ou DeusOT na aba Servidor.'));
     } else if (activeTab === 'billing') {
       grid.append(renderBilling(detail));
     } else if (activeTab === 'tickets') {
@@ -368,9 +372,34 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
     max.input.title = 'Definido pelo plano contratado';
   }
   const pass = input('senha', '', 'password', server.password ? 'definida; preencha para trocar' : 'vazio = aberto');
+  const preset = $('label', 'form');
+  preset.append(text('span', 'label', 'provider do bot e preset'));
+  if (overview?.role === 'master') {
+    const presetSelect = $('select') as HTMLSelectElement;
+    if (!SERVER_PRESETS.some((option) => option.id === server.presetId)) {
+      const custom = $('option') as HTMLOptionElement;
+      custom.value = server.presetId;
+      custom.textContent = 'Personalizado (somente pelo cliente)';
+      custom.selected = true;
+      custom.disabled = true;
+      presetSelect.append(custom);
+    }
+    for (const option of SERVER_PRESETS) {
+      const item = $('option') as HTMLOptionElement;
+      item.value = option.id;
+      item.textContent = option.name;
+      item.selected = option.id === server.presetId;
+      presetSelect.append(item);
+    }
+    preset.append(presetSelect);
+    preset.dataset.presetField = 'true';
+  } else {
+    preset.append(text('strong', '', server.providerLabel || 'Sem bot'));
+  }
   const save = $('button', 'primary');
   save.textContent = 'Salvar';
   save.addEventListener('click', () => {
+    const selectedPreset = (preset.querySelector('select') as HTMLSelectElement | null)?.value;
     void api(`/api/servers/${server.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -378,7 +407,12 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
         slug: slug.input.value.trim(),
         motd: motd.input.value,
         ...(overview?.role === 'master'
-          ? { maxClients: Number(max.input.value) || server.maxClients }
+          ? {
+              maxClients: Number(max.input.value) || server.maxClients,
+              ...(selectedPreset && SERVER_PRESETS.some((option) => option.id === selectedPreset)
+                ? { presetId: selectedPreset }
+                : {}),
+            }
           : {}),
         ...(pass.input.value ? { password: pass.input.value } : {}),
       }),
@@ -392,7 +426,7 @@ function renderServerSettings(server: ServerDetail): HTMLElement {
   const remove = $('button', 'danger');
   remove.textContent = 'Remover';
   remove.addEventListener('click', () => void removeServer(server.id));
-  form.append(slug.wrap, name.wrap, motd.wrap, max.wrap, pass.wrap, save, remove);
+  form.append(slug.wrap, name.wrap, motd.wrap, max.wrap, pass.wrap, preset, save, remove);
   box.append(form);
   return box;
 }
@@ -509,13 +543,16 @@ function renderTickets(server: ServerSummary): HTMLElement {
 
   if (overview?.role === 'owner') {
     const compose = $('form', 'ticket-compose');
-    const subject = input('assunto', '', 'text', 'Ex.: problema ao conectar no QUIC');
+    const subject = input('assunto', ticketDraft.subject, 'text', 'Ex.: problema ao conectar no QUIC');
     const message = $('textarea') as HTMLTextAreaElement;
+    message.value = ticketDraft.message;
     message.placeholder = 'Descreva o que aconteceu…';
     message.rows = 4;
     const send = $('button', 'primary');
     send.type = 'submit';
     send.textContent = 'Abrir Ticket';
+    subject.input.addEventListener('input', () => { ticketDraft.subject = subject.input.value; });
+    message.addEventListener('input', () => { ticketDraft.message = message.value; });
     compose.append(subject.wrap, message, send);
     compose.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -525,6 +562,7 @@ function renderTickets(server: ServerSummary): HTMLElement {
         method: 'POST',
         body: JSON.stringify({ serverId: server.id, subject: subject.input.value, message: message.value }),
       }).then(() => {
+        ticketDraft = { subject: '', message: '' };
         showToast('Ticket aberto com sucesso.', 'success');
         return loadTickets();
       }).then(() => render()).catch((error) => {
@@ -570,8 +608,10 @@ function renderTicket(ticket: Ticket): HTMLElement {
   if (ticket.status !== 'closed') {
     const actions = $('div', 'ticket-actions');
     const reply = $('textarea') as HTMLTextAreaElement;
+    reply.value = ticketReplyDrafts.get(ticket.id) ?? '';
     reply.placeholder = 'Responder ao ticket…';
     reply.rows = 2;
+    reply.addEventListener('input', () => ticketReplyDrafts.set(ticket.id, reply.value));
     const replyButton = $('button', 'ghost');
     replyButton.type = 'button';
     replyButton.textContent = 'Responder';
@@ -582,6 +622,7 @@ function renderTicket(ticket: Ticket): HTMLElement {
         method: 'POST',
         body: JSON.stringify({ message: reply.value }),
       }).then(() => {
+        ticketReplyDrafts.delete(ticket.id);
         showToast('Resposta enviada.', 'success');
         return loadTickets();
       }).then(() => render()).catch((error) => {
@@ -989,6 +1030,12 @@ function openStream(): void {
   stream.onmessage = (ev) => {
     overview = JSON.parse(ev.data) as Overview;
     if (!selectedId) selectedId = overview.servers[0]?.id ?? 0;
+    // O SSE atualiza presença a cada poucos segundos. Não reconstruir a tela
+    // enquanto o owner está digitando evita perder foco e seleção do Ticket.
+    const focused = document.activeElement;
+    if (activeTab === 'tickets' && (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
+      if (focused.closest('.ticket-panel')) return;
+    }
     render();
   };
 }

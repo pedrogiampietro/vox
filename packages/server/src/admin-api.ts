@@ -13,12 +13,12 @@
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { Group, RemoveReason } from '@vox/protocol';
+import { findPreset, Group, RemoveReason } from '@vox/protocol';
 import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
-import { applyBotConfig, providerFor, startBot, stopBot, testBot } from './bot-ctrl.js';
+import { applyBotConfig, providerInfoFor, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { addTicketMessage, createTicket, getTicket, listTickets, updateTicketStatus, type TicketStatus } from './tickets.js';
 import {
   BILLING_PERIOD_MS,
@@ -208,7 +208,7 @@ export class AdminApi {
     // ---- servidor ----------------------------------------------------------
 
     if (action === '' && method === 'GET') {
-      const provider = providerFor(hub);
+      const provider = providerInfoFor(hub);
       return send(res, 200, {
         ...hub.settings,
         url: publicUrl(hub.settings.slug),
@@ -225,6 +225,13 @@ export class AdminApi {
 
     if (action === '' && method === 'PATCH') {
       const body = await readJson(req);
+      if (body.presetId !== undefined && session.ownerId !== null) {
+        return send(res, 403, { error: 'somente o master pode trocar o provider do servidor' });
+      }
+      const requestedPreset = body.presetId === undefined ? '' : str(body.presetId).trim();
+      if (requestedPreset && !findPreset(requestedPreset)) {
+        return send(res, 400, { error: 'preset desconhecido' });
+      }
       const update = {
         ...(body.slug !== undefined ? { slug: str(body.slug) } : {}),
         ...(body.name !== undefined ? { name: str(body.name) } : {}),
@@ -238,6 +245,9 @@ export class AdminApi {
         ...update,
       });
       if (!updated) return send(res, 409, { error: 'slug invalido ou ja utilizado' });
+      if (requestedPreset && !hub.setBuiltinPresetFromAdmin(requestedPreset)) {
+        return send(res, 400, { error: 'preset desconhecido' });
+      }
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
@@ -307,7 +317,7 @@ export class AdminApi {
     // ---- bot ---------------------------------------------------------------
 
     if (action === '/bot' && method === 'GET') {
-      const provider = providerFor(hub);
+      const provider = providerInfoFor(hub);
       return send(res, 200, {
         provider: provider.id,
         providerLabel: provider.label,
