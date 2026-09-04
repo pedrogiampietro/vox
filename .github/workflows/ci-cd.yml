@@ -44,4 +44,33 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" 'cd /opt/vox && GIT_SSH_COMMAND="ssh -i /root/.ssh/github_vox -o IdentitiesOnly=yes" git pull --ff-only origin master && npm ci && npm run build && systemctl restart vox.service'
+          ssh "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -e
+          cd /opt/vox
+
+          old_head="$(git rev-parse HEAD)"
+          GIT_SSH_COMMAND="ssh -i /root/.ssh/github_vox -o IdentitiesOnly=yes" git pull --ff-only origin master
+          new_head="$(git rev-parse HEAD)"
+
+          # npm ci remove/recria node_modules e pode ficar preso no registry.
+          # So reinstala quando os manifests mudarem ou quando a instalacao
+          # anterior nao deixou o marcador de sucesso.
+          install_stamp="node_modules/.vox-install-ok"
+          package_hash="$(sha256sum package.json package-lock.json packages/*/package.json | sha256sum | awk '{print $1}')"
+          manifests_changed=false
+          if [ "$old_head" != "$new_head" ] && ! git diff --quiet "$old_head" "$new_head" -- package.json package-lock.json packages; then
+            if git diff --name-only "$old_head" "$new_head" | grep -Eq '(^|/)(package(-lock)?\.json)$'; then
+              manifests_changed=true
+            fi
+          fi
+
+          if [ ! -f "$install_stamp" ] || [ "$(cat "$install_stamp")" != "$package_hash" ] || [ "$manifests_changed" = true ]; then
+            npm ci --prefer-offline --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=2
+            printf '%s\n' "$package_hash" > "$install_stamp"
+          else
+            echo 'Dependencias inalteradas; npm ci ignorado.'
+          fi
+
+          npm run build
+          systemctl restart vox.service
+          REMOTE

@@ -126,6 +126,10 @@ O workflow `.github/workflows/ci-cd.yml` valida `typecheck` e `build` em cada
 Pull Request. Todo merge na `master` repete as validações e, se passar, atualiza
 a VPS automaticamente via SSH. Configure os secrets `VPS_HOST`, `VPS_USER` e
 `VPS_SSH_KEY` no repositório; a chave deve ter acesso somente ao servidor.
+No deploy, as dependências da VPS só são reinstaladas quando algum manifesto
+`package.json` ou `package-lock.json` muda; commits de código seguem direto
+para build e restart. A instalação usa o cache local, sem auditoria nem avisos
+de financiamento de pacotes, e tem timeout de rede para não deixar o SSH preso.
 
 Isso sobe sem WebTransport, e a voz vai por WebSocket. Para desenvolver com
 QUIC ligado é preciso um certificado — o navegador aceita um autoassinado, mas
