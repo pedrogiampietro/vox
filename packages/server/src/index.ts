@@ -95,8 +95,10 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
 
-  // Area comercial do cliente. O cliente de voz continua separado em /app.
+  // O painel unificado substitui as antigas áreas /cliente e /admin.
+  // Mantemos os dois endereços antigos como redirects para não quebrar links.
   if ((path === '/cliente' || path === '/cliente/') && hasWeb) {
+    if (hasPanel) return redirect(res, `/painel${path.endsWith('/') ? '/' : ''}${new URL(req.url ?? '/', 'http://localhost').search}`);
     return serveStatic(WEB_ROOT, 'customer.html', res);
   }
 
@@ -126,7 +128,16 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
       res.writeHead(404).end('painel nao buildado (npm run build:panel)');
       return;
     }
-    return serveStatic(PANEL_ROOT, path.slice('/admin'.length) || '/', res);
+    const suffix = path.slice('/admin'.length) || '/';
+    return redirect(res, `/painel${suffix}${new URL(req.url ?? '/', 'http://localhost').search}`);
+  }
+
+  if (path === '/painel' || path.startsWith('/painel/')) {
+    if (!hasPanel) {
+      res.writeHead(404).end('painel nao buildado (npm run build:panel)');
+      return;
+    }
+    return serveStatic(PANEL_ROOT, path.slice('/painel'.length) || '/', res);
   }
 
   if (!hasWeb) {
@@ -140,6 +151,11 @@ function isLandingHost(rawHost: string | undefined): boolean {
   const host = String(rawHost ?? '').split(':')[0]?.toLowerCase() ?? '';
   const base = config.baseDomain.toLowerCase();
   return host === base || host === `www.${base}`;
+}
+
+function redirect(res: ServerResponse, location: string): void {
+  res.writeHead(302, { location, 'cache-control': 'no-store' });
+  res.end();
 }
 
 const server = tlsEnabled
@@ -246,7 +262,7 @@ server.listen(config.port, config.host, () => {
     console.log(`[vox]   servidor ${s.id}: "${s.name}" - ${s.channels} canais${lock}`);
   }
   if (hasWeb) console.log(`[vox] cliente web em ${WEB_ROOT}`);
-  if (hasPanel && adminEnabled) console.log('[vox] painel em /admin');
+  if (hasPanel && adminEnabled) console.log('[vox] painel unificado em /painel (alias legado: /admin)');
   if (!adminEnabled) console.log('[vox] painel desligado (defina VOX_ADMIN_PASSWORD)');
   if (config.trustProxy) console.log('[vox] confiando no X-Forwarded-For');
   if (!tlsEnabled) {

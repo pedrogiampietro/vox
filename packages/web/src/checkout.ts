@@ -171,9 +171,9 @@ function renderSuccessStep(): HTMLElement {
     section.append(address);
     const actions = $('div', 'checkout-actions');
     const open = $('a', 'checkout-button checkout-primary'); open.href = `/app?server=${encodeURIComponent(provision.server.url)}`; open.textContent = 'entrar no Vox';
-    const admin = $('a', 'checkout-button checkout-outline'); admin.href = provision.adminUrl; admin.textContent = 'abrir painel admin';
+    const admin = $('a', 'checkout-button checkout-outline'); admin.href = provision.adminUrl; admin.textContent = 'abrir painel Vox';
     actions.append(open, admin);
-    section.append(actions, text('p', 'checkout-security-note', `Faça login no admin com ${account?.email ?? 'a conta criada'} para ajustar permissões e bot.`));
+    section.append(actions, text('p', 'checkout-security-note', `Faça login no painel com ${account?.email ?? 'a conta criada'} para ajustar permissões e bot.`));
   }
   return section;
 }
@@ -267,7 +267,7 @@ async function pollOrder(): Promise<void> {
       if (!response.ok) throw new Error(body.error || 'não foi possível consultar o pedido');
       order = body;
       if (body.status === 'approved' && body.server) {
-        provision = { server: body.server, adminUrl: body.adminUrl ?? `/admin?server=${body.server.slug}` };
+        provision = { server: body.server, adminUrl: body.adminUrl ?? `/painel?server=${body.server.slug}` };
         pollingOrder = false;
         busy = false;
         render();

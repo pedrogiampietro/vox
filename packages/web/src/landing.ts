@@ -32,7 +32,6 @@ function renderNav(): HTMLElement {
 
   const actions = $('div', 'landing-nav-actions');
   actions.append(
-    landingLink('painel admin', '/admin', 'landing-nav-muted'),
     landingLink('entrar', '/app', 'landing-button landing-button-small'),
   );
   nav.append(brand, links, actions);
@@ -387,7 +386,7 @@ function renderCta(): HTMLElement {
   const content = $('div', 'landing-cta-content');
   content.append(text('span', 'landing-kicker', 'PRONTO PARA ENTRAR?'), text('h2', '', 'Seu time já está esperando.'), text('p', '', 'Abra o Vox, escolha um channel e coloque a comunicação no lugar certo — dentro da partida, sem distração.'));
   const actions = $('div', 'landing-cta-actions');
-  actions.append(landingLink('acessar área do cliente', '/cliente', 'landing-button landing-button-primary'), landingLink('painel administrativo', '/admin', 'landing-button landing-button-outline'));
+  actions.append(landingLink('abrir painel Vox', '/painel', 'landing-button landing-button-primary'));
   content.append(actions);
   section.append(content);
   return section;

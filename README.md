@@ -75,7 +75,7 @@ então não há nada além do segredo que a identifique.
 | `packages/protocol` | protocolo binário, fonte única compartilhada por cliente e servidor |
 | `packages/server` | servidor: canais, clientes, chat e roteamento de voz |
 | `packages/web` | cliente web (também é o frontend do desktop e do mobile) |
-| `packages/panel` | painel web de administração servido em `/admin` |
+| `packages/panel` | painel web unificado servido em `/painel` |
 | `packages/desktop` | casca Tauri v2 — mesma base gera Android e iOS |
 
 ## Rodando
@@ -101,11 +101,11 @@ Em produção, a entrada pública fica organizada assim:
 
 - `https://v0x.online/` — landing page e apresentação do Vox.
 - `https://v0x.online/app` — área para entrar nos servidores.
-- `https://v0x.online/cliente` — área do cliente, com cadastro, login e visão dos servidores vinculados.
+- `https://v0x.online/painel` — painel unificado, com cadastro, servidores, configurações, bot e faturamento.
 - `https://v0x.online/contratar?plan=community` — contratação guiada; o plano gratuito provisiona o primeiro servidor automaticamente.
 - `https://v0x.online/downloads/v0x-windows-x64-setup.exe` — instalador Windows (NSIS).
 - `https://v0x.online/downloads/v0x-windows-x64.msi` — instalador Windows (MSI).
-- `https://v0x.online/admin` — painel administrativo.
+- `https://v0x.online/admin` — alias legado que redireciona para o painel unificado.
 - `https://servidor.v0x.online/` — acesso direto ao servidor virtual.
 
 Painel administrativo em desenvolvimento:
@@ -121,7 +121,7 @@ npm run dev:panel
 Abra <http://localhost:5174/admin/> e entre com a senha definida em
 `VOX_ADMIN_PASSWORD`. Em produção local, `npm run build && npm start` serve a
 landing em `/` quando o host é o domínio base, o cliente em `/app` e o painel
-em `/admin`.
+em `/painel` (com `/admin` e `/cliente` redirecionando para ele).
 
 ## Pipeline
 

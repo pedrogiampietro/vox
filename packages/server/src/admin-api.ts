@@ -460,7 +460,7 @@ export class AdminApi {
         maxClients: hub.settings.maxClients,
         url: publicUrl(hub.settings.slug),
       },
-      adminUrl: `/admin?server=${hub.id}`,
+      adminUrl: `/painel?server=${hub.id}`,
     });
   }
 
@@ -773,7 +773,7 @@ function publicOrder(order: BillingOrder, registry: Registry): unknown {
           url: publicUrl(hub.settings.slug),
         }
       : undefined,
-    adminUrl: hub ? `/admin?server=${hub.id}` : undefined,
+    adminUrl: hub ? `/painel?server=${hub.id}` : undefined,
   };
 }
 

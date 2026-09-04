@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
-  base: '/admin/',
+  base: '/painel/',
   resolve: {
     alias: {
       '@vox/protocol': fileURLToPath(new URL('../protocol/src/index.ts', import.meta.url)),

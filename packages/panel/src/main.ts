@@ -111,6 +111,7 @@ let botDraft: Partial<{
 let stream: EventSource | null = null;
 let notice = '';
 let activeTab: AdminTab = 'overview';
+let renewingServerId = 0;
 
 const $ = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
   const el = document.createElement(tag);
@@ -131,7 +132,7 @@ function render(): void {
 function renderLogin(): HTMLElement {
   const root = $('div', 'login');
   const panel = $('form', 'panel form');
-  panel.append(text('h1', '', 'v0x admin'));
+  panel.append(text('h1', '', 'v0x painel'));
   panel.append(text('p', 'subtle', 'Entre com sua conta ou com a senha master.'));
 
   const email = input('email do cliente (opcional)', '', 'email', 'cliente@exemplo.com');
@@ -167,7 +168,7 @@ function renderAdmin(): HTMLElement {
 function renderSidebar(): HTMLElement {
   const side = $('aside', 'sidebar');
   const brand = $('div', 'brand');
-  brand.append(text('h1', '', 'v0x'), text('span', 'label', 'admin'));
+  brand.append(text('h1', '', 'v0x'), text('span', 'label', 'painel'));
   side.append(brand);
 
   const totals = overview?.totals;
@@ -409,6 +410,14 @@ function renderBilling(server: ServerDetail): HTMLElement {
         : 'não informado'),
     );
     box.append(summary);
+    if (overview?.role === 'owner') {
+      const renew = $('button', 'primary');
+      renew.type = 'button';
+      renew.disabled = renewingServerId === server.id;
+      renew.textContent = renewingServerId === server.id ? 'abrindo pagamento...' : 'renovar por Pix ou cartão';
+      renew.addEventListener('click', () => { void renewServer(server.id); });
+      box.append(renew);
+    }
   }
 
   const rows = $('div', 'table');
@@ -423,10 +432,6 @@ function renderBilling(server: ServerDetail): HTMLElement {
     rows.append(row);
   }
   box.append(rows);
-  const customer = $('a', 'public-link') as HTMLAnchorElement;
-  customer.href = '/cliente';
-  customer.textContent = 'abrir área do cliente para renovar';
-  box.append(customer);
   return box;
 }
 
@@ -491,6 +496,22 @@ function orderStatusLabel(status: AccountOrder['status']): string {
   if (status === 'approved') return 'aprovado';
   if (status === 'failed') return 'falhou';
   return 'aguardando pagamento';
+}
+
+async function renewServer(serverId: number): Promise<void> {
+  if (renewingServerId) return;
+  renewingServerId = serverId;
+  notice = '';
+  render();
+  try {
+    const result = await api<{ initPoint?: string; error?: string }>(`/api/account/servers/${serverId}/renew`, { method: 'POST' });
+    if (!result.initPoint) throw new Error(result.error || 'não foi possível iniciar a renovação');
+    window.location.assign(result.initPoint);
+  } catch (error) {
+    renewingServerId = 0;
+    notice = error instanceof Error ? error.message : String(error);
+    render();
+  }
 }
 
 function renderAnnouncement(server: ServerDetail): HTMLElement {

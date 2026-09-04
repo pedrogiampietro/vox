@@ -78,10 +78,6 @@
   color: var(--text);
 }
 
-.landing-nav .landing-nav-muted {
-  color: var(--text-faint);
-}
-
 .landing-button {
   min-height: 42px;
   display: inline-flex;
@@ -937,10 +933,6 @@
 
   .landing-nav-actions {
     margin-left: auto;
-  }
-
-  .landing-nav-muted {
-    display: none;
   }
 
   .landing-title {

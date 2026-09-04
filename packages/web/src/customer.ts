@@ -226,7 +226,7 @@ function renderServer(server: ServerSummary): HTMLElement {
   open.href = `/app?server=${encodeURIComponent(serverUrl(server))}`;
   open.textContent = 'abrir Vox';
   const manage = $('a', 'customer-button customer-button-ghost');
-  manage.href = `/admin?server=${server.id}`;
+  manage.href = `/painel?server=${server.id}`;
   manage.textContent = 'configurar';
   actions.append(open, manage);
   if (paidOrder) {
