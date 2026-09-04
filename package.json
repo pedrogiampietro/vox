@@ -14,6 +14,7 @@
     "music-bot": "npm run music-bot --workspace=@vox/bot --",
     "music-jukebox": "npm run music-jukebox --workspace=@vox/bot",
     "probe:deus": "npm run probe-deus --workspace=@vox/bot",
+    "solve:deus": "npm run solve-deus-challenge --workspace=@vox/bot",
     "build:web": "npm run build --workspace=@vox/web",
     "build:panel": "npm run build --workspace=@vox/panel",
     "build:server": "esbuild packages/server/src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs --external:@fails-components/* --external:bufferutil --external:utf-8-validate --external:cycletls --external:form-data --external:cloakbrowser --external:playwright-core --banner:js=\"import{createRequire}from'node:module';const require=createRequire(import.meta.url);\"",

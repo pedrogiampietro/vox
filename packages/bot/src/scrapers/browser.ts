@@ -75,6 +75,11 @@ class AsyncLock {
 
 const sharedBrowserLock = new AsyncLock();
 
+/** Caminho compartilhado pelos comandos de operacao e pelo service. */
+export function scraperProfileDir(id: string): string {
+  return resolve(PROFILE_ROOT, id);
+}
+
 async function browserRuntime(): Promise<Browser> {
   if (sharedBrowser) return sharedBrowser;
   if (!sharedBrowserPromise) {
@@ -115,7 +120,7 @@ export class PersistentBrowserHtml {
   private readonly storageStatePath: string;
 
   constructor(private readonly options: BrowserHtmlOptions) {
-    this.profileDir = resolve(PROFILE_ROOT, options.id);
+    this.profileDir = scraperProfileDir(options.id);
     this.storageStatePath = resolve(this.profileDir, 'storage-state.json');
   }
 

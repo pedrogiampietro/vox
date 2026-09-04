@@ -73,6 +73,40 @@ Smoke test sem ligar nenhum bot ou publicar mensagens:
 npm run probe:deus -- Andromeda Memorium
 ```
 
+### Resolver um challenge manualmente
+
+Quando o DeusOT desafiar o IP da VPS, o bot não tenta contornar a proteção.
+Existe um bootstrap para concluir a verificação em um navegador visível e
+salvar a sessão. O navegador precisa sair pelo mesmo IP da VPS; em Windows,
+abra dois terminais PowerShell:
+
+```powershell
+# terminal 1: mantenha o tunel aberto
+$VPS_USER = 'root'
+$VPS_HOST = 'IP_DA_VPS'
+ssh -D 1080 -N "$VPS_USER@$VPS_HOST"
+
+# terminal 2: abre o browser local usando o egress da VPS
+$env:VOX_CHALLENGE_PROXY = 'socks5://127.0.0.1:1080'
+npm run solve:deus -- deusot
+```
+
+Resolva o challenge na janela que abrir. O comando valida `/community/worlds`
+e `/community/deaths` e salva `data/scraper-profiles/deusot/storage-state.json`.
+Depois, envie somente esse arquivo para a mesma pasta da VPS e reinicie o
+serviço:
+
+```powershell
+$VPS_TARGET = "$VPS_USER@$VPS_HOST"
+scp data/scraper-profiles/deusot/storage-state.json "${VPS_TARGET}:/opt/vox/data/scraper-profiles/deusot/storage-state.json"
+ssh "$VPS_TARGET" "systemctl restart vox.service"
+```
+
+O arquivo de sessão contém cookies do domínio e deve ser tratado como secreto:
+não o versione, não o envie para terceiros e não o publique no painel. O
+clearance pode expirar; nesse caso, repita o bootstrap. O mesmo fluxo aceita
+`deusold` no lugar de `deusot`.
+
 Se aparecer `challenge não foi concluído`, a sessão não foi liberada pelo
 site. A solução preferida continua sendo API ou allowlist oficial do IP da
 Vox. Não aumente a frequência de requests para tentar forçar um challenge.

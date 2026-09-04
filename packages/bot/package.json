@@ -6,7 +6,8 @@
   "scripts": {
     "music-bot": "tsx src/music-client.ts",
     "music-jukebox": "tsx src/music-jukebox.ts",
-    "probe-deus": "tsx scripts/probe-deus.ts"
+    "probe-deus": "tsx scripts/probe-deus.ts",
+    "solve-deus-challenge": "tsx scripts/solve-deus-challenge.ts"
   },
   "dependencies": {
     "@vox/protocol": "*",
