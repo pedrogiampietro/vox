@@ -14,7 +14,7 @@ import { launch } from 'cloakbrowser';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 
 const NAVIGATION_TIMEOUT_MS = 25_000;
-const CHALLENGE_WAIT_MS = 12_000;
+const DEFAULT_CHALLENGE_WAIT_MS = 45_000;
 const PROFILE_ROOT = process.env['VOX_SCRAPER_PROFILE_DIR'] || resolve('data', 'scraper-profiles');
 const DEFAULT_FINGERPRINT = '51873';
 
@@ -30,6 +30,16 @@ function envBoolean(name: string, fallback: boolean): boolean {
 function delay(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
+
+function positiveEnv(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const CHALLENGE_WAIT_MS = positiveEnv(
+  'VOX_SCRAPER_CHALLENGE_WAIT_MS',
+  DEFAULT_CHALLENGE_WAIT_MS,
+);
 
 function challengeTitle(title: string): boolean {
   const lower = title.toLowerCase();
@@ -55,6 +65,31 @@ function abortError(): Error {
   const error = new Error('scraper abortado');
   error.name = 'AbortError';
   return error;
+}
+
+/**
+ * `domcontentloaded` pode ser emitido antes de um redirect/interstitial
+ * terminar. Ler content() nesse intervalo gera o erro intermitente
+ * "page is navigating and changing the content". Fazemos somente uma
+ * pequena espera de estabilidade; nao executamos nem tentamos contornar o
+ * challenge.
+ */
+async function pageSnapshot(page: Page): Promise<{ title: string; html: string }> {
+  const deadline = Date.now() + 5_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      return { title: await page.title(), html: await page.content() };
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/page is navigating|changing the content/i.test(message)) throw error;
+      await delay(250);
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('pagina nao estabilizou depois da navegacao');
 }
 
 /** Um lock simples sem dependencia externa. */
@@ -157,22 +192,23 @@ export class PersistentBrowserHtml {
       // Uma interstitial pode terminar depois do primeiro DOMContentLoaded.
       // Esperamos somente quando a pagina ainda se parece com um challenge;
       // paginas HTML normais seguem sem a espera de networkidle.
-      let html = await page.content();
+      let snapshot = await pageSnapshot(page);
       const challengeDeadline = Date.now() + CHALLENGE_WAIT_MS;
-      while (challengeTitle(await page.title()) || challengeBody(html)) {
+      while (challengeTitle(snapshot.title) || challengeBody(snapshot.html)) {
         signal?.throwIfAborted();
         if (Date.now() >= challengeDeadline) {
           throw new Error(
-            `${this.options.label} recebeu um challenge que nao foi concluido automaticamente em ${path}`,
+            `${this.options.label} recebeu um challenge que nao foi concluido automaticamente em ${path}; ` +
+              'a sessao autorizada pode ter expirado ou estar vinculada a outro IP/perfil',
           );
         }
         await delay(500);
-        html = await page.content();
+        snapshot = await pageSnapshot(page);
       }
 
       signal?.throwIfAborted();
       await this.persistState();
-      return html;
+      return snapshot.html;
     });
   }
 

@@ -58,6 +58,8 @@ Variáveis opcionais na VPS:
 VOX_SCRAPER_PROFILE_DIR=/opt/vox/data/scraper-profiles
 VOX_SCRAPER_HEADLESS=true
 VOX_SCRAPER_FINGERPRINT=51873  # mantenha igual ao bootstrap manual
+# opcional: tempo para uma interstitial concluir o JavaScript (ms; padrao 45000)
+VOX_SCRAPER_CHALLENGE_WAIT_MS=45000
 CLOAKBROWSER_LICENSE_KEY=      # opcional; não colocar no repositório
 ```
 
@@ -68,10 +70,12 @@ sessão do navegador. Para investigar uma falha:
 journalctl -u vox.service -n 200 --no-pager | grep -Ei 'scraper|deusot|deusold|challenge|bot'
 ```
 
-Smoke test sem ligar nenhum bot ou publicar mensagens:
+Smoke test sem ligar nenhum bot ou publicar mensagens (use explicitamente o
+mesmo perfil do `vox.service`):
 
 ```bash
-npm run probe:deus -- Andromeda Memorium
+VOX_SCRAPER_PROFILE_DIR=/opt/vox/data/scraper-profiles \
+  npm run probe:deus -- Andromeda Memorium
 ```
 
 ### Resolver um challenge manualmente
@@ -109,5 +113,8 @@ clearance pode expirar; nesse caso, repita o bootstrap. O mesmo fluxo aceita
 `deusold` no lugar de `deusot`.
 
 Se aparecer `challenge não foi concluído`, a sessão não foi liberada pelo
-site. A solução preferida continua sendo API ou allowlist oficial do IP da
-Vox. Não aumente a frequência de requests para tentar forçar um challenge.
+site, expirou ou foi associada a outro IP/perfil. O scraper aguarda redirects
+e interstitials por até 45 segundos, mas não tenta contornar a proteção. A
+solução preferida para operação 100% automática continua sendo uma API/feed
+autorizado ou uma allowlist oficial do IP da Vox. Não aumente a frequência de
+requests para tentar forçar um challenge.
