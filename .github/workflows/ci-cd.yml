@@ -37,6 +37,46 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+  desktop:
+    name: Build Windows desktop
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Restore dependencies
+        id: dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-node-22-dependencies-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies when needed
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund --fetch-timeout=60000 --fetch-retries=2
+      - name: Reuse cached dependencies
+        if: steps.dependencies.outputs.cache-hit == 'true'
+        run: echo 'Dependências restauradas do cache; npm ci ignorado.'
+      - name: Build Tauri installers
+        run: npm run build --workspace=@vox/desktop
+      - name: Normalize download names
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path desktop-downloads | Out-Null
+          $exe = Get-ChildItem packages/desktop/src-tauri/target/release/bundle/nsis/*.exe | Select-Object -First 1
+          $msi = Get-ChildItem packages/desktop/src-tauri/target/release/bundle/msi/*.msi | Select-Object -First 1
+          if (-not $exe -or -not $msi) { throw 'Tauri não gerou os instaladores Windows esperados.' }
+          Copy-Item $exe.FullName desktop-downloads/v0x-windows-x64-setup.exe
+          Copy-Item $msi.FullName desktop-downloads/v0x-windows-x64.msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v0x-windows-downloads
+          path: desktop-downloads
+          if-no-files-found: error
+
   deploy:
     name: Deploy VPS
     needs: validate
@@ -92,3 +132,30 @@ jobs:
             echo 'Jukebox nao instalado ou inativo; nenhuma reinicializacao necessaria.'
           fi
           REMOTE
+
+  publish-desktop:
+    name: Publish Windows downloads
+    needs: [deploy, desktop]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: v0x-windows-downloads
+          path: desktop-downloads
+      - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+      - name: Publish installers
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" 'mkdir -p /opt/vox/packages/web/dist/downloads'
+          scp desktop-downloads/v0x-windows-x64-setup.exe desktop-downloads/v0x-windows-x64.msi "$VPS_USER@$VPS_HOST:/opt/vox/packages/web/dist/downloads/"
