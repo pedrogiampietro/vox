@@ -75,7 +75,8 @@ async function main(): Promise<void> {
   console.log('[challenge] resolva a verificacao manualmente na janela do navegador');
   if (proxy) console.log(`[challenge] proxy SOCKS/HTTP: ${proxy.replace(/:[^:/]+@/, ':***@')}`);
 
-  const context = await launchPersistentContext(manualProfile, {
+  const context = await launchPersistentContext({
+    userDataDir: manualProfile,
     headless: false,
     ...(proxy ? { proxy } : {}),
   });
