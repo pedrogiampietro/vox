@@ -309,6 +309,48 @@ relatório agora usa `schema: 2` e inclui `voiceRttMs`, `voiceRegion` e
 `voiceQuality` no início e no fim da gravação, permitindo comparar a qualidade
 do áudio com a rota efetivamente usada.
 
+## Auditoria e limites de requisição
+
+Toda ação administrativa fica gravada em `audit_log`, na mesma base SQLite do
+resto (`data/vox.db`). O painel mostra a trilha na aba **Auditoria**: o master
+vê tudo, o dono vê o que ele mesmo fez, em todas as suas contratações.
+
+Ficam registrados login (master e cliente, sucesso e falha), criação e remoção
+de servidor, alteração de configuração, kick, ban, remoção de ban, movimentação
+e troca de grupo, anúncio, ciclo de vida do bot, checkout, renovação, pagamento
+aprovado, webhook recusado e mudança de status de ticket. Senha nunca entra no
+registro — um `server.update` grava apenas quais campos mudaram.
+
+A tabela se poda sozinha: 2.000 entradas por servidor e 5.000 para o que não
+pertence a servidor nenhum. Para consultar direto no banco:
+
+```bash
+sqlite3 /opt/vox/data/vox.db   "SELECT datetime(at/1000,'unixepoch','-3 hours'), actor, ip, action, server_id, detail
+   FROM audit_log ORDER BY id DESC LIMIT 40;"
+```
+
+Uma sequência de `auth.master.fail` ou `billing.webhook.reject` do mesmo IP é o
+sinal que vale acompanhar: são as duas portas que dão acesso ou servidor grátis.
+
+As rotas HTTP têm teto por janela deslizante, contado por conta quando há sessão
+e por IP quando não há:
+
+| Balde | Rotas | Teto |
+| --- | --- | --- |
+| `auth` | login master, login e registro de cliente | 8 / 5 min |
+| `write` | qualquer POST/PATCH/DELETE autenticado | 120 / min |
+| `provision` | criação de servidor comunidade | 3 / hora |
+| `checkout` | compra e renovação | 10 / hora |
+| `ticket` | abrir e responder chamado | 12 / 10 min |
+| `webhook` | notificação do Mercado Pago | 120 / min |
+
+Estourar o teto responde `429` e a ação não acontece. Os contadores vivem em
+memória: reiniciar o `vox.service` zera todos. Leitura (`GET`) não tem teto,
+porque o painel faz polling legítimo.
+
+Atrás de proxy, ligue `VOX_TRUST_PROXY=1` — sem isso todo cliente chega com o
+mesmo IP e os baldes por IP passam a punir o conjunto.
+
 ## Diagnóstico rápido
 
 | Sintoma | Causa provável | Verificação |

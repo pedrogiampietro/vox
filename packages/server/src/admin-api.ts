@@ -20,6 +20,7 @@ import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassw
 import type { StoredBotConfig } from './persistence.js';
 import { applyBotConfig, currentBotConfig, providerInfoFor, startBotAndWait, stopBot, testBot } from './bot-ctrl.js';
 import { addTicketMessage, createTicket, getTicket, listTickets, updateTicketStatus, type TicketStatus } from './tickets.js';
+import { list as listAudit, record as recordAudit } from './audit.js';
 import {
   BILLING_PERIOD_MS,
   billingPlans,
@@ -37,19 +38,48 @@ import {
 
 /** Corpo maior que isto so pode ser abuso: o painel manda objetos minusculos. */
 const MAX_BODY_BYTES = 16 * 1024;
-/** Tentativas de login por IP, por janela. */
-const LOGIN_ATTEMPTS = 8;
-const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 
-interface Attempts {
+interface RateRule {
+  limit: number;
+  windowMs: number;
+}
+
+/**
+ * Tetos por janela deslizante. A chave e a conta quando ha sessao e o IP
+ * quando nao ha — atras de um proxy sem VOX_TRUST_PROXY todo mundo compartilha
+ * o mesmo IP, e limitar por conta evita que um cliente derrube os outros.
+ *
+ * Os numeros sao folgados de proposito: o objetivo e cortar script, nao
+ * atrapalhar quem clica rapido no painel.
+ */
+const RATE: Record<string, RateRule> = {
+  /** Login e registro: o unico ponto onde adivinhar senha compensa. */
+  auth: { limit: 8, windowMs: 5 * 60_000 },
+  /** Qualquer escrita autenticada. */
+  write: { limit: 120, windowMs: 60_000 },
+  /** Cria servidor de verdade; sem teto, uma conta enche a VPS de graca. */
+  provision: { limit: 3, windowMs: 60 * 60_000 },
+  /** Gera pedido e fala com o Mercado Pago. */
+  checkout: { limit: 10, windowMs: 60 * 60_000 },
+  /** Abrir e responder chamado. */
+  ticket: { limit: 12, windowMs: 10 * 60_000 },
+  /** Rota publica: o Mercado Pago repete, mas nao em rajada. */
+  webhook: { limit: 120, windowMs: 60_000 },
+};
+
+interface Hits {
   count: number;
   windowStart: number;
 }
 
+/** Registrador ja amarrado a sessao e ao IP; ver AdminApi.auditor. */
+type Audit = (action: string, serverId: number | null, detail?: Record<string, unknown>) => void;
+
 export class AdminApi {
   /** Token -> expiracao. Em memoria: reiniciar o servidor desloga o painel. */
   private readonly tokens = new Map<string, { expires: number; ownerId: number | null }>();
-  private readonly attempts = new Map<string, Attempts>();
+  /** `balde:chave` -> janela corrente. Ver RATE. */
+  private readonly hits = new Map<string, Hits>();
   /** Evita provisionar duas vezes quando o Mercado Pago repete em paralelo. */
   private readonly processingOrders = new Set<string>();
   /** Conexoes SSE abertas, para empurrar o estado ao vivo. */
@@ -104,7 +134,8 @@ export class AdminApi {
       return send(res, 200, { plans: billingPlans(), checkout: billingPlans().some((plan) => plan.enabled) });
     }
     if (path === '/api/payments/mercadopago/webhook' && method === 'POST') {
-      return this.mercadoPagoWebhook(req, res);
+      if (!this.allow('webhook', `ip:${ip}`)) return send(res, 429, { error: 'muitas notificações' });
+      return this.mercadoPagoWebhook(req, res, ip);
     }
 
     if (path === '/api/login' && method === 'POST') {
@@ -123,6 +154,13 @@ export class AdminApi {
       return;
     }
 
+    // Teto unico para toda escrita autenticada; rotas caras somam o proprio
+    // balde adiante. Leitura fica livre: o painel faz polling legitimo.
+    if (method !== 'GET' && !this.allow('write', this.rateKey(session, ip))) {
+      return send(res, 429, { error: 'muitas requisições; aguarde alguns segundos' });
+    }
+    const audit = this.auditor(session, ip);
+
     if (path === '/api/account/me' && method === 'GET') {
       const account = session.ownerId === null ? undefined : findAccountById(session.ownerId);
       return account
@@ -134,32 +172,63 @@ export class AdminApi {
       return send(res, 200, this.overview(session));
     }
 
+    // Visao geral da trilha. O master ve tudo; o dono ve apenas o que ele
+    // proprio fez, inclusive o que nao pertence a um servidor (login, compra).
+    if (path === '/api/audit' && method === 'GET') {
+      const url = new URL(req.url ?? '/', 'http://localhost');
+      const before = Number(url.searchParams.get('before'));
+      return send(res, 200, {
+        entries: listAudit({
+          ...(session.ownerId === null ? {} : { accountId: session.ownerId }),
+          limit: Number(url.searchParams.get('limit')) || 100,
+          ...(Number.isInteger(before) && before > 0 ? { before } : {}),
+        }),
+      });
+    }
+
     if (path === '/api/tickets' && method === 'GET') {
       return send(res, 200, { tickets: listTickets(session.ownerId) });
     }
     if (path === '/api/tickets' && method === 'POST') {
+      if (!this.allow('ticket', this.rateKey(session, ip))) {
+        return send(res, 429, { error: 'muitos chamados em pouco tempo; aguarde alguns minutos' });
+      }
       return this.createSupportTicket(req, res, session);
     }
 
     const ticketMatch = /^\/api\/tickets\/([a-z0-9-]+)(?:\/(reply|status))?$/.exec(path);
     if (ticketMatch && method === 'POST' && ticketMatch[2] === 'reply') {
+      if (!this.allow('ticket', this.rateKey(session, ip))) {
+        return send(res, 429, { error: 'muitas respostas em pouco tempo; aguarde alguns minutos' });
+      }
       return this.replySupportTicket(req, res, session, ticketMatch[1]!);
     }
     if (ticketMatch && method === 'PATCH' && ticketMatch[2] === 'status') {
-      return this.changeSupportTicketStatus(req, res, session, ticketMatch[1]!);
+      return this.changeSupportTicketStatus(req, res, session, ticketMatch[1]!, audit);
     }
 
     if (path === '/api/account/provision' && method === 'POST') {
-      return this.provisionAccountServer(req, res, session);
+      // Servidor comunidade e gratuito: sem teto, uma conta so provisiona ate
+      // encher o disco da VPS.
+      if (!this.allow('provision', this.rateKey(session, ip))) {
+        return send(res, 429, { error: 'limite de criação de servidores atingido; tente novamente mais tarde' });
+      }
+      return this.provisionAccountServer(req, res, session, audit);
     }
 
     if (path === '/api/account/checkout' && method === 'POST') {
-      return this.createAccountCheckout(req, res, session);
+      if (!this.allow('checkout', this.rateKey(session, ip))) {
+        return send(res, 429, { error: 'muitas tentativas de compra; aguarde alguns minutos' });
+      }
+      return this.createAccountCheckout(req, res, session, audit);
     }
 
     const renewalMatch = /^\/api\/account\/servers\/(\d+)\/renew$/.exec(path);
     if (renewalMatch && method === 'POST') {
-      return this.createAccountRenewal(res, session, Number(renewalMatch[1]));
+      if (!this.allow('checkout', this.rateKey(session, ip))) {
+        return send(res, 429, { error: 'muitas tentativas de renovação; aguarde alguns minutos' });
+      }
+      return this.createAccountRenewal(res, session, Number(renewalMatch[1]), audit);
     }
 
     const orderMatch = /^\/api\/account\/orders\/([a-z0-9-]+)$/.exec(path);
@@ -190,6 +259,7 @@ export class AdminApi {
         password: str(body.password),
         maxClients: int(body.maxClients, 128),
       });
+      audit('server.create', hub.id, { slug: hub.settings.slug, name: hub.settings.name });
       this.broadcastState();
       return send(res, 201, { id: hub.id, slug: hub.settings.slug, url: publicUrl(hub.settings.slug) });
     }
@@ -245,12 +315,20 @@ export class AdminApi {
       if (requestedPreset && !hub.setBuiltinPresetFromAdmin(requestedPreset)) {
         return send(res, 400, { error: 'preset desconhecido' });
       }
+      // Senha nunca entra no registro: o valor exato nao ajuda a auditar, e o
+      // log passaria a ser um alvo.
+      audit('server.update', hub.id, {
+        campos: Object.keys(update),
+        ...(requestedPreset ? { preset: requestedPreset } : {}),
+      });
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
 
     if (action === '' && method === 'DELETE') {
+      const slug = hub.settings.slug;
       const removed = this.registry.remove(hub.id);
+      if (removed) audit('server.delete', hub.id, { slug });
       this.broadcastState();
       return removed
         ? send(res, 200, { ok: true })
@@ -263,7 +341,9 @@ export class AdminApi {
       const body = await readJson(req);
       const target = hub.sessionById(int(body.clientId, 0));
       if (!target) return send(res, 404, { error: 'usuario nao esta online' });
-      hub.expel(target, RemoveReason.Kicked, str(body.reason) || 'expulso pelo painel');
+      const reason = str(body.reason) || 'expulso pelo painel';
+      hub.expel(target, RemoveReason.Kicked, reason);
+      audit('client.kick', hub.id, { alvo: target.nickname, motivo: reason });
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
@@ -272,13 +352,17 @@ export class AdminApi {
       const body = await readJson(req);
       const target = hub.sessionById(int(body.clientId, 0));
       if (!target) return send(res, 404, { error: 'usuario nao esta online' });
-      hub.banSession(target, int(body.minutes, 0), str(body.reason) || 'banido pelo painel');
+      const minutes = int(body.minutes, 0);
+      const reason = str(body.reason) || 'banido pelo painel';
+      hub.banSession(target, minutes, reason);
+      audit('client.ban', hub.id, { alvo: target.nickname, minutos: minutes, motivo: reason });
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
 
     if (action === '/bans' && method === 'DELETE') {
       const ok = hub.removeBan(rest);
+      if (ok) audit('ban.remove', hub.id, { banimento: rest });
       this.broadcastState();
       return send(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'banimento inexistente' });
     }
@@ -287,7 +371,9 @@ export class AdminApi {
       const body = await readJson(req);
       const target = hub.sessionById(int(body.clientId, 0));
       if (!target) return send(res, 404, { error: 'usuario nao esta online' });
-      hub.forceMove(target, int(body.channelId, 0));
+      const channelId = int(body.channelId, 0);
+      hub.forceMove(target, channelId);
+      audit('client.move', hub.id, { alvo: target.nickname, canal: channelId });
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
@@ -298,7 +384,9 @@ export class AdminApi {
       if (group < Group.Guest || group > Group.Owner) {
         return send(res, 400, { error: 'grupo invalido' });
       }
-      hub.setGroupByFingerprint(str(body.fingerprint), group as Group);
+      const fingerprint = str(body.fingerprint);
+      hub.setGroupByFingerprint(fingerprint, group as Group);
+      audit('client.group', hub.id, { fingerprint: fingerprint.slice(0, 16), grupo: group });
       this.broadcastState();
       return send(res, 200, { ok: true });
     }
@@ -308,6 +396,7 @@ export class AdminApi {
       const text = str(body.text);
       if (!text) return send(res, 400, { error: 'texto vazio' });
       hub.announce(text);
+      audit('server.announce', hub.id, { texto: text.slice(0, 120) });
       return send(res, 200, { ok: true });
     }
 
@@ -362,6 +451,7 @@ export class AdminApi {
         return send(res, 502, { error: `não foi possível aplicar a configuração do bot: ${message}` });
       }
       hub.broadcastBotState();
+      audit('bot.config', hub.id, { mundo: bc.world, ligado: bc.enabled, intervaloMs: bc.intervalMs });
 
       this.broadcastState();
       return send(res, 200, { ok: true });
@@ -371,6 +461,7 @@ export class AdminApi {
       const error = await startBotAndWait(hub);
       this.registry.scheduleSave();
       hub.broadcastBotState();
+      audit('bot.start', hub.id, error ? { erro: error } : { mundo: hub.botConfig.world });
       if (error) return send(res, 502, { error });
       return send(res, 200, { ok: true });
     }
@@ -379,11 +470,13 @@ export class AdminApi {
       stopBot(hub);
       this.registry.scheduleSave();
       hub.broadcastBotState();
+      audit('bot.stop', hub.id, {});
       return send(res, 200, { ok: true });
     }
 
     if (action === '/bot' && rest === 'test' && method === 'POST') {
       testBot(hub);
+      audit('bot.test', hub.id, {});
       hub.broadcastBotState();
       this.broadcastState();
       return send(res, 200, { ok: true });
@@ -400,6 +493,7 @@ export class AdminApi {
       }
       this.registry.scheduleSave();
       hub.broadcastBotState();
+      audit('bot.restart', hub.id, { mundo: hub.botConfig.world });
       return send(res, 200, { ok: true });
     }
 
@@ -533,34 +627,46 @@ export class AdminApi {
   // ------------------------------------------------------------ sessao --
 
   private async login(req: IncomingMessage, res: ServerResponse, ip: string): Promise<void> {
-    if (!this.allowAttempt(ip)) {
+    if (!this.allow('auth', `ip:${ip}`)) {
       return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
     }
     const body = await readJson(req);
     if (!matches(str(body.password), config.adminPassword)) {
+      // Tentativa contra a senha master e a que mais interessa auditar.
+      recordAudit({ actor: 'anon', actorAccountId: null, ip, action: 'auth.master.fail' });
       return send(res, 401, { error: 'senha incorreta' });
     }
     const token = randomBytes(32).toString('hex');
     this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: null });
     this.pruneTokens();
+    recordAudit({ actor: 'master', actorAccountId: null, ip, action: 'auth.master.ok' });
     send(res, 200, { token, role: 'master', expiresIn: config.adminSessionMs });
   }
 
   private async accountLogin(req: IncomingMessage, res: ServerResponse, ip: string): Promise<void> {
-    if (!this.allowAttempt(ip)) return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
+    if (!this.allow('auth', `ip:${ip}`)) return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
     const body = await readJson(req);
-    const account = findAccount(str(body.email));
+    const email = str(body.email);
+    const account = findAccount(email);
     if (!account || !verifyPassword(account, str(body.password))) {
+      recordAudit({
+        actor: 'anon',
+        actorAccountId: account?.id ?? null,
+        ip,
+        action: 'auth.account.fail',
+        detail: { email: email.trim().toLowerCase() },
+      });
       return send(res, 401, { error: 'email ou senha incorretos' });
     }
     const token = randomBytes(32).toString('hex');
     this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: account.id });
     this.pruneTokens();
+    recordAudit({ actor: 'owner', actorAccountId: account.id, ip, action: 'auth.account.ok' });
     send(res, 200, { token, role: 'owner', expiresIn: config.adminSessionMs, account: publicAccount(account) });
   }
 
   private async accountRegister(req: IncomingMessage, res: ServerResponse, ip: string): Promise<void> {
-    if (!this.allowAttempt(ip)) return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
+    if (!this.allow('auth', `ip:${ip}`)) return send(res, 429, { error: 'muitas tentativas; aguarde alguns minutos' });
     const body = await readJson(req);
     const email = str(body.email).trim().toLowerCase();
     const password = str(body.password);
@@ -575,6 +681,7 @@ export class AdminApi {
     const token = randomBytes(32).toString('hex');
     this.tokens.set(token, { expires: Date.now() + config.adminSessionMs, ownerId: account.id });
     this.pruneTokens();
+    recordAudit({ actor: 'owner', actorAccountId: account.id, ip, action: 'account.register', detail: { email } });
     send(res, 201, { token, role: 'owner', expiresIn: config.adminSessionMs, account: publicAccount(account) });
   }
 
@@ -582,6 +689,7 @@ export class AdminApi {
     req: IncomingMessage,
     res: ServerResponse,
     session: { ownerId: number | null },
+    audit: Audit,
   ): Promise<void> {
     if (session.ownerId === null) return send(res, 403, { error: 'somente contas de cliente podem contratar' });
     const body = await readJson(req);
@@ -601,6 +709,7 @@ export class AdminApi {
       motd: 'Bem-vindo ao seu servidor Vox.',
       presetId: 'rubinot',
     });
+    audit('account.provision', hub.id, { plano: plan, slug: hub.settings.slug });
     this.broadcastState();
     return send(res, 201, {
       plan,
@@ -619,6 +728,7 @@ export class AdminApi {
     req: IncomingMessage,
     res: ServerResponse,
     session: { ownerId: number | null },
+    audit: Audit,
   ): Promise<void> {
     if (session.ownerId === null) return send(res, 403, { error: 'somente contas de cliente podem contratar' });
     const body = await readJson(req);
@@ -640,6 +750,7 @@ export class AdminApi {
       serverSlug: slug,
       serverPassword: password,
     });
+    audit('account.checkout', null, { pedido: order.id, plano: plan.key, centavos: order.amountCents });
     try {
       const preference = await createMercadoPagoPreference(order, account.email);
       return send(res, 201, {
@@ -658,6 +769,7 @@ export class AdminApi {
     res: ServerResponse,
     session: { ownerId: number | null },
     serverId: number,
+    audit: Audit,
   ): Promise<void> {
     if (session.ownerId === null) return send(res, 403, { error: 'somente contas de cliente podem renovar' });
     const hub = this.registry.get(serverId);
@@ -680,6 +792,7 @@ export class AdminApi {
       serverPassword: hub.settings.password,
       serverId,
     });
+    audit('account.renew', serverId, { pedido: order.id, plano: plan.key, centavos: order.amountCents });
     try {
       const preference = await createMercadoPagoPreference(order, account.email);
       return send(res, 201, {
@@ -755,6 +868,7 @@ export class AdminApi {
     res: ServerResponse,
     session: { ownerId: number | null },
     id: string,
+    audit: Audit,
   ): Promise<void> {
     const ticket = getTicket(id);
     if (!ticket || (session.ownerId !== null && ticket.accountId !== session.ownerId)) {
@@ -771,12 +885,13 @@ export class AdminApi {
       return send(res, 403, { error: 'somente o suporte pode alterar este status' });
     }
     const updated = updateTicketStatus(id, status);
+    if (updated) audit('ticket.status', ticket.serverId, { ticket: id, status });
     return updated
       ? send(res, 200, { ticket: updated })
       : send(res, 404, { error: 'ticket inexistente' });
   }
 
-  private async mercadoPagoWebhook(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async mercadoPagoWebhook(req: IncomingMessage, res: ServerResponse, ip: string): Promise<void> {
     if (!config.mpAccessToken || !config.mpWebhookSecret) {
       return send(res, 503, { error: 'webhook Mercado Pago ainda não configurado' });
     }
@@ -787,6 +902,14 @@ export class AdminApi {
     const requestId = header(req, 'x-request-id');
     const signature = header(req, 'x-signature');
     if (!dataId || !validWebhookSignature(signature, requestId, dataId)) {
+      // Notificacao forjada e o caminho obvio para provisionar sem pagar.
+      recordAudit({
+        actor: 'anon',
+        actorAccountId: null,
+        ip,
+        action: 'billing.webhook.reject',
+        detail: { dataId: dataId.slice(0, 40) },
+      });
       return send(res, 401, { error: 'assinatura do webhook inválida' });
     }
     if (str(body.type) !== 'payment' && str(body.topic) !== 'payment') {
@@ -857,6 +980,14 @@ export class AdminApi {
           lastError: '',
         });
         this.broadcastState();
+        recordAudit({
+          actor: 'anon',
+          actorAccountId: order.accountId,
+          ip,
+          action: 'billing.renewal.approved',
+          serverId: order.serverId,
+          detail: { pedido: order.id, plano: order.plan, centavos: order.amountCents },
+        });
         console.log(`[vox] renovação aprovada: pedido ${order.id}, servidor ${order.serverId}`);
         return send(res, 200, { ok: true });
       }
@@ -890,6 +1021,14 @@ export class AdminApi {
         statusDetail,
         lastError: '',
       });
+      recordAudit({
+        actor: 'anon',
+        actorAccountId: order.accountId,
+        ip,
+        action: 'billing.order.approved',
+        serverId: hub.id,
+        detail: { pedido: order.id, plano: order.plan, centavos: order.amountCents, slug: hub.settings.slug },
+      });
       this.broadcastState();
       console.log(`[vox] pagamento aprovado: pedido ${order.id}, servidor ${hub.id}`);
       return send(res, 200, { ok: true });
@@ -898,15 +1037,54 @@ export class AdminApi {
     }
   }
 
-  private allowAttempt(ip: string): boolean {
+  /**
+   * Consome uma unidade do balde. `false` significa estourou a janela — quem
+   * chama responde 429 e nao executa a acao.
+   */
+  private allow(bucket: keyof typeof RATE, key: string): boolean {
+    const rule = RATE[bucket]!;
     const now = Date.now();
-    const entry = this.attempts.get(ip);
-    if (!entry || now - entry.windowStart > LOGIN_WINDOW_MS) {
-      this.attempts.set(ip, { count: 1, windowStart: now });
+    const id = `${bucket}:${key}`;
+    const entry = this.hits.get(id);
+    if (!entry || now - entry.windowStart > rule.windowMs) {
+      this.hits.set(id, { count: 1, windowStart: now });
       return true;
     }
     entry.count++;
-    return entry.count <= LOGIN_ATTEMPTS;
+    return entry.count <= rule.limit;
+  }
+
+  /**
+   * Registrador ja amarrado a sessao e ao IP da requisicao, para os handlers
+   * so precisarem dizer o que aconteceu.
+   */
+  private auditor(session: { ownerId: number | null }, ip: string) {
+    return (action: string, serverId: number | null, detail: Record<string, unknown> = {}): void => {
+      recordAudit({
+        actor: session.ownerId === null ? 'master' : 'owner',
+        actorAccountId: session.ownerId,
+        ip,
+        action,
+        serverId,
+        detail,
+      });
+    };
+  }
+
+  /** Sessao autenticada conta por conta; o resto, por IP. */
+  private rateKey(session: { ownerId: number | null } | null, ip: string): string {
+    if (!session) return `ip:${ip}`;
+    return session.ownerId === null ? 'master' : `owner:${session.ownerId}`;
+  }
+
+  /** Janelas ja vencidas nao precisam ocupar memoria ate o proximo acesso. */
+  private pruneHits(): void {
+    const now = Date.now();
+    for (const [id, entry] of this.hits) {
+      const bucket = id.slice(0, id.indexOf(':')) as keyof typeof RATE;
+      const rule = RATE[bucket];
+      if (!rule || now - entry.windowStart > rule.windowMs) this.hits.delete(id);
+    }
   }
 
   private authorized(req: IncomingMessage): { ownerId: number | null } | null {
@@ -930,6 +1108,7 @@ export class AdminApi {
     for (const [token, session] of this.tokens) {
       if (session.expires < now) this.tokens.delete(token);
     }
+    this.pruneHits();
   }
 
   // ------------------------------------------------------------ leitura --

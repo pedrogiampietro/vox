@@ -255,6 +255,19 @@ body {
   background: var(--ink-700);
 }
 
+.audit-row .mono {
+  overflow-wrap: anywhere;
+}
+
+/* Falha de senha, ban e remocao de servidor precisam saltar na varredura. */
+.audit-alert {
+  border-color: var(--alert-dim);
+}
+
+.audit-alert strong {
+  color: var(--alert);
+}
+
 .billing-summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

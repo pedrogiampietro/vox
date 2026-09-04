@@ -35,7 +35,18 @@ type AccountOrder = {
   server?: { id: number; name: string; slug: string; maxClients: number; url: string };
 };
 
-type AdminTab = 'overview' | 'server' | 'users' | 'channels' | 'bans' | 'bot' | 'billing' | 'tickets';
+type AdminTab = 'overview' | 'server' | 'users' | 'channels' | 'bans' | 'bot' | 'billing' | 'tickets' | 'audit';
+
+type AuditEntry = {
+  id: number;
+  at: number;
+  actor: 'master' | 'owner' | 'anon';
+  actorAccountId: number | null;
+  ip: string;
+  action: string;
+  serverId: number | null;
+  detail: Record<string, unknown>;
+};
 
 type ChannelInfo = {
   id: number;
@@ -138,6 +149,7 @@ let selectedId = Number(new URLSearchParams(location.search).get('server') ?? 0)
 let detail: ServerDetail | null = null;
 let botState: BotState | null = null;
 let tickets: Ticket[] = [];
+let audit: AuditEntry[] = [];
 let ticketDraft = { subject: '', message: '' };
 const ticketReplyDrafts = new Map<string, string>();
 let botDraft: Partial<{
@@ -322,6 +334,8 @@ function renderMain(): HTMLElement {
       grid.append(renderBilling(detail));
     } else if (activeTab === 'tickets') {
       grid.append(renderTickets(server));
+    } else if (activeTab === 'audit') {
+      grid.append(renderAudit());
     }
   } else {
     grid.append(text('div', 'panel span-12 subtle', 'carregando detalhes...'));
@@ -344,6 +358,7 @@ function renderTabs(): HTMLElement {
     ['bot', 'Bot', '✦'],
     ['billing', 'Faturamento', '◫'],
     ['tickets', 'Tickets', '◇'],
+    ['audit', 'Auditoria', '⎈'],
   ];
   for (const [id, label, icon] of tabs) {
     const button = $('button', `tab-button${activeTab === id ? ' active' : ''}`);
@@ -442,6 +457,87 @@ function renderClients(server: ServerDetail): HTMLElement {
   }
   box.append(rows);
   return box;
+}
+
+/** Rotulos legiveis para as acoes gravadas pelo servidor. */
+const AUDIT_LABELS: Record<string, string> = {
+  'auth.master.ok': 'login master',
+  'auth.master.fail': 'senha master incorreta',
+  'auth.account.ok': 'login de cliente',
+  'auth.account.fail': 'senha de cliente incorreta',
+  'account.register': 'conta criada',
+  'account.provision': 'servidor comunidade criado',
+  'account.checkout': 'checkout iniciado',
+  'account.renew': 'renovação iniciada',
+  'billing.order.approved': 'pagamento aprovado',
+  'billing.renewal.approved': 'renovação aprovada',
+  'billing.webhook.reject': 'webhook recusado',
+  'server.create': 'servidor criado',
+  'server.update': 'servidor alterado',
+  'server.delete': 'servidor removido',
+  'server.announce': 'anúncio',
+  'client.kick': 'kick',
+  'client.ban': 'ban',
+  'client.move': 'usuário movido',
+  'client.group': 'grupo alterado',
+  'ban.remove': 'ban removido',
+  'bot.config': 'bot reconfigurado',
+  'bot.start': 'bot ligado',
+  'bot.stop': 'bot desligado',
+  'bot.restart': 'bot reiniciado',
+  'bot.test': 'alerta de teste',
+  'ticket.status': 'status de ticket',
+};
+
+/** Acoes que merecem destaque visual quando aparecem na lista. */
+const AUDIT_ALERTS = new Set([
+  'auth.master.fail',
+  'auth.account.fail',
+  'billing.webhook.reject',
+  'server.delete',
+  'client.ban',
+]);
+
+function renderAudit(): HTMLElement {
+  const box = $('section', 'panel span-12');
+  box.append(text('h3', '', 'Auditoria'));
+  box.append(text('p', 'subtle', overview?.role === 'master'
+    ? 'Toda ação administrativa registrada, incluindo login e cobrança.'
+    : 'Ações registradas na sua conta e nos seus servidores.'));
+
+  const rows = $('div', 'table');
+  if (audit.length === 0) {
+    rows.append(text('div', 'subtle', 'nenhum registro ainda'));
+  }
+  for (const entry of audit) {
+    const row = $('div', `rowline audit-row${AUDIT_ALERTS.has(entry.action) ? ' audit-alert' : ''}`);
+    const info = $('div', '');
+    info.append(text('strong', '', AUDIT_LABELS[entry.action] ?? entry.action));
+    const who = entry.actor === 'master'
+      ? 'master'
+      : entry.actorAccountId === null ? 'anônimo' : `conta #${entry.actorAccountId}`;
+    const detail = auditDetail(entry.detail);
+    const where = entry.serverId === null ? 'conta' : serverLabel(entry.serverId);
+    info.append(text('div', 'mono subtle', `${who} · ${where} · ${entry.ip || 'sem ip'}${detail ? ` · ${detail}` : ''}`));
+    row.append(info, text('span', 'mono subtle', formatDateTime(entry.at)));
+    rows.append(row);
+  }
+  box.append(rows);
+  return box;
+}
+
+/** Nome do servidor quando ainda existe; o id sozinho quando ja foi removido. */
+function serverLabel(serverId: number): string {
+  const server = overview?.servers.find((candidate) => candidate.id === serverId);
+  return server ? server.name : `servidor #${serverId}`;
+}
+
+/** `{alvo: "Fulano", motivo: "spam"}` -> `alvo=Fulano · motivo=spam`. */
+function auditDetail(detail: Record<string, unknown>): string {
+  return Object.entries(detail)
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(',') : String(value)}`)
+    .join(' · ')
+    .slice(0, 200);
 }
 
 /**
@@ -1231,6 +1327,7 @@ async function refreshAll(): Promise<void> {
   if (!selectedId) selectedId = overview?.servers[0]?.id ?? 0;
   if (selectedId) await loadDetail(selectedId);
   await loadTickets();
+  await loadAudit();
   render();
 }
 
@@ -1240,6 +1337,19 @@ async function loadTickets(): Promise<void> {
     tickets = body.tickets;
   } catch {
     tickets = [];
+  }
+}
+
+/**
+ * A trilha e da conta, nao do servidor selecionado: login, compra e criacao de
+ * servidor nao pertencem a servidor nenhum, e sao justamente as linhas que o
+ * dono precisa ver. O servidor de cada acao aparece na propria linha.
+ */
+async function loadAudit(): Promise<void> {
+  try {
+    audit = (await api<{ entries: AuditEntry[] }>('/api/audit?limit=120')).entries;
+  } catch {
+    audit = [];
   }
 }
 
