@@ -32,7 +32,8 @@ function renderNav(): HTMLElement {
 
   const actions = $('div', 'landing-nav-actions');
   actions.append(
-    landingLink('entrar', '/app', 'landing-button landing-button-small'),
+    landingLink('entrar no Vox', '/app', 'landing-button landing-button-small landing-button-app'),
+    landingLink('abrir painel', '/painel', 'landing-button landing-button-small landing-button-panel'),
   );
   nav.append(brand, links, actions);
   return nav;

@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800&display=swap');
 @import '@vox/ui/tokens.css';
 
 /* ---------------------------------------------------------- landing page -- */
@@ -16,6 +17,18 @@
     radial-gradient(circle at 12% 45%, rgba(94, 224, 138, 0.045), transparent 25rem),
     var(--ink-900);
   scrollbar-gutter: stable;
+}
+
+.landing-brand,
+.landing-title,
+.landing-section-intro h2,
+.landing-download-card h3,
+.landing-feature-card h3,
+.landing-step h3,
+.landing-configurator-controls h3,
+.landing-configurator-summary h3,
+.landing-cta h2 {
+  font-family: 'Cinzel', Georgia, serif;
 }
 
 .landing-shell {
@@ -104,6 +117,23 @@
   background: var(--ink-700);
 }
 
+.landing-button-app {
+  border-color: var(--line-strong);
+}
+
+.landing-button-panel {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: #241706;
+  box-shadow: 0 6px 18px rgba(232, 163, 61, 0.12);
+}
+
+.landing-button-panel::after {
+  content: '↗';
+  margin-left: 7px;
+  font-size: 13px;
+}
+
 .landing-button-primary {
   background: var(--amber);
   border-color: var(--amber);
@@ -148,7 +178,7 @@
   color: var(--text);
   font-size: clamp(48px, 6vw, 82px);
   line-height: 0.98;
-  letter-spacing: -0.075em;
+  letter-spacing: -0.035em;
   font-weight: 800;
 }
 
@@ -429,7 +459,7 @@
   color: var(--text);
   font-size: clamp(30px, 4vw, 48px);
   line-height: 1.05;
-  letter-spacing: -0.06em;
+  letter-spacing: -0.03em;
 }
 
 .landing-download-grid {
@@ -471,7 +501,7 @@
   margin: 28px 0 12px;
   color: var(--text);
   font-size: 19px;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.015em;
 }
 
 .landing-download-card p {
@@ -524,7 +554,7 @@
   margin: 55px 0 12px;
   color: var(--text);
   font-size: 18px;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.015em;
 }
 
 .landing-feature-card p,
@@ -595,7 +625,7 @@
   color: var(--text);
   font-size: clamp(24px, 3vw, 36px);
   line-height: 1.05;
-  letter-spacing: -0.055em;
+  letter-spacing: -0.025em;
 }
 
 .landing-configurator-copy {
@@ -785,7 +815,7 @@
   margin: 19px 0 0;
   color: var(--text);
   font-size: 22px;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.02em;
 }
 
 .landing-configurator-price {
@@ -867,7 +897,7 @@
   color: var(--text);
   font-size: clamp(34px, 5vw, 60px);
   line-height: 1;
-  letter-spacing: -0.065em;
+  letter-spacing: -0.03em;
 }
 
 .landing-cta p {
@@ -933,6 +963,13 @@
 
   .landing-nav-actions {
     margin-left: auto;
+    gap: 6px;
+  }
+
+  .landing-nav .landing-button {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 10px;
   }
 
   .landing-title {

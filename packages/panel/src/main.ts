@@ -257,21 +257,24 @@ function renderMain(): HTMLElement {
 function renderTabs(): HTMLElement {
   const nav = $('nav', 'admin-tabs');
   nav.setAttribute('aria-label', 'Seções do painel');
-  const tabs: [AdminTab, string][] = [
-    ['overview', 'visão geral'],
-    ['server', 'servidor'],
-    ['users', 'usuários'],
-    ['channels', 'canais'],
-    ['bans', 'banimentos'],
-    ['bot', 'bot'],
-    ['billing', 'faturamento'],
-    ['tickets', 'tickets'],
+  nav.setAttribute('role', 'tablist');
+  const tabs: [AdminTab, string, string][] = [
+    ['overview', 'visão geral', '⌂'],
+    ['server', 'servidor', '◈'],
+    ['users', 'usuários', '●'],
+    ['channels', 'canais', '⌗'],
+    ['bans', 'banimentos', '⊘'],
+    ['bot', 'bot', '✦'],
+    ['billing', 'faturamento', '◫'],
+    ['tickets', 'tickets', '◇'],
   ];
-  for (const [id, label] of tabs) {
+  for (const [id, label, icon] of tabs) {
     const button = $('button', `tab-button${activeTab === id ? ' active' : ''}`);
     button.type = 'button';
-    button.textContent = label;
+    button.setAttribute('role', 'tab');
+    button.append(text('span', 'tab-icon', icon), text('span', 'tab-label', label));
     button.setAttribute('aria-selected', String(activeTab === id));
+    button.setAttribute('aria-label', label);
     button.addEventListener('click', () => {
       activeTab = id;
       render();
