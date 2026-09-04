@@ -10,8 +10,10 @@ type ProvisionResult = { server: { slug: string; name: string; maxClients: numbe
 type OrderResult = {
   id: string;
   plan: PlanKey;
+  kind: 'initial' | 'renewal';
   amountCents: number;
   status: 'pending' | 'approved' | 'failed';
+  expiresAt: number | null;
   server?: { slug: string; name: string; maxClients: number; url: string };
   adminUrl?: string;
   error?: string;
@@ -138,6 +140,7 @@ function renderServerStep(): HTMLElement {
 
 function renderSuccessStep(): HTMLElement {
   const section = $('section', 'checkout-success');
+  const renewal = order?.kind === 'renewal';
   if (orderId && !provision) {
     if (order?.status === 'failed') {
       section.append(text('span', 'checkout-kicker', 'PASSO 03 · PAGAMENTO'), text('h1', '', 'O pagamento não foi concluído.'), text('p', 'checkout-lede', 'Nenhum servidor foi criado. Você pode voltar aos planos e tentar novamente.'));
@@ -155,10 +158,16 @@ function renderSuccessStep(): HTMLElement {
     );
     return section;
   }
-  section.append(text('span', 'checkout-kicker', 'PASSO 03 · TUDO PRONTO'), text('h1', '', 'Seu servidor está no ar.'), text('p', 'checkout-lede', 'A conta já é a dona do servidor. Use o endereço abaixo para entrar com o seu time.'));
+  section.append(
+    text('span', 'checkout-kicker', 'PASSO 03 · TUDO PRONTO'),
+    text('h1', '', renewal ? 'Renovação confirmada.' : 'Seu servidor está no ar.'),
+    text('p', 'checkout-lede', renewal
+      ? `Seu servidor continua ativo${order?.expiresAt ? ` até ${formatDate(order.expiresAt)}` : ''}.`
+      : 'A conta já é a dona do servidor. Use o endereço abaixo para entrar com o seu time.'),
+  );
   if (provision) {
     const address = $('div', 'checkout-address');
-    address.append(text('span', 'checkout-address-label', 'ENDEREÇO DO SERVIDOR'), text('strong', '', provision.server.url), text('span', 'mono', `${provision.server.maxClients} slots · plano ${selectedPlan.label}`));
+    address.append(text('span', 'checkout-address-label', renewal ? 'SERVIDOR RENOVADO' : 'ENDEREÇO DO SERVIDOR'), text('strong', '', provision.server.url), text('span', 'mono', `${provision.server.maxClients} slots · plano ${selectedPlan.label}`));
     section.append(address);
     const actions = $('div', 'checkout-actions');
     const open = $('a', 'checkout-button checkout-primary'); open.href = `/app?server=${encodeURIComponent(provision.server.url)}`; open.textContent = 'entrar no Vox';
@@ -279,6 +288,10 @@ async function pollOrder(): Promise<void> {
 
 function formatCents(value: number): string {
   return (value / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function formatDate(value: number): string {
+  return new Date(value).toLocaleDateString('pt-BR');
 }
 
 function delay(ms: number): Promise<void> {

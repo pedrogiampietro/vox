@@ -6,6 +6,10 @@ import { database } from './sqlite.js';
 
 export type PaidPlan = '50-basic' | '50-bot' | '100-basic' | '100-bot' | '254-basic' | '254-bot';
 export type BillingOrderStatus = 'pending' | 'approved' | 'failed';
+export type BillingOrderKind = 'initial' | 'renewal';
+
+/** Cada pagamento aprovado libera 30 dias de uso. */
+export const BILLING_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface BillingPlan {
   key: PaidPlan;
@@ -21,6 +25,7 @@ export interface BillingOrder {
   id: string;
   accountId: number;
   plan: PaidPlan;
+  kind: BillingOrderKind;
   amountCents: number;
   serverName: string;
   serverSlug: string;
@@ -30,6 +35,11 @@ export interface BillingOrder {
   paymentId: string;
   serverId: number | null;
   lastError: string;
+  paidAt: number | null;
+  expiresAt: number | null;
+  paymentMethodId: string;
+  paymentTypeId: string;
+  statusDetail: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -40,6 +50,10 @@ export interface MercadoPagoPayment {
   transaction_amount?: number;
   currency_id?: string;
   external_reference?: string;
+  payment_method_id?: string;
+  payment_type_id?: string;
+  date_approved?: string;
+  status_detail?: string;
 }
 
 const plans: Record<PaidPlan, Omit<BillingPlan, 'priceCents' | 'enabled'> & { priceCents: number }> = {
@@ -75,16 +89,19 @@ export function getBillingPlan(value: string): BillingPlan | undefined {
 export function createOrder(input: {
   accountId: number;
   plan: PaidPlan;
+  kind?: BillingOrderKind;
   amountCents: number;
   serverName: string;
   serverSlug: string;
   serverPassword: string;
+  serverId?: number | null;
 }): BillingOrder {
   const now = Date.now();
   const order: BillingOrder = {
     id: `vox-${randomBytes(12).toString('hex')}`,
     accountId: input.accountId,
     plan: input.plan,
+    kind: input.kind ?? 'initial',
     amountCents: input.amountCents,
     serverName: input.serverName,
     serverSlug: input.serverSlug,
@@ -92,8 +109,13 @@ export function createOrder(input: {
     status: 'pending',
     preferenceId: '',
     paymentId: '',
-    serverId: null,
+    serverId: input.serverId ?? null,
     lastError: '',
+    paidAt: null,
+    expiresAt: null,
+    paymentMethodId: '',
+    paymentTypeId: '',
+    statusDetail: '',
     createdAt: now,
     updatedAt: now,
   };
@@ -101,8 +123,9 @@ export function createOrder(input: {
     INSERT INTO payment_orders (
       id, account_id, plan, amount_cents, server_name, server_slug,
       server_password, status, preference_id, payment_id, server_id,
-      last_error, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      last_error, created_at, updated_at, kind, paid_at, expires_at,
+      payment_method_id, payment_type_id, status_detail
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     order.id,
     order.accountId,
@@ -118,6 +141,12 @@ export function createOrder(input: {
     order.lastError,
     order.createdAt,
     order.updatedAt,
+    order.kind,
+    order.paidAt,
+    order.expiresAt,
+    order.paymentMethodId,
+    order.paymentTypeId,
+    order.statusDetail,
   );
   return order;
 }
@@ -127,19 +156,41 @@ export function findOrder(id: string): BillingOrder | undefined {
   return row ? fromRow(row) : undefined;
 }
 
-export function updateOrder(id: string, update: Partial<Pick<BillingOrder, 'status' | 'preferenceId' | 'paymentId' | 'serverId' | 'lastError'>>): BillingOrder | undefined {
+export function listOrders(accountId: number): BillingOrder[] {
+  const rows = database.prepare('SELECT * FROM payment_orders WHERE account_id = ? ORDER BY created_at DESC').all(accountId) as Record<string, unknown>[];
+  return rows.map(fromRow);
+}
+
+export function findLatestApprovedOrderForServer(accountId: number, serverId: number): BillingOrder | undefined {
+  const row = database.prepare(`
+    SELECT * FROM payment_orders
+    WHERE account_id = ? AND server_id = ? AND status = 'approved'
+    ORDER BY COALESCE(expires_at, 0) DESC, updated_at DESC
+    LIMIT 1
+  `).get(accountId, serverId) as Record<string, unknown> | undefined;
+  return row ? fromRow(row) : undefined;
+}
+
+export function updateOrder(id: string, update: Partial<Pick<BillingOrder, 'status' | 'preferenceId' | 'paymentId' | 'serverId' | 'lastError' | 'paidAt' | 'expiresAt' | 'paymentMethodId' | 'paymentTypeId' | 'statusDetail'>>): BillingOrder | undefined {
   const current = findOrder(id);
   if (!current) return undefined;
   const next = { ...current, ...update, updatedAt: Date.now() };
   database.prepare(`
     UPDATE payment_orders SET status = ?, preference_id = ?, payment_id = ?,
-      server_id = ?, last_error = ?, updated_at = ? WHERE id = ?
+      server_id = ?, last_error = ?, paid_at = ?, expires_at = ?,
+      payment_method_id = ?, payment_type_id = ?, status_detail = ?,
+      updated_at = ? WHERE id = ?
   `).run(
     next.status,
     next.preferenceId,
     next.paymentId,
     next.serverId,
     next.lastError,
+    next.paidAt,
+    next.expiresAt,
+    next.paymentMethodId,
+    next.paymentTypeId,
+    next.statusDetail,
     next.updatedAt,
     next.id,
   );
@@ -218,6 +269,7 @@ function fromRow(row: Record<string, unknown>): BillingOrder {
     id: String(row.id),
     accountId: Number(row.account_id),
     plan: String(row.plan) as PaidPlan,
+    kind: row.kind === 'renewal' ? 'renewal' : 'initial',
     amountCents: Number(row.amount_cents),
     serverName: String(row.server_name),
     serverSlug: String(row.server_slug),
@@ -227,6 +279,11 @@ function fromRow(row: Record<string, unknown>): BillingOrder {
     paymentId: String(row.payment_id ?? ''),
     serverId: row.server_id === null ? null : Number(row.server_id),
     lastError: String(row.last_error ?? ''),
+    paidAt: row.paid_at === null || row.paid_at === undefined ? null : Number(row.paid_at),
+    expiresAt: row.expires_at === null || row.expires_at === undefined ? null : Number(row.expires_at),
+    paymentMethodId: String(row.payment_method_id ?? ''),
+    paymentTypeId: String(row.payment_type_id ?? ''),
+    statusDetail: String(row.status_detail ?? ''),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };

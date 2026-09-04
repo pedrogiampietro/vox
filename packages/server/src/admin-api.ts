@@ -21,12 +21,15 @@ import type { StoredBotConfig } from './persistence.js';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { botConfigFromEnv } from '../../bot/src/bot.js';
 import {
+  BILLING_PERIOD_MS,
   billingPlans,
   createMercadoPagoPreference,
   createOrder,
+  findLatestApprovedOrderForServer,
   findOrder,
   getBillingPlan,
   getMercadoPagoPayment,
+  listOrders,
   updateOrder,
   validWebhookSignature,
   type BillingOrder,
@@ -137,6 +140,11 @@ export class AdminApi {
 
     if (path === '/api/account/checkout' && method === 'POST') {
       return this.createAccountCheckout(req, res, session);
+    }
+
+    const renewalMatch = /^\/api\/account\/servers\/(\d+)\/renew$/.exec(path);
+    if (renewalMatch && method === 'POST') {
+      return this.createAccountRenewal(res, session, Number(renewalMatch[1]));
     }
 
     const orderMatch = /^\/api\/account\/orders\/([a-z0-9-]+)$/.exec(path);
@@ -495,6 +503,47 @@ export class AdminApi {
     }
   }
 
+  private async createAccountRenewal(
+    res: ServerResponse,
+    session: { ownerId: number | null },
+    serverId: number,
+  ): Promise<void> {
+    if (session.ownerId === null) return send(res, 403, { error: 'somente contas de cliente podem renovar' });
+    const hub = this.registry.get(serverId);
+    if (!hub || hub.settings.ownerId !== session.ownerId) {
+      return send(res, 404, { error: 'servidor inexistente' });
+    }
+    const previous = findLatestApprovedOrderForServer(session.ownerId, serverId);
+    if (!previous) return send(res, 400, { error: 'este servidor ainda não possui uma contratação paga' });
+    const plan = getBillingPlan(previous.plan);
+    if (!plan || !plan.enabled) return send(res, 503, { error: 'este plano ainda não está disponível para renovação' });
+    const account = findAccountById(session.ownerId);
+    if (!account) return send(res, 403, { error: 'conta inexistente' });
+    const order = createOrder({
+      accountId: session.ownerId,
+      plan: plan.key,
+      kind: 'renewal',
+      amountCents: plan.priceCents,
+      serverName: hub.settings.name,
+      serverSlug: hub.settings.slug,
+      serverPassword: hub.settings.password,
+      serverId,
+    });
+    try {
+      const preference = await createMercadoPagoPreference(order, account.email);
+      return send(res, 201, {
+        orderId: order.id,
+        kind: order.kind,
+        status: order.status,
+        amountCents: order.amountCents,
+        initPoint: preference.initPoint,
+      });
+    } catch (error) {
+      updateOrder(order.id, { status: 'failed', lastError: error instanceof Error ? error.message : 'erro ao criar preferência' });
+      return send(res, 502, { error: error instanceof Error ? error.message : 'não foi possível iniciar a renovação' });
+    }
+  }
+
   private accountOrder(res: ServerResponse, session: { ownerId: number | null }, id: string): void {
     if (session.ownerId === null) return void send(res, 403, { error: 'somente contas de cliente podem consultar pedidos' });
     const order = findOrder(id);
@@ -527,14 +576,63 @@ export class AdminApi {
     if (this.processingOrders.has(order.id)) return send(res, 200, { ok: true });
     this.processingOrders.add(order.id);
     try {
+      const paymentId = String(payment.id ?? dataId);
+      const paymentMethodId = payment.payment_method_id ?? '';
+      const paymentTypeId = payment.payment_type_id ?? '';
+      const statusDetail = payment.status_detail ?? '';
       if (payment.currency_id !== 'BRL' || Math.round(Number(payment.transaction_amount) * 100) !== order.amountCents) {
-        updateOrder(order.id, { status: 'failed', paymentId: String(payment.id ?? dataId), lastError: 'valor ou moeda do pagamento não conferem' });
+        updateOrder(order.id, {
+          status: 'failed',
+          paymentId,
+          paymentMethodId,
+          paymentTypeId,
+          statusDetail,
+          lastError: 'valor ou moeda do pagamento não conferem',
+        });
         return send(res, 200, { ok: true });
       }
-      const paymentId = String(payment.id ?? dataId);
       if (payment.status !== 'approved') {
         const terminal = payment.status === 'rejected' || payment.status === 'cancelled' || payment.status === 'refunded' || payment.status === 'charged_back';
-        updateOrder(order.id, { status: terminal ? 'failed' : 'pending', paymentId, lastError: terminal ? `pagamento ${payment.status}` : '' });
+        updateOrder(order.id, {
+          status: terminal ? 'failed' : 'pending',
+          paymentId,
+          paymentMethodId,
+          paymentTypeId,
+          statusDetail,
+          lastError: terminal ? `pagamento ${payment.status}` : '',
+        });
+        return send(res, 200, { ok: true });
+      }
+      const paidAt = paymentTimestamp(payment.date_approved) ?? Date.now();
+      if (order.kind === 'renewal' && order.serverId !== null) {
+        const hub = this.registry.get(order.serverId);
+        if (!hub || hub.settings.ownerId !== order.accountId) {
+          updateOrder(order.id, {
+            status: 'failed',
+            paymentId,
+            paidAt,
+            paymentMethodId,
+            paymentTypeId,
+            statusDetail,
+            lastError: 'servidor da renovação não foi encontrado',
+          });
+          return send(res, 200, { ok: true });
+        }
+        const previous = findLatestApprovedOrderForServer(order.accountId, order.serverId);
+        const previousExpiry = previous?.expiresAt ?? 0;
+        const expiresAt = Math.max(previousExpiry, paidAt) + BILLING_PERIOD_MS;
+        updateOrder(order.id, {
+          status: 'approved',
+          paymentId,
+          paidAt,
+          expiresAt,
+          paymentMethodId,
+          paymentTypeId,
+          statusDetail,
+          lastError: '',
+        });
+        this.broadcastState();
+        console.log(`[vox] renovação aprovada: pedido ${order.id}, servidor ${order.serverId}`);
         return send(res, 200, { ok: true });
       }
       const plan = getBillingPlan(order.plan);
@@ -555,7 +653,17 @@ export class AdminApi {
         applyBotConfig(hub);
         this.registry.scheduleSave();
       }
-      updateOrder(order.id, { status: 'approved', paymentId, serverId: hub.id, lastError: '' });
+      updateOrder(order.id, {
+        status: 'approved',
+        paymentId,
+        serverId: hub.id,
+        paidAt,
+        expiresAt: paidAt + BILLING_PERIOD_MS,
+        paymentMethodId,
+        paymentTypeId,
+        statusDetail,
+        lastError: '',
+      });
       this.broadcastState();
       console.log(`[vox] pagamento aprovado: pedido ${order.id}, servidor ${hub.id}`);
       return send(res, 200, { ok: true });
@@ -609,6 +717,9 @@ export class AdminApi {
     return {
       account: account ? publicAccount(account) : null,
       servers,
+      orders: session.ownerId === null
+        ? []
+        : listOrders(session.ownerId).map((order) => publicOrder(order, this.registry)),
       totals: {
         clients: servers.reduce((total, server) => total + server.clients, 0),
         servers: servers.length,
@@ -641,10 +752,16 @@ function publicOrder(order: BillingOrder, registry: Registry): unknown {
   return {
     id: order.id,
     plan: order.plan,
+    kind: order.kind,
     amountCents: order.amountCents,
     status: order.status,
     preferenceId: order.preferenceId,
     paymentId: order.paymentId,
+    paidAt: order.paidAt,
+    expiresAt: order.expiresAt,
+    paymentMethodId: order.paymentMethodId,
+    paymentTypeId: order.paymentTypeId,
+    statusDetail: order.statusDetail,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     server: hub
@@ -658,6 +775,12 @@ function publicOrder(order: BillingOrder, registry: Registry): unknown {
       : undefined,
     adminUrl: hub ? `/admin?server=${hub.id}` : undefined,
   };
+}
+
+function paymentTimestamp(value: string | undefined): number | null {
+  if (!value) return null;
+  const stamp = Date.parse(value);
+  return Number.isFinite(stamp) ? stamp : null;
 }
 
 // -------------------------------------------------------------- utilidades --

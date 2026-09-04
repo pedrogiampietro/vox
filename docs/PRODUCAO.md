@@ -209,9 +209,11 @@ servidor associado.
 
 Uma conta pode criar vários servidores independentes. Cada contratação paga
 gera um novo servidor vinculado à mesma conta, com sua própria capacidade,
-channels e configuração de bot. Upgrades de um servidor existente e renovação
-recorrente ainda são etapas futuras; por enquanto, uma nova compra representa
-uma nova instância.
+channels e configuração de bot. Cada pagamento aprovado guarda o método, a
+data do pagamento e um ciclo de 30 dias. A renovação é feita no painel do
+cliente e prolonga o vencimento do mesmo servidor, sem criar outra instância.
+A expiração é informativa no painel por enquanto; a suspensão automática do
+servidor será uma etapa posterior.
 
 Para diagnosticar uma notificação, use o painel de Webhooks do Mercado Pago e
 os logs do serviço. Nunca registre o Access Token, a assinatura secreta ou a

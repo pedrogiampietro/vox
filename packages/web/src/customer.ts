@@ -13,9 +13,25 @@ type ServerSummary = {
   channels: number;
   protected: boolean;
 };
+type AccountOrder = {
+  id: string;
+  plan: string;
+  kind: 'initial' | 'renewal';
+  amountCents: number;
+  status: 'pending' | 'approved' | 'failed';
+  paidAt: number | null;
+  expiresAt: number | null;
+  paymentMethodId: string;
+  paymentTypeId: string;
+  statusDetail: string;
+  createdAt: number;
+  updatedAt: number;
+  server?: { id: number; slug: string; name: string; maxClients: number; url: string };
+};
 type Overview = {
   account: Account | null;
   servers: ServerSummary[];
+  orders: AccountOrder[];
   totals: { clients: number; servers: number };
   role: 'master' | 'owner';
 };
@@ -27,6 +43,7 @@ let mode: 'login' | 'register' = 'login';
 let notice = '';
 let busy = false;
 let overview: Overview | null = null;
+let renewingServerId = 0;
 
 if (root) {
   render();
@@ -137,7 +154,9 @@ function renderDashboard(): HTMLElement {
   addServer.textContent = 'contratar outro servidor';
   headingActions.append(addServer, logout);
   headingRow.append(headingCopy, headingActions);
-  shell.append(headingRow, renderStats(), renderDashboardGrid());
+  shell.append(headingRow);
+  if (notice) shell.append(text('p', 'customer-dashboard-notice', notice));
+  shell.append(renderStats(), renderDashboardGrid());
   page.append(shell, renderAuthFooter());
   return page;
 }
@@ -186,6 +205,21 @@ function renderServer(server: ServerSummary): HTMLElement {
   const item = $('article', 'customer-server');
   const copy = $('div', 'customer-server-copy');
   copy.append(text('span', 'customer-server-signal', '● online'), text('h3', '', server.name), text('span', 'mono', `${server.slug}.v0x.online · ${server.channels} channels`));
+  const paidOrder = latestPaidOrder(server.id);
+  const billing = $('div', 'customer-server-billing');
+  if (paidOrder) {
+    const days = daysRemaining(paidOrder.expiresAt);
+    billing.append(
+      text('span', 'customer-server-plan', `${planLabel(paidOrder.plan)} · ${formatCents(paidOrder.amountCents)}`),
+      text('span', 'customer-server-payment', `${paymentLabel(paidOrder)} · pago em ${formatDate(paidOrder.paidAt)}`),
+      text('span', `customer-server-expiry${days <= 0 ? ' expired' : ''}`, days > 0
+        ? `vence em ${formatDate(paidOrder.expiresAt)} · ${days} dias restantes`
+        : `expirado em ${formatDate(paidOrder.expiresAt)} · renove para continuar`),
+    );
+  } else {
+    billing.append(text('span', 'customer-server-plan', 'plano comunidade · sem cobrança'));
+  }
+  copy.append(billing);
   const occupancy = text('strong', 'customer-server-occupancy', `${server.clients}/${server.maxClients || '∞'}`);
   const actions = $('div', 'customer-server-actions');
   const open = $('a', 'customer-button customer-button-primary');
@@ -195,6 +229,14 @@ function renderServer(server: ServerSummary): HTMLElement {
   manage.href = `/admin?server=${server.id}`;
   manage.textContent = 'configurar';
   actions.append(open, manage);
+  if (paidOrder) {
+    const renew = $('button', 'customer-button customer-button-outline');
+    renew.type = 'button';
+    renew.disabled = renewingServerId === server.id;
+    renew.textContent = renewingServerId === server.id ? 'abrindo pagamento…' : 'renovar';
+    renew.addEventListener('click', () => { void renewServer(server.id); });
+    actions.append(renew);
+  }
   item.append(copy, occupancy, actions);
   return item;
 }
@@ -242,11 +284,32 @@ function renderDownloadCard(): HTMLElement {
 }
 
 function renderInvoicesCard(): HTMLElement {
-  const card = dashboardCard('faturas', 'Histórico financeiro.', 'half');
-  const empty = $('div', 'customer-empty customer-empty-compact');
-  empty.append(text('strong', '', 'Nenhuma fatura disponível'), text('p', '', 'As faturas aparecerão aqui quando o checkout e a assinatura estiverem ativados.'));
-  card.append(empty);
+  const card = dashboardCard('faturas', 'Histórico financeiro.', 'wide');
+  const orders = overview?.orders ?? [];
+  if (orders.length === 0) {
+    const empty = $('div', 'customer-empty customer-empty-compact');
+    empty.append(text('strong', '', 'Nenhuma fatura disponível'), text('p', '', 'As faturas aparecerão aqui quando houver uma contratação.'));
+    card.append(empty);
+    return card;
+  }
+  const list = $('div', 'customer-order-list');
+  for (const order of orders.slice(0, 8)) list.append(renderOrder(order));
+  card.append(list);
   return card;
+}
+
+function renderOrder(order: AccountOrder): HTMLElement {
+  const item = $('article', 'customer-order');
+  const copy = $('div', 'customer-order-copy');
+  const serverName = order.server?.name ? ` · ${order.server.name}` : '';
+  copy.append(
+    text('strong', 'customer-order-title', `${order.kind === 'renewal' ? 'Renovação' : 'Contratação'} · ${planLabel(order.plan)}${serverName}`),
+    text('span', 'customer-order-meta', `${orderStatusLabel(order.status)} · ${paymentLabel(order)} · criado em ${formatDate(order.createdAt)}`),
+  );
+  if (order.paidAt) copy.append(text('span', 'customer-order-meta', `pago em ${formatDate(order.paidAt)} · válido até ${formatDate(order.expiresAt)}`));
+  const amount = text('strong', `customer-order-amount customer-order-status-${order.status}`, formatCents(order.amountCents));
+  item.append(copy, amount);
+  return item;
 }
 
 function dashboardCard(label: string, title: string, size: 'wide' | 'half'): HTMLElement {
@@ -346,9 +409,74 @@ function logoutAccount(): void {
   sessionStorage.removeItem(TOKEN_KEY);
   token = '';
   overview = null;
+  renewingServerId = 0;
   mode = 'login';
   notice = '';
   render();
+}
+
+function latestPaidOrder(serverId: number): AccountOrder | undefined {
+  return (overview?.orders ?? [])
+    .filter((order) => order.status === 'approved' && order.server?.id === serverId)
+    .sort((left, right) => (right.expiresAt ?? 0) - (left.expiresAt ?? 0))[0];
+}
+
+async function renewServer(serverId: number): Promise<void> {
+  if (renewingServerId) return;
+  renewingServerId = serverId;
+  notice = '';
+  render();
+  try {
+    const response = await fetch(`/api/account/servers/${serverId}/renew`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const body = await response.json() as { initPoint?: string; error?: string };
+    if (!response.ok || !body.initPoint) throw new Error(body.error || 'não foi possível gerar a renovação');
+    window.location.assign(body.initPoint);
+  } catch (error) {
+    renewingServerId = 0;
+    notice = error instanceof Error ? error.message : String(error);
+    render();
+  }
+}
+
+function formatCents(value: number): string {
+  return (value / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function formatDate(value: number | null): string {
+  return value ? new Date(value).toLocaleDateString('pt-BR') : '—';
+}
+
+function daysRemaining(value: number | null): number {
+  return value ? Math.ceil((value - Date.now()) / (24 * 60 * 60 * 1000)) : 0;
+}
+
+function planLabel(plan: string): string {
+  const labels: Record<string, string> = {
+    '50-basic': 'Vox 50 · sem bot',
+    '50-bot': 'Vox 50 · Rubinot',
+    '100-basic': 'Vox 100 · sem bot',
+    '100-bot': 'Vox 100 · Rubinot',
+    '254-basic': 'Vox 254 · sem bot',
+    '254-bot': 'Vox 254 · Rubinot',
+    community: 'Vox Comunidade',
+  };
+  return labels[plan] ?? plan;
+}
+
+function paymentLabel(order: AccountOrder): string {
+  if (order.paymentTypeId === 'bank_transfer' || order.paymentMethodId === 'pix') return 'Pix';
+  if (order.paymentTypeId === 'credit_card' || order.paymentMethodId === 'credit_card') return 'Cartão';
+  if (order.paymentTypeId || order.paymentMethodId) return order.paymentTypeId || order.paymentMethodId;
+  return 'Mercado Pago';
+}
+
+function orderStatusLabel(status: AccountOrder['status']): string {
+  if (status === 'approved') return 'aprovado';
+  if (status === 'failed') return 'falhou';
+  return 'aguardando pagamento';
 }
 
 function serverUrl(server: ServerSummary): string {

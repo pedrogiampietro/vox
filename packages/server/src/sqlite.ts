@@ -59,6 +59,29 @@ database.exec(`
   }
 }
 
+// Dados comerciais adicionados depois que o checkout inicial entrou em produção.
+// As colunas novas são opcionais para preservar pedidos antigos já gravados.
+{
+  const cols = database.prepare("PRAGMA table_info('payment_orders')").all() as { name: string }[];
+  const has = new Set(cols.map((c) => c.name));
+  if (!has.has('kind')) database.exec("ALTER TABLE payment_orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'initial'");
+  if (!has.has('paid_at')) database.exec('ALTER TABLE payment_orders ADD COLUMN paid_at INTEGER');
+  if (!has.has('expires_at')) database.exec('ALTER TABLE payment_orders ADD COLUMN expires_at INTEGER');
+  if (!has.has('payment_method_id')) database.exec("ALTER TABLE payment_orders ADD COLUMN payment_method_id TEXT NOT NULL DEFAULT ''");
+  if (!has.has('payment_type_id')) database.exec("ALTER TABLE payment_orders ADD COLUMN payment_type_id TEXT NOT NULL DEFAULT ''");
+  if (!has.has('status_detail')) database.exec("ALTER TABLE payment_orders ADD COLUMN status_detail TEXT NOT NULL DEFAULT ''");
+
+  // Pedidos aprovados antes da migração já têm updated_at no momento da
+  // confirmação. Isso permite mostrar um vencimento coerente imediatamente;
+  // pagamentos novos passam a usar a data_approved retornada pelo Mercado Pago.
+  database.prepare(`
+    UPDATE payment_orders
+    SET paid_at = updated_at,
+        expires_at = updated_at + 2592000000
+    WHERE status = 'approved' AND paid_at IS NULL
+  `).run();
+}
+
 export function exportJson(name: string, value: unknown): void {
   const file = join(config.dataDir, name);
   const tmp = `${file}.tmp`;
