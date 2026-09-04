@@ -32,7 +32,7 @@ const KEEP_PER_SERVER = 2_000;
 /** Registros sem servidor (login, conta, checkout) tem o proprio teto. */
 const KEEP_GLOBAL = 5_000;
 
-export type AuditActor = 'master' | 'owner' | 'anon';
+export type AuditActor = 'master' | 'owner' | 'anon' | 'system';
 
 export interface AuditEntry {
   id: number;
@@ -118,6 +118,10 @@ export function list(query: AuditQuery = {}): AuditEntry[] {
   return rows.map(fromRow);
 }
 
+function isActor(value: unknown): value is AuditActor {
+  return value === 'master' || value === 'owner' || value === 'anon' || value === 'system';
+}
+
 function fromRow(row: Record<string, unknown>): AuditEntry {
   let detail: Record<string, unknown> = {};
   try {
@@ -131,7 +135,7 @@ function fromRow(row: Record<string, unknown>): AuditEntry {
   return {
     id: Number(row.id),
     at: Number(row.at),
-    actor: row.actor === 'master' || row.actor === 'owner' ? row.actor : 'anon',
+    actor: isActor(row.actor) ? row.actor : 'anon',
     actorAccountId: row.actor_account_id === null ? null : Number(row.actor_account_id),
     ip: String(row.ip ?? ''),
     action: String(row.action ?? ''),

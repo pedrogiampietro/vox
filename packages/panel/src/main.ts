@@ -40,7 +40,7 @@ type AdminTab = 'overview' | 'server' | 'users' | 'channels' | 'bans' | 'bot' | 
 type AuditEntry = {
   id: number;
   at: number;
-  actor: 'master' | 'owner' | 'anon';
+  actor: 'master' | 'owner' | 'anon' | 'system';
   actorAccountId: number | null;
   ip: string;
   action: string;
@@ -487,6 +487,7 @@ const AUDIT_LABELS: Record<string, string> = {
   'bot.restart': 'bot reiniciado',
   'bot.test': 'alerta de teste',
   'ticket.status': 'status de ticket',
+  'system.backup': 'backup do banco',
 };
 
 /** Acoes que merecem destaque visual quando aparecem na lista. */
@@ -513,8 +514,8 @@ function renderAudit(): HTMLElement {
     const row = $('div', `rowline audit-row${AUDIT_ALERTS.has(entry.action) ? ' audit-alert' : ''}`);
     const info = $('div', '');
     info.append(text('strong', '', AUDIT_LABELS[entry.action] ?? entry.action));
-    const who = entry.actor === 'master'
-      ? 'master'
+    const who = entry.actor === 'master' || entry.actor === 'system'
+      ? entry.actor
       : entry.actorAccountId === null ? 'anônimo' : `conta #${entry.actorAccountId}`;
     const detail = auditDetail(entry.detail);
     const where = entry.serverId === null ? 'conta' : serverLabel(entry.serverId);

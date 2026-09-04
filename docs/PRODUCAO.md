@@ -309,6 +309,56 @@ relatório agora usa `schema: 2` e inclui `voiceRttMs`, `voiceRegion` e
 `voiceQuality` no início e no fim da gravação, permitindo comparar a qualidade
 do áudio com a rota efetivamente usada.
 
+## Backup automático
+
+O `vox.service` tira um snapshot do banco sozinho: um 30 segundos depois de
+subir — o que fixa o estado anterior a cada deploy, já que o deploy reinicia o
+serviço — e depois a cada `VOX_BACKUP_INTERVAL_HOURS` (padrão 24).
+
+```ini
+VOX_BACKUP_DIR=/opt/vox/data/backups   # padrão: <VOX_DATA_DIR>/backups
+VOX_BACKUP_INTERVAL_HOURS=24           # 0 desliga
+VOX_BACKUP_KEEP=14                     # snapshots mantidos
+```
+
+O snapshot sai por `VACUUM INTO`, e isso importa: o SQLite roda em WAL, então
+quase tudo escrito desde o último checkpoint vive em `vox.db-wal`, não em
+`vox.db`. **Copiar apenas `vox.db` com o serviço no ar gera um arquivo onde as
+tabelas nem existem.** O `VACUUM INTO` faz o próprio SQLite escrever um banco
+novo, consistente e já compactado, sem parar ninguém.
+
+Cada snapshot aparece no log e na aba Auditoria como `backup do banco`:
+
+```bash
+journalctl -u vox.service | grep '\[backup\]'
+ls -lh /opt/vox/data/backups
+```
+
+Para restaurar, pare o serviço e ponha o snapshot no lugar do banco — os
+arquivos `-wal` e `-shm` antigos precisam sair junto, senão o SQLite tenta
+aplicá-los sobre um banco que não os conhece:
+
+```bash
+systemctl stop vox.service
+cd /opt/vox/data
+mv vox.db vox.db.quebrado; rm -f vox.db-wal vox.db-shm
+cp backups/vox-20260904-061200.db vox.db
+systemctl start vox.service
+```
+
+O backup cobre **somente o banco**. `.env` e os certificados do Caddy ficam de
+fora de propósito: carregam segredo, não mudam sozinhos, e copiá-los para um
+diretório de rotina transformaria o backup em alvo. O passo a passo deles está
+em [Migração para outra VPS](#migração-para-outra-vps).
+
+Os snapshots ficam na mesma máquina, então eles protegem contra erro de deploy
+e corrupção — não contra perder a VPS. Para isso, sincronize o diretório para
+fora, por exemplo com um `rsync` diário a partir de outra máquina:
+
+```bash
+rsync -az --delete root@IP_DA_VPS:/opt/vox/data/backups/ ~/vox-backups/
+```
+
 ## Auditoria e limites de requisição
 
 Toda ação administrativa fica gravada em `audit_log`, na mesma base SQLite do

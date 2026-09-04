@@ -21,6 +21,7 @@ import { startVoiceTransport, type VoiceEndpoint } from './transport-wt.js';
 import { RubinotBot, botConfigFromEnv } from '../../bot/src/bot.js';
 import { shutdownRubinotClient } from '../../bot/src/scrapers/rubinot.js';
 import { closeBrowserRuntime } from '../../bot/src/scrapers/browser.js';
+import { startBackups } from './backup.js';
 import { closeDeusotBrowser } from '../../bot/src/scrapers/deusot.js';
 import { closeDeusoldBrowser } from '../../bot/src/scrapers/deusold.js';
 import { providerFor } from './bot-ctrl.js';
@@ -178,6 +179,7 @@ const sweeper = setInterval(() => registry.sweep(Date.now()), 5_000);
 /** Presenca no painel: reenvia o estado mesmo sem ninguem clicar em nada. */
 const pulse = setInterval(() => admin.broadcastState(), 3_000);
 pulse.unref();
+const stopBackups = startBackups();
 
 /**
  * WebTransport e melhoria, nao requisito: se faltar certificado ou modulo
@@ -303,6 +305,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     void shutdownRubinotClient();
     clearInterval(sweeper);
     clearInterval(pulse);
+    stopBackups();
     void voice?.stop();
     registry.saveNow();
     void Promise.all([closeDeusotBrowser(), closeDeusoldBrowser()]).then(() => closeBrowserRuntime()).finally(() => {
