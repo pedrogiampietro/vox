@@ -1385,7 +1385,10 @@ export class Hub {
   private applyBotControl(s: Session, action: BotControlAction, name: string): void {
     switch (action) {
       case BotControlAction.Start:
-        startBot(this);
+        {
+          const error = startBot(this);
+          if (error) return this.sendBotResult(s, false, error);
+        }
         this.deps.onChanged();
         break;
       case BotControlAction.Stop:

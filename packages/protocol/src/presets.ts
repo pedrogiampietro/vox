@@ -177,6 +177,7 @@ export const DEUSOT_PRESET: ServerPreset = {
   channels: RUBINOT_CHANNELS,
   respawns: RESPAWN_CATALOG,
   bot: { provider: 'deusot', channelName: 'bot' },
+  groups: RUBINOT_GROUP_DEFS,
 };
 
 // -------------------------------------------------------------------- vazio --

@@ -19,7 +19,6 @@ import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
 import { applyBotConfig, providerFor, startBot, stopBot, testBot } from './bot-ctrl.js';
-import { botConfigFromEnv } from '../../bot/src/bot.js';
 import {
   BILLING_PERIOD_MS,
   billingPlans,
@@ -333,7 +332,8 @@ export class AdminApi {
     }
 
     if (action === '/bot' && rest === 'start' && method === 'POST') {
-      startBot(hub);
+      const error = startBot(hub);
+      if (error) return send(res, 400, { error });
       this.registry.scheduleSave();
       hub.broadcastBotState();
       return send(res, 200, { ok: true });
@@ -456,6 +456,7 @@ export class AdminApi {
       password,
       maxClients: 10,
       motd: 'Bem-vindo ao seu servidor Vox.',
+      presetId: 'rubinot',
     });
     this.broadcastState();
     return send(res, 201, {
@@ -650,12 +651,13 @@ export class AdminApi {
         password: order.serverPassword,
         maxClients: plan?.slots ?? 10,
         motd: 'Bem-vindo ao seu servidor Vox.',
+        presetId: 'rubinot',
       });
       if (plan?.botEnabled) {
-        const envBot = botConfigFromEnv();
-        hub.botConfig = envBot && !hub.botConfig.world
-          ? { ...envBot, enabled: true }
-          : { ...hub.botConfig, enabled: true };
+        // A configuracao BOT_* da VPS pertence ao servidor principal e nunca
+        // deve vazar para um novo cliente. O owner escolhe o world e as guilds
+        // no proprio painel; o canal e o preset ja vieram do Registry.
+        hub.botConfig = { ...hub.botConfig, enabled: true };
         hub.ensureChannel(hub.botConfig.channelName || 'bot');
         applyBotConfig(hub);
         this.registry.scheduleSave();

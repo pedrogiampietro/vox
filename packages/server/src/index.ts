@@ -277,9 +277,12 @@ server.listen(config.port, config.host, () => {
   for (const hub of registry.list()) {
     const envCfg = botConfigFromEnv();
     const stored = hub.botConfig;
+    // BOT_* é o fallback legado do servidor principal. Nunca o copie para
+    // servidores de clientes, que podem ter o bot habilitado mas ainda sem
+    // world configurado no próprio painel.
     const cfg = stored.enabled && stored.world
       ? stored
-      : envCfg && !stored.world
+      : envCfg && hub.settings.ownerId === null && !stored.world
         ? envCfg
         : null;
     if (cfg && cfg.enabled && cfg.world) {

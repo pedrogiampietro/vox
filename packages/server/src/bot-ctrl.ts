@@ -57,12 +57,16 @@ export function applyBotConfig(hub: Hub): void {
   }
 }
 
-export function startBot(hub: Hub): void {
+export function startBot(hub: Hub): string | null {
+  const provider = hub.activePreset().bot.provider;
+  if (provider === 'none') return 'este preset não possui um provider de bot';
+  if (!hub.botConfig.world.trim()) return `informe o world do ${providerFor(hub).label} antes de ligar o bot`;
   hub.botConfig.enabled = true;
   if (!hub.rubinot) hub.rubinot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
   if (!hub.rubinot.isRunning) {
     void hub.rubinot.start().catch((err) => console.error('[bot] falha:', err));
   }
+  return null;
 }
 
 export function stopBot(hub: Hub): void {
