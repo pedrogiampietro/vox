@@ -86,4 +86,9 @@ jobs:
 
           npm run build
           systemctl restart vox.service
+          if systemctl is-active --quiet vox-music-jukebox.service; then
+            systemctl restart vox-music-jukebox.service
+          else
+            echo 'Jukebox nao instalado ou inativo; nenhuma reinicializacao necessaria.'
+          fi
           REMOTE

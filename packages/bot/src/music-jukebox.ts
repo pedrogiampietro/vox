@@ -19,8 +19,9 @@ const address = process.env['VOX_BOT_ADDRESS'] || 'ws://127.0.0.1:9987/vox';
 const password = process.env['VOX_BOT_PASSWORD'] || '';
 const botChannelName = process.env['VOX_BOT_CHANNEL'] || 'bot';
 const ffmpegBin = process.env['VOX_FFMPEG'] || 'ffmpeg';
-const ytdlpBin = process.env['VOX_YTDLP'] || 'yt-dlp';
-const ytdlpExtraArgs = (process.env['VOX_YTDLP_ARGS'] || '').trim();
+// O yt-dlp é usado somente como extrator do SoundCloud. O YouTube não faz
+// parte do jukebox e não há dependência de cookies ou login dessa plataforma.
+const extractorBin = process.env['VOX_YTDLP'] || 'yt-dlp';
 const bitrate = process.env['VOX_BOT_BITRATE'] || '96k';
 /** Ganho aplicado ao audio antes de encodar. 0.25 = -12dB, padrao seguro. */
 const volumeGain = Number(process.env['VOX_BOT_VOLUME'] || '0.25');
@@ -35,9 +36,9 @@ interface TrackRequest {
 
 interface ResolvedTrack {
   /** 'direct' = URL/arquivo acessivel diretamente pelo ffmpeg. */
-  /** 'ytdlp' = precisa passar por yt-dlp (cookies, JS challenge, etc.). */
-  source: 'direct' | 'ytdlp';
-  /** URL ou path (direct) ou query original (ytdlp). */
+  /** 'extractor' = precisa passar pelo extrator do SoundCloud. */
+  source: 'direct' | 'extractor';
+  /** URL ou path (direct) ou query original (extractor). */
   input: string;
   title: string;
 }
@@ -144,11 +145,6 @@ async function pumpQueue(): Promise<void> {
     } else {
       announce(friendly);
     }
-    // Cookie-check: se caiu bot check do YouTube, avisa TAMBEM no canal `bot`
-    // pra o dono ver mesmo se ninguem estava na aba.
-    if (isCookieExpiredError(raw)) {
-      warnCookiesExpired();
-    }
     current = null;
     void pumpQueue();
     return;
@@ -181,32 +177,11 @@ function announce(text: string): void {
   controller.send({ t: Op.ChatSend, scope: ChatScope.Channel, targetId: 0, text });
 }
 
-/** Detecta o erro classico "Sign in to confirm you're not a bot". */
-function isCookieExpiredError(msg: string): boolean {
-  const lower = msg.toLowerCase();
-  return lower.includes("sign in to confirm you") ||
-    lower.includes('use --cookies-from-browser or --cookies') ||
-    lower.includes('cookies') && lower.includes('expired');
-}
-
 function friendlyResolveError(query: string, raw: string): string {
-  if (isCookieExpiredError(raw)) {
-    return `nao consegui resolver "${query}": cookies do YouTube expiraram. avise o owner pra atualizar /root/youtube_cookies.txt na VPS.`;
-  }
   return `nao consegui resolver "${query}": ${raw}`;
 }
 
-let lastCookieWarnAt = 0;
-function warnCookiesExpired(): void {
-  const now = Date.now();
-  // 1 aviso por hora no canal — evita spam.
-  if (now - lastCookieWarnAt < 60 * 60 * 1000) return;
-  lastCookieWarnAt = now;
-  announce('⚠ cookies do YouTube expiraram. jukebox nao vai resolver musica ate o owner atualizar /root/youtube_cookies.txt na VPS e rodar `systemctl restart vox-music-jukebox`.');
-  console.error('[jukebox] YouTube bot check hit — cookies precisam ser atualizados');
-}
-
-/** Log de yt-dlp/ffmpeg vem em spam de linhas repetitivas. Deixa so o essencial. */
+/** Log do extrator/ffmpeg vem em spam de linhas repetitivas. Deixa so o essencial. */
 function trimError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   const lines = raw.split(/\r?\n/).filter((l) => l.trim());
@@ -215,94 +190,84 @@ function trimError(err: unknown): string {
 }
 
 /**
- * Ordem de tentativa dos motores de busca. SoundCloud vem primeiro por nao
- * ter bot-check nem cookies: entrega sem manutencao. YouTube fica como
- * fallback pra cobrir catalogo. Setar VOX_MUSIC_SOURCES=yt so pra forcar.
+ * O SoundCloud é a única fonte de busca do jukebox. O extrator ainda é o
+ * binário yt-dlp por compatibilidade, mas não recebe cookies do YouTube.
  */
-const searchSources: SearchSource[] = (process.env['VOX_MUSIC_SOURCES'] || 'sc,yt')
-  .split(',')
-  .map((s) => s.trim().toLowerCase())
-  .filter((s): s is SearchSource => s === 'sc' || s === 'yt');
-
-type SearchSource = 'sc' | 'yt';
-
-function searchPrefix(source: SearchSource): string {
-  return source === 'sc' ? 'scsearch1:' : 'ytsearch1:';
-}
+const soundCloudSearchPrefix = 'scsearch5:';
 
 async function resolveTrack(query: string): Promise<ResolvedTrack> {
+  if (isYouTubeUrl(query)) {
+    throw new Error('links do YouTube não são suportados; use o SoundCloud');
+  }
+
   // Arquivo local ou URL de arquivo (mp3/ogg/opus/m4a/wav/flac) vao direto pro
-  // ffmpeg — nao precisa de yt-dlp.
+  // ffmpeg — nao precisam do extrator.
   if (looksDirectAudioFile(query)) return { source: 'direct', input: query, title: query };
 
-  // URL de site (youtube, soundcloud, bandcamp, etc.): passa para o yt-dlp
-  // sem prefixo de busca. yt-dlp identifica o extractor pelo dominio.
+  // Links de página aceitos: somente SoundCloud.
   if (/^https?:\/\//i.test(query)) {
+    if (!isSoundCloudUrl(query)) throw new Error('link não suportado; use um link do SoundCloud ou pesquise pelo nome');
     return await resolveViaUrl(query);
   }
 
-  // Busca por texto: tenta cada fonte na ordem configurada.
-  const attempts: string[] = [];
-  for (const src of searchSources) {
-    try {
-      return await resolveViaSource(src, query);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const short = trimError(err);
-      attempts.push(`${src}: ${short}`);
-      console.error(`[jukebox] source ${src} falhou: ${msg.slice(0, 240)}`);
-    }
+  try {
+    return await resolveViaSoundCloud(query);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[jukebox] SoundCloud falhou: ${msg.slice(0, 240)}`);
+    throw new Error(`SoundCloud: ${trimError(err)}`);
   }
-  // Se caiu tudo, joga um erro que enumera cada tentativa — o
-  // friendlyResolveError so ativa a mensagem de cookie se for esse mesmo o
-  // motivo. Senao, mostra "sc: <erro>; yt: <erro>".
-  throw new Error(attempts.join(' | ') || 'todas as fontes de musica falharam');
 }
 
 async function resolveViaUrl(url: string): Promise<ResolvedTrack> {
-  const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
-  const lines = await runCapture(ytdlpBin, [
+  const lines = await runCapture(extractorBin, [
     '--no-playlist',
     '-f', 'bestaudio',
     '--print', '%(title)s',
-    ...extra,
     url,
   ]);
   const title = lines.map((l) => l.trim()).find(Boolean) || url;
-  return { source: 'ytdlp', input: url, title };
+  return { source: 'extractor', input: url, title };
 }
 
-async function resolveViaSource(source: SearchSource, query: string): Promise<ResolvedTrack> {
-  const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
-  const prefix = searchPrefix(source);
-  const lines = await runCapture(ytdlpBin, [
-    '--no-playlist',
-    '-f', 'bestaudio',
-    '--print', '%(title)s',
-    ...extra,
-    `${prefix}${query}`,
+async function resolveViaSoundCloud(query: string): Promise<ResolvedTrack> {
+  const lines = await runCapture(extractorBin, [
+    '--flat-playlist',
+    '--no-warnings',
+    '--print', '%(webpage_url)s\t%(title)s',
+    `${soundCloudSearchPrefix}${query}`,
   ]);
-  const title = lines.map((l) => l.trim()).find(Boolean) || query;
-  return { source: 'ytdlp', input: `${prefix}${query}`, title };
-}
+  const candidates = lines
+    .map((line) => {
+      const separator = line.indexOf('\t');
+      return separator < 0
+        ? { url: line.trim(), title: query }
+        : { url: line.slice(0, separator).trim(), title: line.slice(separator + 1).trim() || query };
+    })
+    .filter((candidate) => isSoundCloudUrl(candidate.url));
+  if (candidates.length === 0) throw new Error('nenhuma faixa encontrada no SoundCloud');
 
-/**
- * Split shell-ish "--flag valor --outra=x" preservando "aspas". Simples de
- * proposito — nao roda comando, so vira argv pro spawn.
- */
-function splitArgs(input: string): string[] {
-  const out: string[] = [];
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(input)) !== null) {
-    out.push(m[1] ?? m[2] ?? m[3] ?? '');
+  const failures: string[] = [];
+  for (const candidate of candidates) {
+    try {
+      await runCapture(extractorBin, [
+        '--no-playlist',
+        '--no-warnings',
+        '-f', 'bestaudio',
+        '--simulate',
+        '--print', '%(title)s',
+        candidate.url,
+      ]);
+      return { source: 'extractor', input: candidate.url, title: candidate.title };
+    } catch (err) {
+      failures.push(`${candidate.title}: ${trimError(err)}`);
+    }
   }
-  return out;
+  throw new Error(`nenhuma faixa reproduzível no SoundCloud${failures.length ? ` (${failures[0]})` : ''}`);
 }
 
 /**
  * Arquivo local ou URL diretamente reproduzivel por ffmpeg (mp3/ogg/opus/etc).
- * URL de pagina (youtube/soundcloud/etc) NAO conta — vai por yt-dlp.
  */
 function looksDirectAudioFile(value: string): boolean {
   const audioExt = /\.(mp3|ogg|opus|m4a|aac|wav|flac|webm|mp4)(\?|#|$)/i;
@@ -311,6 +276,14 @@ function looksDirectAudioFile(value: string): boolean {
   // Path que existe no disco.
   if (value.includes('/') || value.includes('\\')) return existsSync(value);
   return false;
+}
+
+function isYouTubeUrl(value: string): boolean {
+  return /^https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)\//i.test(value);
+}
+
+function isSoundCloudUrl(value: string): boolean {
+  return /^https?:\/\/(?:www\.|m\.|on\.)?soundcloud\.com\//i.test(value);
 }
 
 function runCapture(command: string, args: string[]): Promise<string[]> {
@@ -476,7 +449,7 @@ class MusicPlayer {
   private readonly demux = new OggOpusDemuxer((packet) => this.queue.push(packet));
   private queue: Uint8Array[] = [];
   private ffmpeg: ReturnType<typeof spawn> | null = null;
-  private ytdlp: ReturnType<typeof spawn> | null = null;
+  private extractor: ReturnType<typeof spawn> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private aloneWatch: ReturnType<typeof setInterval> | null = null;
   private aloneSince = 0;
@@ -492,30 +465,26 @@ class MusicPlayer {
   ) {}
 
   start(): void {
-    // Fluxo: yt-dlp (com cookies/JS runtime) -> ffmpeg (transcode) -> nos.
-    // Assim o ffmpeg nao fala com o googlevideo direto (sempre da 403 sem
-    // os headers/cookies certos), e nao precisamos armazenar URL caduca.
-    const usingYtdlp = this.track.source === 'ytdlp';
+    // Fluxo: extrator do SoundCloud -> ffmpeg (transcode) -> Vox.
+    const usingExtractor = this.track.source === 'extractor';
     let ffmpegInput = this.track.input;
 
-    if (usingYtdlp) {
-      const extra = ytdlpExtraArgs ? splitArgs(ytdlpExtraArgs) : [];
-      const ytdlp = spawn(ytdlpBin, [
+    if (usingExtractor) {
+      const extractor = spawn(extractorBin, [
         '--no-playlist',
         '-f', 'bestaudio',
         '-o', '-',
         '--no-warnings',
         '--quiet',
-        ...extra,
         this.track.input,
       ], { stdio: ['ignore', 'pipe', 'pipe'] });
-      this.ytdlp = ytdlp;
-      ytdlp.stderr.on('data', (chunk: Buffer) => {
+      this.extractor = extractor;
+      extractor.stderr.on('data', (chunk: Buffer) => {
         const text = chunk.toString().trim();
-        if (text) console.error(`[yt-dlp] ${text}`);
+        if (text) console.error(`[soundcloud] ${text}`);
       });
-      ytdlp.on('error', (err) => {
-        announce(`nao consegui iniciar yt-dlp: ${err.message}`);
+      extractor.on('error', (err) => {
+        announce(`nao consegui iniciar o extrator do SoundCloud: ${err.message}`);
         this.stop(false);
       });
       ffmpegInput = 'pipe:0';
@@ -523,8 +492,8 @@ class MusicPlayer {
 
     // Corrente de audio:
     //  - dynaudnorm: normaliza dinamicamente (deixa musicas em volume parecido);
-    //  - volume=<gain>: atenuacao final (musicas mixadas alto no YouTube facil
-    //    saturam Opus mesmo depois do dynaudnorm; -12dB deixa margem).
+    //  - volume=<gain>: atenuacao final (musicas mixadas alto facil saturam
+    //    Opus mesmo depois do dynaudnorm; -12dB deixa margem).
     const audioFilter = `dynaudnorm=f=200:g=15,volume=${volumeGain}`;
 
     const ffmpeg = spawn(ffmpegBin, [
@@ -541,12 +510,12 @@ class MusicPlayer {
       '-b:a', bitrate,
       '-f', 'opus',
       'pipe:1',
-    ], { stdio: [usingYtdlp ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
+    ], { stdio: [usingExtractor ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     this.ffmpeg = ffmpeg;
 
-    if (usingYtdlp && this.ytdlp?.stdout && ffmpeg.stdin) {
-      this.ytdlp.stdout.pipe(ffmpeg.stdin);
-      // Se ffmpeg fechar antes de yt-dlp terminar, EPIPE quebra o process.
+    if (usingExtractor && this.extractor?.stdout && ffmpeg.stdin) {
+      this.extractor.stdout.pipe(ffmpeg.stdin);
+      // Se ffmpeg fechar antes do extrator terminar, EPIPE quebra o processo.
       ffmpeg.stdin.on('error', () => {});
     }
 
@@ -600,8 +569,8 @@ class MusicPlayer {
     this.finished = true;
     if (this.ffmpeg) this.ffmpeg.kill('SIGTERM');
     this.ffmpeg = null;
-    if (this.ytdlp) this.ytdlp.kill('SIGTERM');
-    this.ytdlp = null;
+    if (this.extractor) this.extractor.kill('SIGTERM');
+    this.extractor = null;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     if (this.aloneWatch) clearInterval(this.aloneWatch);

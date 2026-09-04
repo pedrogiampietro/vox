@@ -196,9 +196,9 @@ npm run music-jukebox
 ```
 
 Nesse modo, o bot `music` fica no canal `bot` lendo o chat. Quando alguem digita
-algo como `orochi - sereia`, ele procura a musica com `yt-dlp`, entra com um
-usuario `music player` no canal de voz de quem pediu e comeca a tocar. Se ja
-tiver algo tocando, o pedido entra na fila.
+algo como `orochi - sereia`, ele procura a musica somente no SoundCloud usando
+um extrator local, entra com um usuario `music player` no canal de voz de quem
+pediu e comeca a tocar. Se ja tiver algo tocando, o pedido entra na fila.
 
 Comandos no chat do canal `bot`:
 
@@ -208,9 +208,9 @@ skip
 stop
 ```
 
-Para busca por nome, instale `yt-dlp` alem do `ffmpeg`, ou defina
-`VOX_YTDLP=/caminho/para/yt-dlp`. Links diretos de audio continuam funcionando
-sem `yt-dlp`.
+Para busca por nome e links do SoundCloud, instale `yt-dlp` alem do `ffmpeg`, ou
+defina `VOX_YTDLP=/caminho/para/yt-dlp`. O jukebox nao usa YouTube nem cookies;
+links diretos de audio continuam funcionando sem o extrator.
 
 Na VPS com systemd, depois do codigo estar em `/opt/vox`, instale o servico do
 jukebox:
