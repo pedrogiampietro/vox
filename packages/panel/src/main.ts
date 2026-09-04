@@ -1030,12 +1030,11 @@ function openStream(): void {
   stream.onmessage = (ev) => {
     overview = JSON.parse(ev.data) as Overview;
     if (!selectedId) selectedId = overview.servers[0]?.id ?? 0;
-    // O SSE atualiza presença a cada poucos segundos. Não reconstruir a tela
-    // enquanto o owner está digitando evita perder foco e seleção do Ticket.
-    const focused = document.activeElement;
-    if (activeTab === 'tickets' && (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
-      if (focused.closest('.ticket-panel')) return;
-    }
+    // O SSE atualiza presença a cada poucos segundos. A aba de Tickets não
+    // pode ser reconstruída em background: até um evento que chegou junto do
+    // clique roubaria o foco do campo recém-selecionado. O envio/Atualizar e a
+    // troca de aba fazem o redraw explicitamente.
+    if (activeTab === 'tickets') return;
     render();
   };
 }
