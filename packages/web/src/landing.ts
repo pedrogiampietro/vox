@@ -10,8 +10,9 @@ if (root) {
 
 function renderLandingPage(): HTMLElement {
   const page = $('main', 'landing-page');
+  page.append(renderNav());
   const shell = $('div', 'landing-shell');
-  shell.append(renderNav(), renderHero(), renderTrustBar(), renderFeatures(), renderFlow(), renderPlans(), renderCta(), renderFooter());
+  shell.append(renderHero(), renderTrustBar(), renderFeatures(), renderFlow(), renderPlans(), renderCta(), renderFooter());
   page.append(shell);
   void refreshLandingStatus(page);
   return page;
