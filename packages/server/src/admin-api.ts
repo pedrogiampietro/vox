@@ -60,7 +60,7 @@ export class AdminApi {
   /** Empurra o estado atual para todo painel aberto. */
   broadcastState(): void {
     if (this.streams.size === 0) return;
-    const payload = `data: ${JSON.stringify(this.overview())}\n\n`;
+    // Cada assinante recebe o recorte da propria conta; o master ve tudo.
     for (const [res, ownerId] of this.streams) {
       const payloadData = ownerId === null
         ? this.overview()

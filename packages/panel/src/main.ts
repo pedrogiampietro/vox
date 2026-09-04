@@ -305,7 +305,7 @@ function renderMain(): HTMLElement {
       grid.append(stat('canais', String(server.channels), server.protected ? 'com senha' : 'aberto', 'span-3'));
       grid.append(stat('admins', String(server.admins), `servidor #${server.id}`, 'span-3'));
       grid.append(stat('atualizado', overview ? new Date(overview.stamp).toLocaleTimeString() : '--', 'SSE ativo', 'span-3'));
-      grid.append(renderServerSettings(detail), renderClients(detail));
+      grid.append(renderServerSettings(detail), renderClients(detail), renderDownloads());
     } else if (activeTab === 'server') {
       grid.append(renderServerSettings(detail), renderAnnouncement(detail));
     } else if (activeTab === 'users') {
@@ -441,6 +441,24 @@ function renderClients(server: ServerDetail): HTMLElement {
     rows.append(row);
   }
   box.append(rows);
+  return box;
+}
+
+/**
+ * Instaladores do desktop. Os arquivos sao publicados pelo CI em /downloads
+ * com nome fixo, entao o link nao depende da versao.
+ */
+function renderDownloads(): HTMLElement {
+  const box = $('section', 'panel span-12');
+  box.append(text('h3', '', 'Aplicativo'));
+  box.append(text('p', 'subtle', 'O cliente web abre direto no navegador. No Windows, o app dedicado entra com o mesmo login.'));
+  const actions = $('div', 'actions');
+  actions.append(
+    action('Abrir versão web', () => window.open('/app', '_blank', 'noopener')),
+    action('Baixar .EXE', () => window.location.assign('/downloads/v0x-windows-x64-setup.exe')),
+    action('Baixar .MSI', () => window.location.assign('/downloads/v0x-windows-x64.msi')),
+  );
+  box.append(actions);
   return box;
 }
 
