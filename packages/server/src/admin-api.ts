@@ -18,7 +18,7 @@ import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
-import { applyBotConfig, currentBotConfig, providerInfoFor, startBot, stopBot, testBot } from './bot-ctrl.js';
+import { applyBotConfig, currentBotConfig, providerInfoFor, startBotAndWait, stopBot, testBot } from './bot-ctrl.js';
 import { addTicketMessage, createTicket, getTicket, listTickets, updateTicketStatus, type TicketStatus } from './tickets.js';
 import {
   BILLING_PERIOD_MS,
@@ -359,10 +359,10 @@ export class AdminApi {
     }
 
     if (action === '/bot' && rest === 'start' && method === 'POST') {
-      const error = startBot(hub);
-      if (error) return send(res, 400, { error });
+      const error = await startBotAndWait(hub);
       this.registry.scheduleSave();
       hub.broadcastBotState();
+      if (error) return send(res, 502, { error });
       return send(res, 200, { ok: true });
     }
 

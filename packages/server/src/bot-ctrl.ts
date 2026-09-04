@@ -76,6 +76,26 @@ export function startBot(hub: Hub): string | null {
   return null;
 }
 
+/** Inicia aguardando a primeira sincronização, usado pelo painel REST. */
+export async function startBotAndWait(hub: Hub): Promise<string | null> {
+  const provider = hub.activePreset().bot.provider;
+  if (provider === 'none') return 'este preset não possui um provider de bot';
+  if (!hub.botConfig.world.trim()) return `informe o world do ${providerFor(hub).label} antes de ligar o bot`;
+
+  hub.botConfig.enabled = true;
+  if (!hub.rubinot) hub.rubinot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
+  if (hub.rubinot.isRunning) return null;
+
+  try {
+    await hub.rubinot.start();
+    return null;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[bot] falha ao iniciar ${providerFor(hub).label}:`, message);
+    return `não foi possível iniciar o bot ${providerFor(hub).label}: ${message}`;
+  }
+}
+
 export function stopBot(hub: Hub): void {
   hub.botConfig.enabled = false;
   hub.rubinot?.stop();
