@@ -104,6 +104,8 @@ type BotState = {
     alertEnemyOffline: boolean;
   };
   running: boolean;
+  starting: boolean;
+  error: string;
   hunted: string[];
   friends: string[];
   friendGuilds: string[];
@@ -152,6 +154,7 @@ let activeTab: AdminTab = 'overview';
 let renewingServerId = 0;
 let loggingIn = false;
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
+let botAction: { serverId: number; label: string } | null = null;
 
 const $ = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
   const el = document.createElement(tag);
@@ -811,9 +814,20 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
 
   box.append(text('h4', 'bot-section-title', 'CONEXÃO'));
   const statusLine = $('div', 'toolbar');
-  const statusLabel = text('span', bot.running ? 'bot-status bot-on' : 'bot-status bot-off', bot.running ? 'ativo' : 'parado');
+  const busy = botAction?.serverId === server.id || bot.starting;
+  const statusLabel = text(
+    'span',
+    busy ? 'bot-status bot-pending' : bot.running ? 'bot-status bot-on' : 'bot-status bot-off',
+    busy ? (botAction?.serverId === server.id ? botAction.label : 'sincronizando…') : bot.running ? 'ativo' : 'parado',
+  );
   statusLine.append(statusLabel);
+  if (busy) {
+    statusLine.append(text('span', 'subtle', 'validando world, guilds e canais…'));
+  }
   box.append(statusLine);
+  if (bot.error && !busy) {
+    box.append(text('p', 'error bot-error', `Última tentativa: ${bot.error}`));
+  }
 
   if (bot.provider === 'deusold') {
     box.append(text(
@@ -881,7 +895,12 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
   const actions = $('div', 'toolbar bot-actions');
   const save = $('button', 'primary');
   save.textContent = 'Salvar Configuração';
+  save.disabled = busy;
+  save.setAttribute('aria-busy', String(botAction?.serverId === server.id && botAction.label.startsWith('Salvando')));
   save.addEventListener('click', () => {
+    if (botAction?.serverId === server.id || bot.starting) return;
+    botAction = { serverId: server.id, label: 'Salvando e sincronizando…' };
+    render();
     void api(`/api/servers/${server.id}/bot`, {
       method: 'PATCH',
       body: JSON.stringify({
@@ -904,23 +923,37 @@ function renderBot(server: ServerDetail, bot: BotState): HTMLElement {
       }),
     }).then(() => {
       botDraft = {};
-      showToast('Configuração do bot salva.', 'success');
+      showToast('Configuração salva e bot sincronizado.', 'success');
       return loadDetail(server.id);
     }).catch((error) => {
       showToast(error instanceof Error ? error.message : String(error), 'error');
+      void loadDetail(server.id).catch(() => {});
+    }).finally(() => {
+      if (botAction?.serverId === server.id) botAction = null;
+      render();
     });
   });
   actions.append(save);
 
   const run = $('button', bot.running ? 'ghost' : 'primary');
-  run.textContent = bot.running ? 'Reiniciar' : 'Iniciar';
+  run.textContent = busy ? (bot.running ? 'Reiniciando…' : 'Iniciando…') : bot.running ? 'Reiniciar' : 'Iniciar';
+  run.disabled = busy;
+  run.setAttribute('aria-busy', String(busy));
   run.addEventListener('click', () => {
-    void api(`/api/servers/${server.id}/bot/${bot.running ? 'restart' : 'start'}`, { method: 'POST' })
+    if (botAction?.serverId === server.id || bot.starting) return;
+    const action = bot.running ? 'restart' : 'start';
+    botAction = { serverId: server.id, label: bot.running ? 'Reiniciando…' : 'Iniciando…' };
+    render();
+    void api(`/api/servers/${server.id}/bot/${action}`, { method: 'POST' })
       .then(() => {
         showToast(bot.running ? 'Bot reiniciado.' : 'Bot iniciado.', 'success');
         return loadDetail(server.id);
       }).catch((error) => {
         showToast(error instanceof Error ? error.message : String(error), 'error');
+        void loadDetail(server.id).catch(() => {});
+      }).finally(() => {
+        if (botAction?.serverId === server.id) botAction = null;
+        render();
       });
   });
   actions.append(run);
@@ -1230,7 +1263,7 @@ function openStream(): void {
     // pode ser reconstruída em background: até um evento que chegou junto do
     // clique roubaria o foco do campo recém-selecionado. O envio/Atualizar e a
     // troca de aba fazem o redraw explicitamente.
-    if (activeTab === 'tickets') return;
+    if (activeTab === 'tickets' || (activeTab === 'bot' && botAction)) return;
     render();
   };
 }

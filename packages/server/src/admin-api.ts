@@ -321,6 +321,8 @@ export class AdminApi {
         providerLabel: provider.label,
         config: botConfig,
         running: hub.rubinot?.isRunning ?? false,
+        starting: hub.rubinot?.isStarting ?? false,
+        error: hub.rubinot?.lastStartError ?? '',
         hunted: hub.rubinot?.manualHuntedList ?? hub.botConfig.huntedNames,
         friends: hub.rubinot?.friendsList ?? [],
         friendGuilds: [...hub.botConfig.friendGuilds],
@@ -351,7 +353,14 @@ export class AdminApi {
       if (body.alertEnemyOffline !== undefined) bc.alertEnemyOffline = !!body.alertEnemyOffline;
       hub.botConfig = bc;
       this.registry.scheduleSave();
-      applyBotConfig(hub);
+      try {
+        await applyBotConfig(hub);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[bot] falha ao aplicar configuração no servidor ${hub.id}:`, message);
+        hub.broadcastBotState();
+        return send(res, 502, { error: `não foi possível aplicar a configuração do bot: ${message}` });
+      }
       hub.broadcastBotState();
 
       this.broadcastState();
@@ -381,7 +390,14 @@ export class AdminApi {
     }
 
     if (action === '/bot' && rest === 'restart' && method === 'POST') {
-      applyBotConfig(hub);
+      try {
+        await applyBotConfig(hub);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[bot] falha ao reiniciar no servidor ${hub.id}:`, message);
+        hub.broadcastBotState();
+        return send(res, 502, { error: `não foi possível iniciar o bot: ${message}` });
+      }
       this.registry.scheduleSave();
       hub.broadcastBotState();
       return send(res, 200, { ok: true });
@@ -399,7 +415,12 @@ export class AdminApi {
         hub.botConfig.friendGuilds.push(name);
       }
       if (enemyBefore !== hub.botConfig.enemyGuilds.length || friendBefore !== hub.botConfig.friendGuilds.length) {
-        applyBotConfig(hub);
+        try {
+          await applyBotConfig(hub);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return send(res, 502, { error: `não foi possível sincronizar a guild amiga: ${message}` });
+        }
       }
       this.registry.scheduleSave();
       hub.broadcastBotState();
@@ -418,7 +439,12 @@ export class AdminApi {
         hub.botConfig.enemyGuilds.push(name);
       }
       if (friendBefore !== hub.botConfig.friendGuilds.length || enemyBefore !== hub.botConfig.enemyGuilds.length) {
-        applyBotConfig(hub);
+        try {
+          await applyBotConfig(hub);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return send(res, 502, { error: `não foi possível sincronizar a guild inimiga: ${message}` });
+        }
       }
       this.registry.scheduleSave();
       hub.broadcastBotState();
@@ -431,7 +457,12 @@ export class AdminApi {
       hub.botConfig.friendGuilds = hub.botConfig.friendGuilds.filter(
         (guild) => guild.toLowerCase() !== name.toLowerCase(),
       );
-      applyBotConfig(hub);
+      try {
+        await applyBotConfig(hub);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return send(res, 502, { error: `não foi possível atualizar as guilds amigas: ${message}` });
+      }
       this.registry.scheduleSave();
       hub.broadcastBotState();
       return send(res, 200, { ok: true });
@@ -443,7 +474,12 @@ export class AdminApi {
       hub.botConfig.enemyGuilds = hub.botConfig.enemyGuilds.filter(
         (guild) => guild.toLowerCase() !== name.toLowerCase(),
       );
-      applyBotConfig(hub);
+      try {
+        await applyBotConfig(hub);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return send(res, 502, { error: `não foi possível atualizar as guilds inimigas: ${message}` });
+      }
       this.registry.scheduleSave();
       hub.broadcastBotState();
       return send(res, 200, { ok: true });
@@ -840,7 +876,7 @@ export class AdminApi {
         // no proprio painel; o canal e o preset ja vieram do Registry.
         hub.botConfig = { ...hub.botConfig, enabled: true };
         hub.ensureChannel(hub.botConfig.channelName || 'bot');
-        applyBotConfig(hub);
+        await applyBotConfig(hub);
         this.registry.scheduleSave();
       }
       updateOrder(order.id, {

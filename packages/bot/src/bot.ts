@@ -137,6 +137,9 @@ export class RubinotBot {
   private readonly guildMemberByName = new Map<string, GuildMemberSnap>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private ac = new AbortController();
+  /** Evita duas sincronizacoes concorrentes quando salvar e iniciar sao clicados juntos. */
+  private startPromise: Promise<void> | null = null;
+  private startError = '';
   private running = false;
   private readonly pendingLogins: OnlineEvent[] = [];
   private readonly pendingLogouts: OnlineEvent[] = [];
@@ -171,6 +174,14 @@ export class RubinotBot {
     return this.running;
   }
 
+  get isStarting(): boolean {
+    return this.startPromise !== null;
+  }
+
+  get lastStartError(): string {
+    return this.startError;
+  }
+
   get config(): BotConfig {
     return { ...this.cfg, huntedNames: this.huntedList };
   }
@@ -192,7 +203,31 @@ export class RubinotBot {
 
   async start(): Promise<void> {
     if (this.running) return;
+    if (this.startPromise) return this.startPromise;
+
+    this.startError = '';
     this.ac = new AbortController();
+    const promise = this.startInternal(this.ac.signal);
+    this.startPromise = promise.then(
+      () => {
+        this.startPromise = null;
+      },
+      (error: unknown) => {
+        this.startError = error instanceof Error ? error.message : String(error);
+        this.startPromise = null;
+        throw error;
+      },
+    );
+    return this.startPromise;
+  }
+
+  private async startInternal(signal: AbortSignal): Promise<void> {
+
+    console.log(
+      `[bot] iniciando ${this.provider.label}: world=${this.cfg.world}, ` +
+        `guilds=${this.cfg.friendGuilds.length + this.cfg.enemyGuilds.length}, ` +
+        `intervalo=${this.cfg.intervalMs / 1000}s`,
+    );
 
     // Cria o canal de notificacoes ja no start, mesmo antes do primeiro evento,
     // para os usuarios encontrarem a sala pronta.
@@ -203,10 +238,11 @@ export class RubinotBot {
       deathList: this.hub.ensureChannel(INFO_CHANNEL_NAMES.deathList, botChannelId),
     };
 
-    await this.syncAllGuilds();
+    await this.syncAllGuilds(signal);
 
-    await this.deaths.poll(this.ac.signal);
-    await this.online.poll(this.ac.signal);
+    await this.deaths.poll(signal);
+    await this.online.poll(signal);
+    if (signal.aborted) return;
     this.refreshPlayerInfos();
     this.refreshInfoChannels();
     this.running = true;
@@ -223,18 +259,27 @@ export class RubinotBot {
   }
 
   stop(): void {
-    if (!this.running) return;
+    if (!this.running && !this.startPromise) return;
     this.ac.abort();
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    const wasRunning = this.running;
     this.running = false;
-    console.log('[bot] parado');
+    if (wasRunning) console.log('[bot] parado');
   }
 
   async restart(newCfg: BotConfig): Promise<void> {
     this.stop();
+    const pendingStart = this.startPromise;
+    if (pendingStart) {
+      try {
+        await pendingStart;
+      } catch {
+        // A configuracao nova substitui uma tentativa cancelada ou que falhou.
+      }
+    }
     this.cfg = newCfg;
     this.deaths = new DeathTracker(this.provider, newCfg.world);
     this.online = new OnlineTracker(this.provider, newCfg.world);
@@ -247,6 +292,7 @@ export class RubinotBot {
     this.levelUpLog.length = 0;
     this.deathLog.length = 0;
     this.reportDay = '';
+    this.startError = '';
     if (newCfg.enabled && newCfg.world) {
       await this.start();
     }
@@ -659,7 +705,7 @@ export class RubinotBot {
 
   // ------------------------------------------------------------ guild sync --
 
-  private async syncAllGuilds(): Promise<void> {
+  private async syncAllGuilds(signal?: AbortSignal): Promise<void> {
     // Remove tags de guild antes de recarregar; jogadores adicionados
     // manualmente (guild vazia) sobrevivem.
     for (const [key, tag] of this.tags) {
@@ -668,13 +714,13 @@ export class RubinotBot {
     // Snapshot de guild membros (level/voc) tambem e recarregado por guild.
     this.guildMemberByName.clear();
 
-    for (const g of this.cfg.friendGuilds) await this.syncGuild(g, 'friend');
-    for (const g of this.cfg.enemyGuilds) await this.syncGuild(g, 'enemy');
+    for (const g of this.cfg.friendGuilds) await this.syncGuild(g, 'friend', signal);
+    for (const g of this.cfg.enemyGuilds) await this.syncGuild(g, 'enemy', signal);
   }
 
-  private async syncGuild(name: string, kind: 'friend' | 'enemy'): Promise<void> {
+  private async syncGuild(name: string, kind: 'friend' | 'enemy', signal?: AbortSignal): Promise<void> {
     try {
-      const guild = await this.provider.fetchGuild(name, this.ac.signal);
+      const guild = await this.provider.fetchGuild(name, signal);
       if (!guild) {
         console.error(`[bot] guild ${kind} "${name}" nao encontrada em ${this.provider.label}`);
         return;

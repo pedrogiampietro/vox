@@ -117,6 +117,8 @@ export class Hub {
     stop(): void;
     restart(cfg: BotConfig): Promise<void>;
     config: BotConfig;
+    isStarting: boolean;
+    lastStartError: string;
   } | null = null;
   botConfig: StoredBotConfig;
 
@@ -749,7 +751,7 @@ export class Hub {
         bc.alertEnemyOnline = m.alertEnemyOnline;
         bc.alertEnemyOffline = m.alertEnemyOffline;
         this.deps.onChanged();
-        applyBotConfig(this);
+        void applyBotConfig(this).catch((err) => console.error('[bot] falha ao aplicar configuração:', err));
         this.broadcastBotState();
         break;
       }
@@ -1457,7 +1459,7 @@ export class Hub {
         }
         if (mutated) {
           this.deps.onChanged();
-          applyBotConfig(this);
+          void applyBotConfig(this).catch((err) => console.error('[bot] falha ao aplicar configuração:', err));
         }
         break;
       }
@@ -1475,7 +1477,7 @@ export class Hub {
           );
         }
         this.deps.onChanged();
-        applyBotConfig(this);
+        void applyBotConfig(this).catch((err) => console.error('[bot] falha ao aplicar configuração:', err));
         break;
       }
       default:

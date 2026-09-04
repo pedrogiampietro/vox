@@ -547,6 +547,15 @@ body {
   color: var(--text-faint);
 }
 
+.bot-pending {
+  color: var(--amber);
+}
+
+.bot-error {
+  margin: 8px 0 0;
+  max-width: 900px;
+}
+
 .bot-hunted {
   margin-top: 16px;
   display: grid;

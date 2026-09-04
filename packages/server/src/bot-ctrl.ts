@@ -52,17 +52,17 @@ function sanitizeGuildLists(hub: Hub): void {
 }
 
 /** Recria/atualiza o bot para refletir a config atual do hub. */
-export function applyBotConfig(hub: Hub): void {
+export async function applyBotConfig(hub: Hub): Promise<void> {
   sanitizeGuildLists(hub);
   if (hub.rubinot) {
     const cfg = { ...hub.botConfig, huntedNames: hub.rubinot.huntedList };
-    void hub.rubinot.restart(cfg);
+    await hub.rubinot.restart(cfg);
     return;
   }
   if (hub.botConfig.enabled && hub.botConfig.world) {
     const bot = new RubinotBot(hub, hub.botConfig, providerFor(hub));
     hub.rubinot = bot;
-    void bot.start().catch((err) => console.error('[bot] falha:', err));
+    await bot.start();
   }
 }
 
