@@ -76,6 +76,12 @@ function clientIp(req: IncomingMessage): string {
 function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://localhost').pathname;
 
+  // A raiz do dominio principal e a vitrine publica. Subdominios de servidores
+  // continuam abrindo o cliente Vox normalmente.
+  if ((path === '/' || path === '/index.html') && isLandingHost(req.headers.host)) {
+    return serveStatic(WEB_ROOT, 'landing.html', res);
+  }
+
   if (path === '/health') {
     const hostHub = registry.getByHost(String(req.headers.host ?? ''));
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -119,6 +125,12 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   serveStatic(WEB_ROOT, path, res);
+}
+
+function isLandingHost(rawHost: string | undefined): boolean {
+  const host = String(rawHost ?? '').split(':')[0]?.toLowerCase() ?? '';
+  const base = config.baseDomain.toLowerCase();
+  return host === base || host === `www.${base}`;
 }
 
 const server = tlsEnabled

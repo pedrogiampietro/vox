@@ -17,5 +17,13 @@ export default defineConfig({
       '/health': { target: 'http://127.0.0.1:9987' },
     },
   },
-  build: { target: 'es2022' },
+  build: {
+    target: 'es2022',
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL('./index.html', import.meta.url)),
+        landing: fileURLToPath(new URL('./landing.html', import.meta.url)),
+      },
+    },
+  },
 });

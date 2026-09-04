@@ -97,6 +97,14 @@ npm run dev:web
 Abra <http://localhost:5173>. O Vite repassa `/vox` para o servidor, então o
 cliente fala com a mesma origem — igual ao que acontece em produção.
 
+Em produção, a entrada pública fica organizada assim:
+
+- `https://v0x.online/` — landing page e apresentação do Vox.
+- `https://v0x.online/app` — área para entrar nos servidores.
+- `https://v0x.online/cliente` — atalho para a área do cliente.
+- `https://v0x.online/admin` — painel administrativo.
+- `https://servidor.v0x.online/` — acesso direto ao servidor virtual.
+
 Painel administrativo em desenvolvimento:
 
 ```bash
@@ -108,8 +116,9 @@ npm run dev:panel
 ```
 
 Abra <http://localhost:5174/admin/> e entre com a senha definida em
-`VOX_ADMIN_PASSWORD`. Em produção local, `npm run build && npm start` serve o
-cliente em `/` e o painel em `/admin`.
+`VOX_ADMIN_PASSWORD`. Em produção local, `npm run build && npm start` serve a
+landing em `/` quando o host é o domínio base, o cliente em `/app` e o painel
+em `/admin`.
 
 ## Pipeline
 
