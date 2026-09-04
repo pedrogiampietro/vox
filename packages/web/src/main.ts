@@ -55,6 +55,7 @@ let client: VoxClient;
 let view: 'browser' | 'shell' = 'browser';
 let serverList: ServerStatus[] = [];
 let settingsOpen = false;
+let refreshVisibleSettings: (() => void) | null = null;
 
 let selectedChannelId = 0;
 let selectedClientId = 0;
@@ -188,6 +189,7 @@ function openSettings(): void {
 function closeSettings(): void {
   const existing = document.querySelector('.settings-overlay');
   if (existing) existing.remove();
+  refreshVisibleSettings = null;
   stopMicTest();
   // Descarta edicoes nao salvas de grupos quando o modal fecha, para nao
   // reaparecerem na proxima abertura.
@@ -2517,6 +2519,13 @@ function renderSettings(): HTMLElement {
     else if (activeSection === 'bot') buildBotSection(body, buildBody);
   }
 
+  // O painel administrativo pode alterar o bot enquanto este modal está
+  // aberto. Atualiza apenas o corpo da aba Bot, sem fechar o modal ou destruir
+  // a navegação atual quando outro evento do servidor chega.
+  refreshVisibleSettings = () => {
+    if (activeSection === 'bot') buildBody();
+  };
+
   // --- footer ---
   const footer = $('div', 'settings-footer');
   const closeBtn = $('button', 'primary');
@@ -4691,6 +4700,7 @@ client = new VoxClient(
   },
   updateLiveConnectionStatus,
 );
+client.onBotStateChange = () => refreshVisibleSettings?.();
 
 const pokeQueue: { from: string; message: string; stamp: number }[] = [];
 

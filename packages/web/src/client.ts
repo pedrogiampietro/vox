@@ -97,6 +97,8 @@ export class VoxClient {
   notificationsEnabled = true;
   onPoke: ((from: string, text: string) => void) | null = null;
   onBotResult: ((message: string) => void) | null = null;
+  /** Chamado quando o painel ou outro owner altera a configuração do bot. */
+  onBotStateChange: (() => void) | null = null;
 
   private audioPrefs: AudioPrefs | null = null;
   private connectGeneration = 0;
@@ -929,6 +931,7 @@ export class VoxClient {
 
       case Op.BotState:
         this.botState = m.state;
+        this.onBotStateChange?.();
         break;
 
       case Op.ChatReadDeliver: {
