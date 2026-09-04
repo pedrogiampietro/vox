@@ -29,6 +29,7 @@ class TestClient {
   private identity: { spki: Uint8Array; key: CryptoKey } | null = null;
   claims: RespClaimInfo[] = [];
   failures: string[] = [];
+  presetId = '';
   id = 0;
 
   constructor(private readonly nickname: string) {
@@ -77,6 +78,8 @@ class TestClient {
       this.id = m.clientId;
     } else if (m.t === Op.Snapshot || m.t === Op.RespClaims) {
       this.claims = m.claims;
+    } else if (m.t === Op.PresetState) {
+      this.presetId = m.presetId;
     } else if (m.t === Op.Failure) {
       this.failures.push(m.message);
     }
@@ -97,6 +100,20 @@ async function main(): Promise<void> {
   const alice = new TestClient('alice-claim');
   const bob = new TestClient('bob-claim');
   await Promise.all([alice.ready(), bob.ready()]);
+
+  // O preset chega no admit; sem ele o cliente nao saberia que catalogo mostrar.
+  await until(() => alice.presetId.length > 0, 'preset anunciado no admit');
+  console.log(`ok preset state: ${alice.presetId}`);
+
+  // Trocar o preset troca o catalogo de respawn do servidor inteiro — so o dono.
+  const presetFailures = alice.failures.length;
+  alice.send({ t: Op.SetPreset, presetId: 'blank', custom: '' });
+  await until(
+    () => alice.failures.slice(presetFailures).some((m) => m.includes('so o owner')),
+    'troca de preset por nao-dono recusada',
+  );
+  if (alice.presetId === 'blank') throw new Error('preset foi trocado por nao-dono');
+  console.log('ok preset change denied for non-owner');
 
   alice.send({ t: Op.ClaimResp, respawn: 'Respawn Fake', note: '', durationMin: 120 });
   await until(() => alice.failures.some((m) => m.includes('respawn invalido')), 'claim invalido recusado');

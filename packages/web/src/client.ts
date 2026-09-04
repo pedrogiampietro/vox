@@ -4,8 +4,8 @@
  * daqui - nao conhece protocolo nem Web Audio.
  */
 
-import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, FailureCode, Group, NO_CHANNEL, Op, PermissionAction } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage } from '@vox/protocol';
+import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, DEFAULT_PRESET_ID, FailureCode, Group, NO_CHANNEL, Op, PermissionAction, findPreset, parsePreset } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, ServerPreset } from '@vox/protocol';
 import { Connection, type LinkState, type Target } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer, type VoicePlaybackHealth } from './audio/mixer.js';
@@ -56,6 +56,12 @@ export class VoxClient {
   readonly playerInfos = new Map<string, PlayerInfo>();
   /** Overrides atuais das permissoes. Falta = default. */
   readonly permissions = new Map<PermissionAction, Group>();
+  /**
+   * Preset ativo do servidor. A arvore de canais do template, o catalogo de
+   * respawn e a disponibilidade do bot saem daqui — nao de constantes fixas,
+   * senao o cliente ofereceria hunt do Rubinot num servidor de 7.4.
+   */
+  preset: ServerPreset = findPreset(DEFAULT_PRESET_ID)!;
   /** peerId -> maior stamp da minha DM outgoing que este peer confirmou ler. */
   readonly dmReadStamps = new Map<number, number>();
   /** peerId -> maior stamp por qual ja mandei ChatRead, evita reenviar. */
@@ -74,7 +80,9 @@ export class VoxClient {
   detail = '';
   serverName = '';
   motd = '';
+  maxClients = 128;
   serverId = 0;
+  presetId = 'rubinot';
   selfId = 0;
   myGroup: Group = Group.Guest;
 
@@ -258,6 +266,9 @@ export class VoxClient {
     this.claims.clear();
     this.playerInfos.clear();
     this.permissions.clear();
+    this.preset = findPreset(DEFAULT_PRESET_ID)!;
+    this.presetId = DEFAULT_PRESET_ID;
+    this.maxClients = 128;
     this.dmTabs.clear();
     this.dmReadStamps.clear();
     this.dmReadSent.clear();
@@ -630,12 +641,24 @@ export class VoxClient {
     this.connection.send({ t: Op.SetGroupDef, group, name, icon, color });
   }
 
+  editServer(name: string, motd: string, maxClients: number): void {
+    this.connection.send({ t: Op.EditServer, name, motd, maxClients });
+  }
+
   setClientDescription(fingerprint: string, description: string): void {
     this.connection.send({ t: Op.SetClientDescription, fingerprint, description });
   }
 
   setPermission(action: PermissionAction, minGroup: Group): void {
     this.connection.send({ t: Op.SetPermission, action, minGroup });
+  }
+
+  /**
+   * Troca o preset do servidor (owner). `custom` vazio aplica um embutido;
+   * preenchido, importa o JSON e o `presetId` e ignorado pelo servidor.
+   */
+  setPreset(presetId: string, custom = ''): void {
+    this.connection.send({ t: Op.SetPreset, presetId, custom });
   }
 
   /** Grupo minimo pra `action`. Consulta override do server; senao default. */
@@ -741,6 +764,7 @@ export class VoxClient {
         this.serverId = m.serverId;
         this.serverName = m.serverName;
         this.motd = m.motd;
+        this.maxClients = m.maxClients;
         this.myGroup = m.group;
         if (this.favorite) touchFavorite(this.favorite.id);
         this.play('connected');
@@ -917,12 +941,33 @@ export class VoxClient {
         for (const e of m.entries) this.permissions.set(e.action, e.minGroup);
         break;
 
+      case Op.PresetState: {
+        // Preset importado chega por JSON; embutido so pelo id.
+        let next: ServerPreset | null = null;
+        if (m.custom) {
+          try {
+            next = parsePreset(JSON.parse(m.custom));
+          } catch {
+            next = null;
+          }
+        }
+        this.preset = next ?? findPreset(m.presetId) ?? findPreset(DEFAULT_PRESET_ID)!;
+        this.presetId = m.presetId;
+        break;
+      }
+
       case Op.ScreenSignalDeliver:
         void this.screen.handleSignal(m.senderId, m.targetId, m.kind, m.data);
         break;
 
       case Op.GroupDefs:
         this.groupDefs = m.groups;
+        break;
+
+      case Op.ServerUpdate:
+        this.serverName = m.name;
+        this.motd = m.motd;
+        this.maxClients = m.maxClients;
         break;
 
       case Op.Failure:

@@ -20,7 +20,6 @@ import {
   BotControlAction,
   ChannelFlags,
   ClientFlags,
-  DEFAULT_GROUP_DEFS,
   DEFAULT_PERMISSIONS,
   Group,
   GROUP_NAMES,
@@ -28,11 +27,12 @@ import {
   ChatScope,
   PERMISSION_LABELS,
   PermissionAction,
-  RESPAWN_CATALOG,
-  TIBIA_TEMPLATE,
-  canonicalRespawnName,
+  SERVER_PRESETS,
+  presetGroups,
+  canonicalRespawnIn,
+  parsePreset,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, RespawnCatalogItem } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, RespawnCatalogItem, TemplateCategory } from '@vox/protocol';
 import {
   listFavorites,
   probe,
@@ -453,6 +453,11 @@ function renderRooms(): HTMLElement {
   const presence = $('div', 'rooms-presence');
   presence.append(text('span', 'presence-dot', '●'), text('span', '', `${client.clients.size} online`));
   hdr.append(headline, presence);
+  hdr.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showTreeMenu(e);
+  });
   pane.append(hdr);
 
   // tree
@@ -1550,13 +1555,13 @@ function renderRespClaimsPanel(): HTMLElement {
       searchResults.replaceChildren();
       return;
     }
-    const selected = canonicalRespawnName(respawn.value);
+    const selected = canonicalRespawnIn(client.preset, respawn.value);
     claimBtn.disabled = !selected;
     searchHint.textContent = selected ? selected : defaultHint;
     searchResults.replaceChildren();
     const query = respawn.value.trim().toLowerCase();
     if (!query || selected) return;
-    const matches = RESPAWN_CATALOG.flatMap((group) => group.items
+    const matches = client.preset.respawns.flatMap((group) => group.items
       .filter((item) => `${item.code} ${item.name}`.toLowerCase().includes(query))
       .map((item) => ({ group: group.title, item })))
       .slice(0, 8);
@@ -1577,7 +1582,7 @@ function renderRespClaimsPanel(): HTMLElement {
     }
   };
   claimBtn.addEventListener('click', () => {
-    const name = canonicalRespawnName(respawn.value);
+    const name = canonicalRespawnIn(client.preset, respawn.value);
     if (!name) {
       respawn.focus();
       updateSearch();
@@ -1611,7 +1616,7 @@ function renderRespClaimsPanel(): HTMLElement {
   catalog.append(text('h3', '', 'todos os respawns'));
   const taken = new Map(claims.map((c) => [c.respawn.toLowerCase(), c]));
   const catalogRows = $('div', 'claims-list resp-list');
-  for (const group of RESPAWN_CATALOG) {
+  for (const group of client.preset.respawns) {
     catalogRows.append(renderRespawnCatalogGroup(group.title, group.items, taken, Boolean(myClaim)));
   }
   catalog.append(catalogRows);
@@ -3037,6 +3042,24 @@ function defaultGroupIconUrl(groupName: string): string {
  * mesmo pai sao reaproveitados. Se `wipeFirst`, apaga primeiro todos os
  * canais que o usuario pode remover (menos o default).
  */
+/**
+ * Le a arvore de canais que esta no ar e devolve no formato do preset. So
+ * canais-raiz viram categoria; niveis mais fundos que dois nao existem no
+ * formato, entao sao ignorados em vez de achatados.
+ */
+function channelTreeSnapshot(): TemplateCategory[] {
+  const all = [...client.channels.values()].sort((a, b) => a.order - b.order);
+  return all
+    .filter((c) => c.parentId === NO_CHANNEL)
+    .map((parent) => ({
+      name: parent.name,
+      topic: parent.topic,
+      children: all
+        .filter((c) => c.parentId === parent.id)
+        .map((c) => ({ name: c.name, topic: c.topic })),
+    }));
+}
+
 async function applyTibiaTemplate(wipeFirst = false): Promise<void> {
   if (wipeFirst) {
     // Apaga canais nao-default. O server pula o default e o AFK auto-criado.
@@ -3051,14 +3074,14 @@ async function applyTibiaTemplate(wipeFirst = false): Promise<void> {
     await new Promise<void>((r) => setTimeout(r, 300));
   }
 
-  // 1) Grupos: usa DEFAULT_GROUP_DEFS como fonte + seta icone de /icons.
-  for (const def of DEFAULT_GROUP_DEFS) {
+  // 1) Grupos: vem do preset (que cai em DEFAULT_GROUP_DEFS) + icone de /icons.
+  for (const def of presetGroups(client.preset)) {
     const icon = def.icon || defaultGroupIconUrl(def.name);
     client.setGroupDef(def.id, def.name, icon, def.color);
   }
 
   // 2) Categorias como canais-pai; canais reais como filhos.
-  for (const cat of TIBIA_TEMPLATE) {
+  for (const cat of client.preset.channels) {
     let parentId: number;
     try {
       parentId = await ensureChannel(cat.name, NO_CHANNEL);
@@ -3183,18 +3206,51 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
   body.append(text('h3', '', 'GRUPOS DO SERVIDOR'));
   body.append(text('span', '', 'Configure nome, cor e ícone dos grupos. As alterações só valem depois de salvar.'));
 
-  // Bloco de template: cria/atualiza grupos + arvore de canais Tibia em um clique.
+  // Bloco de preset: escolhe o conjunto (canais + respawns + bot) e aplica.
   const tplBox = $('div', 'tibia-template');
-  tplBox.append(text('h4', '', 'TEMPLATE TIBIA'));
-  tplBox.append(text('span', 'settings-hint', 'renomeia os 8 grupos e cria as categorias CHANELS / HUNT’S / PRIVATE com os canais padrão dentro. Roda idempotente: se já existir mesmo nome + mesmo pai, reaproveita.'));
+  tplBox.append(text('h4', '', 'PRESET DO SERVIDOR'));
+  tplBox.append(text('span', 'settings-hint', 'o preset define a árvore de canais, o catálogo de respawns dos claims e de onde o bot puxa dados. aplicar renomeia os grupos e cria as categorias. idempotente: mesmo nome + mesmo pai é reaproveitado.'));
+
+  // Lista embutidos + o preset ativo quando ele veio de importacao (que nao
+  // esta em SERVER_PRESETS e sumiria do seletor).
+  const options = [...SERVER_PRESETS];
+  if (!options.some((p) => p.id === client.preset.id)) options.unshift(client.preset);
+
+  const picker = $('select', 'preset-picker') as HTMLSelectElement;
+  for (const preset of options) {
+    const opt = $('option') as HTMLOptionElement;
+    opt.value = preset.id;
+    opt.textContent = preset.name;
+    picker.append(opt);
+  }
+  picker.value = client.preset.id;
+
+  const describe = (): void => {
+    const preset = options.find((p) => p.id === picker.value) ?? client.preset;
+    const respawns = preset.respawns.reduce((n, g) => n + g.items.length, 0);
+    const channels = preset.channels.reduce((n, c) => n + c.children.length, 0);
+    const bot = preset.bot.provider === 'none' ? 'sem bot' : `bot: ${preset.bot.provider}`;
+    presetInfo.textContent = `${preset.description} — ${channels} canais, ${respawns} respawns, ${bot}.`;
+  };
+  const presetInfo = text('span', 'settings-hint', '');
+  picker.addEventListener('change', describe);
 
   const tplRow = $('div', 'tibia-template-row');
 
+  /**
+   * Aplica um preset: primeiro avisa o servidor (que troca o catalogo de
+   * claims), so depois monta os canais. Na ordem inversa a arvore nova
+   * conviveria por alguns segundos com os claims do preset antigo.
+   */
   const runTemplate = async (btn: HTMLButtonElement, wipe: boolean, label: string): Promise<void> => {
     btn.disabled = true;
     const prev = btn.textContent;
     btn.textContent = wipe ? 'apagando + criando...' : 'aplicando...';
     try {
+      if (picker.value !== client.preset.id) {
+        client.setPreset(picker.value);
+        await new Promise<void>((r) => setTimeout(r, 300));
+      }
       await applyTibiaTemplate(wipe);
       // Aguarda o server ecoar Op.GroupDefs antes de reconstruir a tela,
       // e limpa o buffer local pra a re-render reseedar com os defs novos —
@@ -3212,22 +3268,78 @@ function buildGroupsSection(body: HTMLElement, rebuild: () => void): void {
   };
 
   const applyBtn = $('button', 'primary') as HTMLButtonElement;
-  applyBtn.textContent = 'aplicar template Tibia';
+  applyBtn.textContent = 'aplicar preset';
   applyBtn.addEventListener('click', () => {
-    if (!confirm('isso vai renomear os 8 grupos, setar ícones em /icons/<nome>.png e criar as categorias CHANELS, HUNT’S e PRIVATE com os canais padrão dentro. continuar?')) return;
-    void runTemplate(applyBtn, false, 'aplicar template Tibia');
+    const preset = options.find((p) => p.id === picker.value) ?? client.preset;
+    if (!confirm(`isso vai aplicar o preset "${preset.name}": renomear os grupos, setar ícones em /icons/<nome>.png e criar as categorias com os canais dentro. continuar?`)) return;
+    void runTemplate(applyBtn, false, 'aplicar preset');
   });
 
   const wipeBtn = $('button', 'ghost danger') as HTMLButtonElement;
   wipeBtn.textContent = 'recriar do zero';
   wipeBtn.title = 'apaga todos os canais não-padrão antes de recriar tudo';
   wipeBtn.addEventListener('click', () => {
-    if (!confirm('DESTRUTIVO: isso vai APAGAR todos os canais (menos o default) e recriar a árvore Tibia do zero. tem certeza?')) return;
+    if (!confirm('DESTRUTIVO: isso vai APAGAR todos os canais (menos o default) e recriar a árvore do preset do zero. tem certeza?')) return;
     void runTemplate(wipeBtn, true, 'recriar do zero');
   });
 
-  tplRow.append(applyBtn, wipeBtn);
-  tplBox.append(tplRow);
+  tplRow.append(picker, applyBtn, wipeBtn);
+  tplBox.append(presetInfo, tplRow);
+
+  // --- exportar / importar ---------------------------------------------
+  // O caminho pra montar um preset novo: aplicar o "em branco", ajustar os
+  // canais na interface, exportar, preencher os respawns no JSON e reimportar.
+  const ioRow = $('div', 'tibia-template-row');
+
+  const exportBtn = $('button', 'ghost') as HTMLButtonElement;
+  exportBtn.textContent = 'exportar preset';
+  exportBtn.title = 'baixa o preset ativo como JSON, pronto pra editar e reimportar';
+  exportBtn.addEventListener('click', () => {
+    // Exporta a arvore de canais que esta no ar, nao a do preset original —
+    // e o que faz "ajuste na interface e exporte" funcionar.
+    const snapshot = { ...client.preset, channels: channelTreeSnapshot() };
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = $('a') as HTMLAnchorElement;
+    a.href = url;
+    a.download = `preset-${client.preset.id.replace(/[^a-z0-9._-]+/gi, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  const importInput = $('input') as HTMLInputElement;
+  importInput.type = 'file';
+  importInput.accept = 'application/json,.json';
+  importInput.hidden = true;
+  importInput.addEventListener('change', () => {
+    const file = importInput.files?.[0];
+    importInput.value = '';
+    if (!file) return;
+    void file.text().then((raw) => {
+      // Valida no cliente pra dar erro legivel; o servidor revalida de qualquer jeito.
+      let parsed;
+      try {
+        parsed = parsePreset(JSON.parse(raw));
+      } catch {
+        parsed = null;
+      }
+      if (!parsed) {
+        alert('preset inválido: JSON malformado, sem id/nome, ou grande demais (limite 48KB).');
+        return;
+      }
+      if (!confirm(`importar o preset "${parsed.name}"? isso troca o catálogo de respawns do servidor. os canais só mudam quando você clicar em aplicar.`)) return;
+      client.setPreset(parsed.id, JSON.stringify(parsed));
+    });
+  });
+
+  const importBtn = $('button', 'ghost') as HTMLButtonElement;
+  importBtn.textContent = 'importar preset';
+  importBtn.addEventListener('click', () => importInput.click());
+
+  ioRow.append(exportBtn, importBtn, importInput);
+  tplBox.append(ioRow);
+
+  describe();
   body.append(tplBox);
   body.append($('hr'));
 
@@ -4205,6 +4317,94 @@ function showEditChannelOverlay(ch: ChannelInfo): void {
   document.body.append(overlay);
 }
 
+function showEditServerOverlay(): void {
+  const overlay = $('div', 'settings-overlay');
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) overlay.remove();
+  });
+
+  const panel = $('div', 'settings');
+  panel.style.width = '460px';
+  panel.style.gridTemplateColumns = '1fr';
+
+  const body = $('div', 'settings-body');
+  body.append(text('h3', '', 'EDITAR SERVIDOR'));
+  body.append(text('span', 'settings-hint', 'Atualize o nome, a mensagem de entrada e a capacidade do servidor.'));
+
+  const summary = $('div', 'server-edit-summary');
+  summary.append(
+    text('div', 'server-edit-stat', `${client.clients.size} / ${client.maxClients} usuários`),
+    text('div', 'server-edit-meta', `ID ${client.serverId} · preset ${client.presetId || 'rubinot'}`),
+  );
+  body.append(summary);
+
+  const nameRow = $('div', 'settings-row');
+  const nameLabel = $('label');
+  nameLabel.append(text('span', '', 'Nome do servidor'));
+  const nameInput = $('input') as HTMLInputElement;
+  nameInput.value = client.serverName;
+  nameInput.maxLength = 64;
+  nameLabel.append(nameInput);
+  nameRow.append(nameLabel);
+  body.append(nameRow);
+
+  const motdRow = $('div', 'settings-row');
+  const motdLabel = $('label');
+  motdLabel.append(text('span', '', 'Mensagem de entrada'));
+  const motdInput = $('textarea') as HTMLTextAreaElement;
+  motdInput.value = client.motd;
+  motdInput.maxLength = 256;
+  motdInput.rows = 3;
+  motdInput.placeholder = 'bem-vindo ao seu servidor Vox';
+  motdLabel.append(motdInput);
+  motdRow.append(motdLabel);
+  body.append(motdRow);
+
+  const maxRow = $('div', 'settings-row');
+  const maxLabel = $('label');
+  maxLabel.append(text('span', '', 'Quantidade máxima de usuários'));
+  const maxInput = $('input') as HTMLInputElement;
+  maxInput.type = 'number';
+  maxInput.min = String(Math.max(1, client.clients.size));
+  maxInput.max = '4096';
+  maxInput.value = String(Math.max(client.maxClients, client.clients.size));
+  maxLabel.append(maxInput);
+  maxRow.append(maxLabel);
+  body.append(maxRow);
+
+  const address = client.favorite?.address;
+  if (address) {
+    const addressInfo = text('div', 'settings-hint', `Endereço de acesso: ${address}`);
+    body.append(addressInfo);
+  }
+
+  const footer = $('div', 'settings-footer');
+  const saveBtn = $('button', 'primary');
+  saveBtn.textContent = 'salvar alterações';
+  saveBtn.addEventListener('click', () => {
+    const maxClients = Number(maxInput.value);
+    if (!Number.isFinite(maxClients) || maxClients < client.clients.size || maxClients > 4096) {
+      maxInput.focus();
+      return;
+    }
+    client.editServer(
+      nameInput.value.trim() || client.serverName,
+      motdInput.value.trim(),
+      Math.round(maxClients),
+    );
+    overlay.remove();
+  });
+  const cancelBtn = $('button', 'ghost');
+  cancelBtn.textContent = 'cancelar';
+  cancelBtn.addEventListener('click', () => overlay.remove());
+  footer.append(saveBtn, cancelBtn);
+
+  panel.append(body, footer);
+  overlay.append(panel);
+  document.body.append(overlay);
+  requestAnimationFrame(() => nameInput.focus());
+}
+
 function showTreeMenu(e: MouseEvent): void {
   const items: HTMLElement[] = [];
 
@@ -4229,13 +4429,14 @@ function showTreeMenu(e: MouseEvent): void {
   });
   items.push(createBtn);
 
-  // edit server (admin+)
-  if (client.myGroup >= Group.Admin) {
+  // edit server (owner)
+  if (client.myGroup >= Group.Owner) {
     const editBtn = $('button');
     editBtn.textContent = 'editar servidor';
     editBtn.addEventListener('click', (ev) => {
       ev.stopPropagation();
       closeMenu();
+      showEditServerOverlay();
     });
     items.push(editBtn);
   }

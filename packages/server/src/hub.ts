@@ -36,9 +36,13 @@ import {
   MAX_NICKNAME,
   MAX_VOICE_PACKET,
   VOICE_HEADER_SIZE,
-  canonicalRespawnName,
+  DEFAULT_PRESET_ID,
+  canonicalRespawnIn,
+  findPreset,
+  parsePreset,
+  serializePreset,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, VoiceEdge } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, ServerPreset, VoiceEdge } from '@vox/protocol';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
@@ -93,6 +97,9 @@ export class Hub {
   private readonly playerInfoByName = new Map<string, PlayerInfo>();
   /** Overrides sobre DEFAULT_PERMISSIONS. Ausencia = usar default. */
   private readonly permissions = new Map<PermissionAction, Group>();
+  private presetId: string;
+  /** Preenchido so pra presets importados; embutidos vem de findPreset(). */
+  private customPreset: ServerPreset | null;
 
   afkEnabled = config.afkEnabled;
 
@@ -116,7 +123,7 @@ export class Hub {
 
   constructor(
     public settings: ServerSettings,
-    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig' | 'descriptions' | 'permissions'>,
+    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig' | 'descriptions' | 'permissions' | 'presetId' | 'customPreset'>,
     private readonly deps: HubDeps,
   ) {
     for (const c of stored.channels) {
@@ -135,6 +142,61 @@ export class Hub {
       const action = Number(k) as PermissionAction;
       if (typeof v === 'number') this.permissions.set(action, v as Group);
     }
+    this.customPreset = stored.customPreset ?? null;
+    this.presetId = this.customPreset?.id ?? (stored.presetId || DEFAULT_PRESET_ID);
+  }
+
+  // --------------------------------------------------------------- preset --
+
+  /**
+   * Preset em vigor. Importado ganha do embutido; se o id nao resolve mais
+   * (preset removido do codigo entre deploys) cai no padrao, porque um servidor
+   * sem preset nao teria catalogo de respawn nenhum.
+   */
+  activePreset(): ServerPreset {
+    if (this.customPreset) return this.customPreset;
+    return findPreset(this.presetId) ?? findPreset(DEFAULT_PRESET_ID)!;
+  }
+
+  private presetStateMessage(): ServerMessage {
+    const preset = this.activePreset();
+    return {
+      t: Op.PresetState,
+      presetId: preset.id,
+      custom: this.customPreset ? (serializePreset(this.customPreset) ?? '') : '',
+    };
+  }
+
+  private setPreset(s: Session, presetId: string, custom: string): void {
+    if (s.group < Group.Owner) return this.fail(s, FailureCode.NotPermitted, 'so o owner troca o preset');
+
+    if (custom) {
+      let parsed: ServerPreset | null = null;
+      try {
+        parsed = parsePreset(JSON.parse(custom));
+      } catch {
+        parsed = null;
+      }
+      if (!parsed) return this.fail(s, FailureCode.Malformed, 'preset invalido ou grande demais');
+      this.customPreset = parsed;
+      this.presetId = parsed.id;
+    } else {
+      const builtin = findPreset(clean(presetId, 48));
+      if (!builtin) return this.fail(s, FailureCode.Malformed, 'preset desconhecido');
+      this.customPreset = null;
+      this.presetId = builtin.id;
+    }
+
+    // Claims do preset antigo apontariam pra respawns que sumiram do catalogo;
+    // manter isso deixaria o painel com linhas impossiveis de liberar.
+    const preset = this.activePreset();
+    for (const [id, claim] of [...this.claims]) {
+      if (!canonicalRespawnIn(preset, claim.respawn)) this.claims.delete(id);
+    }
+
+    this.broadcast(this.presetStateMessage());
+    this.broadcast({ t: Op.RespClaims, claims: this.claimList() });
+    this.deps.forceSave();
   }
 
   /** Grupo minimo pra executar `action`. Vem do override, senao do default. */
@@ -300,6 +362,8 @@ export class Hub {
       botConfig: { ...this.botConfig, huntedNames: botHunted },
       descriptions: Object.fromEntries(this.descriptions),
       permissions: Object.fromEntries(this.permissions),
+      presetId: this.presetId,
+      customPreset: this.customPreset,
     };
   }
 
@@ -578,6 +642,22 @@ export class Hub {
         break;
       }
 
+      case Op.EditServer: {
+        if (!this.allow(s, Group.Owner)) break;
+        this.settings.name = clean(m.name, 64) || this.settings.name;
+        this.settings.motd = clean(m.motd, 256);
+        // Nunca derruba a capacidade abaixo de quem já está conectado.
+        this.settings.maxClients = Math.max(this.sessions.size, clamp(m.maxClients, 1, 4096));
+        this.deps.forceSave();
+        this.broadcast({
+          t: Op.ServerUpdate,
+          name: this.settings.name,
+          motd: this.settings.motd,
+          maxClients: this.settings.maxClients,
+        });
+        break;
+      }
+
       case Op.BotCommand: {
         this.handleBotCommand(s, m.command, m.args);
         break;
@@ -660,6 +740,10 @@ export class Hub {
         this.setPermission(m.action, m.minGroup);
         break;
       }
+
+      case Op.SetPreset:
+        this.setPreset(s, m.presetId, m.custom);
+        break;
 
       case Op.SetClientDescription: {
         // Sua propria descricao voce sempre edita. A de outros depende de permissao.
@@ -797,6 +881,7 @@ export class Hub {
         serverId: this.settings.id,
         serverName: this.settings.name,
         motd: this.settings.motd,
+        maxClients: this.settings.maxClients,
         group: s.group,
         voiceToken: token,
         voiceHost: voice.host,
@@ -816,6 +901,7 @@ export class Hub {
     );
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
     s.send(encodeServerMessage({ t: Op.Permissions, entries: this.permissionList() }));
+    s.send(encodeServerMessage(this.presetStateMessage()));
     if (s.group >= Group.Owner) {
       s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
     }
@@ -1108,7 +1194,11 @@ export class Hub {
   // --------------------------------------------------------------- claims --
 
   private claimResp(s: Session, respawn: string, note: string, durationMin: number): void {
-    const name = canonicalRespawnName(clean(respawn, 96));
+    const preset = this.activePreset();
+    if (preset.respawns.length === 0) {
+      return this.fail(s, FailureCode.NotPermitted, 'este preset nao usa claims de respawn');
+    }
+    const name = canonicalRespawnIn(preset, clean(respawn, 96));
     if (!name) return this.fail(s, FailureCode.Malformed, 'respawn invalido');
     this.pruneClaims();
     const key = name.toLowerCase();
@@ -1891,4 +1981,3 @@ function cleanMultilineTopic(value: string, max: number): string {
   }
   return out.trim().slice(0, max);
 }
-

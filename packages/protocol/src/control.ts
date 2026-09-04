@@ -62,7 +62,13 @@ export type ClientMessage =
   | { t: Op.ChatRead; targetId: number; upToStamp: number }
   | { t: Op.ScreenSignal; targetId: number; kind: string; data: string }
   | { t: Op.SetClientDescription; fingerprint: string; description: string }
-  | { t: Op.SetPermission; action: PermissionAction; minGroup: Group };
+  | { t: Op.SetPermission; action: PermissionAction; minGroup: Group }
+  /**
+   * Aplica um preset. `presetId` referencia um embutido; `custom` carrega o
+   * JSON completo quando o preset veio de importacao (e ai o id e ignorado).
+   */
+  | { t: Op.SetPreset; presetId: string; custom: string }
+  | { t: Op.EditServer; name: string; motd: string; maxClients: number };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -73,6 +79,7 @@ export type ServerMessage =
       serverId: number;
       serverName: string;
       motd: string;
+      maxClients: number;
       /** Grupo concedido a esta sessao. */
       group: Group;
       /** Prova a identidade da sessao ao abrir o canal de voz separado. */
@@ -116,6 +123,9 @@ export type ServerMessage =
   | { t: Op.ChatReadDeliver; readerId: number; upToStamp: number }
   | { t: Op.PlayerInfoBatch; infos: PlayerInfo[] }
   | { t: Op.Permissions; entries: PermissionEntry[] }
+  /** Preset ativo. `custom` vem preenchido so quando nao e um embutido. */
+  | { t: Op.PresetState; presetId: string; custom: string }
+  | { t: Op.ServerUpdate; name: string; motd: string; maxClients: number }
   | { t: Op.ScreenSignalDeliver; senderId: number; targetId: number; kind: string; data: string };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
@@ -384,6 +394,12 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.SetPermission:
       w.u8(m.action).u8(m.minGroup);
       break;
+    case Op.SetPreset:
+      w.str(m.presetId).str(m.custom);
+      break;
+    case Op.EditServer:
+      w.str(m.name).str(m.motd).u16(m.maxClients);
+      break;
   }
   return w.finish();
 }
@@ -473,6 +489,10 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, fingerprint: r.str(), description: r.str() };
     case Op.SetPermission:
       return { t, action: r.u8() as PermissionAction, minGroup: r.u8() as Group };
+    case Op.SetPreset:
+      return { t, presetId: r.str(), custom: r.str() };
+    case Op.EditServer:
+      return { t, name: r.str(), motd: r.str(), maxClients: r.u16() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -492,6 +512,7 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
         .u16(m.serverId)
         .str(m.serverName)
         .str(m.motd)
+        .u16(m.maxClients)
         .u8(m.group)
         .bytes(m.voiceToken)
         .str(m.voiceHost)
@@ -555,6 +576,12 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.Permissions:
       w.list(m.entries, (ww, e) => ww.u8(e.action).u8(e.minGroup));
       break;
+    case Op.PresetState:
+      w.str(m.presetId).str(m.custom);
+      break;
+    case Op.ServerUpdate:
+      w.str(m.name).str(m.motd).u16(m.maxClients);
+      break;
   }
   return w.finish();
 }
@@ -573,6 +600,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         serverId: r.u16(),
         serverName: r.str(),
         motd: r.str(),
+        maxClients: r.u16(),
         group: r.u8() as Group,
         voiceToken: r.bytes(),
         voiceHost: r.str(),
@@ -625,6 +653,10 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, infos: r.list(readPlayerInfo) };
     case Op.Permissions:
       return { t, entries: r.list((rr) => ({ action: rr.u8() as PermissionAction, minGroup: rr.u8() as Group })) };
+    case Op.PresetState:
+      return { t, presetId: r.str(), custom: r.str() };
+    case Op.ServerUpdate:
+      return { t, name: r.str(), motd: r.str(), maxClients: r.u16() };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }

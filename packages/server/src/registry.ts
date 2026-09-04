@@ -11,9 +11,9 @@
  * diz de qual sessao - e portanto de qual servidor - o datagrama veio.
  */
 
-import { Group, type VoiceEdge } from '@vox/protocol';
+import { DEFAULT_PRESET_ID, findPreset, presetGroups, Group, type VoiceEdge } from '@vox/protocol';
 import { Hub, type ServerSettings } from './hub.js';
-import { loadServers, saveServers, defaultChannels, DEFAULT_BOT_CONFIG, type StoredServer } from './persistence.js';
+import { loadServers, saveServers, channelsForPreset, DEFAULT_BOT_CONFIG, type StoredServer } from './persistence.js';
 import type { Session, VoiceSink } from './session.js';
 import { clean, clamp } from './util.js';
 import { config } from './config.js';
@@ -43,7 +43,29 @@ export class Registry {
   }
 
   constructor() {
-    for (const stored of loadServers()) this.attach(stored);
+    let migrated = false;
+    for (const stored of loadServers()) {
+      if (this.migrateLegacyProvision(stored)) migrated = true;
+      this.attach(stored);
+    }
+    if (migrated) this.saveNow();
+  }
+
+  /** Corrige servidores de cliente criados antes do preset Rubinot ser aplicado no create(). */
+  private migrateLegacyProvision(stored: StoredServer): boolean {
+    if (stored.ownerId === null || stored.customPreset || stored.presetId !== DEFAULT_PRESET_ID) return false;
+    const names = stored.channels.map((channel) => channel.name);
+    if (names.length !== 3 || names[0] !== 'Lobby' || names[1] !== 'Sala 1' || names[2] !== 'Sala 2') return false;
+    const preset = findPreset(DEFAULT_PRESET_ID);
+    if (!preset) return false;
+    stored.channels = channelsForPreset(preset);
+    stored.groupDefs = presetGroups(preset).map((def) => ({ ...def }));
+    stored.botConfig = {
+      ...stored.botConfig,
+      channelName: preset.bot.channelName ?? stored.botConfig.channelName,
+    };
+    console.log(`[vox] servidor ${stored.id}: layout Rubinot aplicado na migração`);
+    return true;
   }
 
   private attach(stored: StoredServer): Hub {
@@ -104,10 +126,11 @@ export class Registry {
 
   // ------------------------------------------------------------- gestao --
 
-  create(input: Partial<ServerSettings>): Hub {
+  create(input: Partial<ServerSettings> & { presetId?: string }): Hub {
     const id = input.id && !this.hubs.has(input.id) ? input.id : this.nextServerId++;
     const requestedSlug = clean(input.slug ?? '', 32).toLowerCase();
     const slug = this.uniqueSlug(requestedSlug || slugify(input.name ?? `server-${id}`), id);
+    const preset = findPreset(input.presetId ?? DEFAULT_PRESET_ID) ?? findPreset(DEFAULT_PRESET_ID)!;
     const stored: StoredServer = {
       id,
       slug,
@@ -116,14 +139,19 @@ export class Registry {
       motd: clean(input.motd ?? '', 256),
       password: input.password ?? '',
       maxClients: clamp(input.maxClients ?? 128, 1, 4096),
-      channels: defaultChannels(),
+      channels: channelsForPreset(preset),
       groups: {},
       bans: [],
-      groupDefs: [],
+      groupDefs: presetGroups(preset).map((def) => ({ ...def })),
       claims: [],
-      botConfig: { ...DEFAULT_BOT_CONFIG },
+      botConfig: {
+        ...DEFAULT_BOT_CONFIG,
+        channelName: preset.bot.channelName ?? DEFAULT_BOT_CONFIG.channelName,
+      },
       descriptions: {},
       permissions: {},
+      presetId: preset.id,
+      customPreset: null,
     };
     const hub = this.attach(stored);
     this.scheduleSave();

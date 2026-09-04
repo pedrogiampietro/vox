@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEFAULT_PRESET_ID } from '@vox/protocol';
 import { config } from './config.js';
 
 mkdirSync(config.dataDir, { recursive: true });
@@ -35,6 +36,18 @@ database.exec(`
   }
   if (!has.has('permissions_json')) {
     database.exec("ALTER TABLE servers ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}'");
+  }
+  if (!has.has('preset_id')) {
+    // Servidores que ja existem foram montados com o layout do Rubinot; o
+    // default preserva o comportamento deles sem intervencao do dono.
+    database.exec(
+      `ALTER TABLE servers ADD COLUMN preset_id TEXT NOT NULL DEFAULT '${DEFAULT_PRESET_ID}'`,
+    );
+  }
+  if (!has.has('custom_preset_json')) {
+    // So preenchido quando o preset veio de importacao; presets embutidos
+    // ficam vazios e sao resolvidos por preset_id.
+    database.exec("ALTER TABLE servers ADD COLUMN custom_preset_json TEXT NOT NULL DEFAULT ''");
   }
 }
 

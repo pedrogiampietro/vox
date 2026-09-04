@@ -14,8 +14,10 @@
  * 2: Welcome passou a anunciar o canal de voz por WebTransport.
  * 13: Welcome passou a anunciar um hostname de voz separado (voice edge).
  * 14: Welcome passou a anunciar candidatos de edge para seleção automática.
+ * 15: presets de servidor (canais + respawns + fonte do bot num objeto so).
+ * 16: editor de servidor e capacidade anunciada no handshake.
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 16;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -73,6 +75,8 @@ export enum Op {
   ScreenSignal = 0x78,
   SetClientDescription = 0x79,
   SetPermission = 0x7a,
+  SetPreset = 0x7b,
+  EditServer = 0x7c,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -96,6 +100,8 @@ export enum Op {
   ScreenSignalDeliver = 0xc4,
   PlayerInfoBatch = 0xc5,
   Permissions = 0xc6,
+  PresetState = 0xc7,
+  ServerUpdate = 0xc8,
 }
 
 export enum BotControlAction {
@@ -321,8 +327,8 @@ export const DEFAULT_GROUP_DEFS: GroupDef[] = [
 ];
 
 /**
- * Template Tibia: categorias (canais-pai) com canais reais dentro,
- * espelhando o layout tipico de guild/war no TS3.
+ * Categoria de canais: um canal-pai com os canais reais dentro. E a unidade
+ * que os presets de servidor usam pra montar a arvore. Ver presets.ts.
  */
 export interface TemplateCategory {
   name: string;
@@ -330,68 +336,6 @@ export interface TemplateCategory {
   children: { name: string; topic: string }[];
 }
 
-export const TIBIA_TEMPLATE: readonly TemplateCategory[] = [
-  {
-    name: 'CHANELS',
-    topic: 'Canais principais / war',
-    children: [
-      { name: 'TAPETA DARASHIA FAST', topic: '' },
-      { name: 'Channel Vermelho', topic: '' },
-      { name: 'Channel 01 WAR CHANNEL', topic: 'War channel' },
-      { name: 'Channel 02', topic: '' },
-      { name: 'Channel 03', topic: '' },
-      { name: 'Channel 04', topic: '' },
-      { name: 'Channel 05', topic: '' },
-      { name: 'Channel 06', topic: '' },
-      { name: 'Channel 07', topic: '' },
-      { name: 'Channel 08', topic: '' },
-      { name: 'Channel 09', topic: '' },
-      { name: 'Channel 10', topic: '' },
-      { name: 'Channel 11', topic: '' },
-      { name: 'Channel 12', topic: '' },
-      { name: 'Channel 13', topic: '' },
-      { name: 'Channel 14', topic: '' },
-      { name: 'Channel 15', topic: '' },
-      { name: 'Channel 16', topic: '' },
-      { name: 'Channel 17', topic: '' },
-      { name: 'Channel 18', topic: '' },
-    ],
-  },
-  {
-    name: "HUNT'S",
-    topic: 'Respawns e locais de caca',
-    children: [
-      { name: 'Rotten Wasteland (North)', topic: '' },
-      { name: 'Rotten Wasteland (North-West)', topic: '' },
-      { name: 'Rotten Wasteland (South-West)', topic: '' },
-      { name: 'Livraria - Energy', topic: '' },
-      { name: 'Livraria - Fire', topic: '' },
-      { name: 'Livraria - Ice', topic: '' },
-      { name: 'Mirrored Nightmare (Thais invert)', topic: '' },
-      { name: 'Furious Crater (Cloak)', topic: '' },
-      { name: 'Claustrophobic Inferno (Brachio)', topic: '' },
-      { name: 'Piranha (North)', topic: '' },
-      { name: 'Piranha (South)', topic: '' },
-      { name: 'Gnomprona (Carrinho 1)', topic: '' },
-      { name: 'Gnomprona (Carrinho 2)', topic: '' },
-      { name: 'Gnomprona (Carrinho 3)', topic: '' },
-      { name: 'Putrefactory', topic: '' },
-      { name: 'Jaded Roots', topic: '' },
-      { name: 'Gloom Pillars', topic: '' },
-      { name: 'Darklight Core', topic: '' },
-    ],
-  },
-  {
-    name: 'PRIVATE',
-    topic: 'Canais privados',
-    children: [
-      { name: 'Private 02', topic: '' },
-      { name: 'Private 03', topic: '' },
-      { name: 'Private 04', topic: '' },
-      { name: 'Private 05', topic: '' },
-    ],
-  },
-];
 
 /** Raiz da arvore de canais / "nenhum canal". */
 export const NO_CHANNEL = 0;

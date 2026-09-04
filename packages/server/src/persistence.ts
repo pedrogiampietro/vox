@@ -1,7 +1,7 @@
 /** Persistencia permanente dos servidores em SQLite, com export JSON legivel. */
 import { readFileSync } from 'node:fs';
-import { ChannelFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, Group, PermissionAction } from '@vox/protocol';
-import type { ChannelInfo, GroupDef } from '@vox/protocol';
+import { ChannelFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, DEFAULT_PRESET_ID, Group, PermissionAction, findPreset, parsePreset } from '@vox/protocol';
+import type { ChannelInfo, GroupDef, ServerPreset } from '@vox/protocol';
 import { config } from './config.js';
 import { database, exportJson } from './sqlite.js';
 
@@ -55,6 +55,14 @@ export interface StoredServer {
   descriptions: Record<string, string>;
   /** action -> minimo grupo. Overrides sobre DEFAULT_PERMISSIONS. */
   permissions: Partial<Record<PermissionAction, Group>>;
+  /** Preset ativo: id de um embutido, ou `custom:*` quando importado. */
+  presetId: string;
+  /**
+   * Preset importado, ja validado. null quando `presetId` referencia um
+   * embutido — nesse caso a definicao vem do codigo e nao do banco, entao
+   * atualizacoes de preset chegam sozinhas no deploy.
+   */
+  customPreset: ServerPreset | null;
 }
 
 export function defaultChannels(): StoredChannel[] {
@@ -63,6 +71,40 @@ export function defaultChannels(): StoredChannel[] {
     { id: 2, parentId: 0, order: 1, name: 'Sala 1', topic: '', maxClients: 0, flags: ChannelFlags.Permanent, password: '' },
     { id: 3, parentId: 0, order: 2, name: 'Sala 2', topic: '', maxClients: 0, flags: ChannelFlags.Permanent, password: '' },
   ];
+}
+
+/** Monta a arvore inicial de canais de um preset, preservando o Lobby padrão. */
+export function channelsForPreset(preset: ServerPreset): StoredChannel[] {
+  const lobby = defaultChannels()[0]!;
+  const channels: StoredChannel[] = [{ ...lobby }];
+  let nextId = lobby.id + 1;
+
+  for (const [categoryIndex, category] of preset.channels.entries()) {
+    const parentId = nextId++;
+    channels.push({
+      id: parentId,
+      parentId: 0,
+      order: categoryIndex + 1,
+      name: category.name,
+      topic: category.topic,
+      maxClients: 0,
+      flags: ChannelFlags.Permanent,
+      password: '',
+    });
+    for (const [childIndex, child] of category.children.entries()) {
+      channels.push({
+        id: nextId++,
+        parentId,
+        order: childIndex,
+        name: child.name,
+        topic: child.topic,
+        maxClients: 0,
+        flags: ChannelFlags.Permanent,
+        password: '',
+      });
+    }
+  }
+  return channels;
 }
 
 export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
@@ -88,7 +130,7 @@ export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
 };
 
 export function defaultServer(id = 1): StoredServer {
-  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS], claims: [], botConfig: { ...DEFAULT_BOT_CONFIG }, descriptions: {}, permissions: {} };
+  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS], claims: [], botConfig: { ...DEFAULT_BOT_CONFIG }, descriptions: {}, permissions: {}, presetId: DEFAULT_PRESET_ID, customPreset: null };
 }
 
 export function loadServers(): StoredServer[] {
@@ -103,11 +145,11 @@ export function loadServers(): StoredServer[] {
 }
 
 export function saveServers(servers: StoredServer[]): void {
-  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json, claims_json, bot_config_json, descriptions_json, permissions_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json, claims_json, bot_config_json, descriptions_json, permissions_json, preset_id, custom_preset_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   database.exec('BEGIN');
   try {
     database.exec('DELETE FROM servers');
-    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs), JSON.stringify(s.claims), JSON.stringify(s.botConfig), JSON.stringify(s.descriptions ?? {}), JSON.stringify(s.permissions ?? {}));
+    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs), JSON.stringify(s.claims), JSON.stringify(s.botConfig), JSON.stringify(s.descriptions ?? {}), JSON.stringify(s.permissions ?? {}), s.presetId || DEFAULT_PRESET_ID, s.customPreset ? JSON.stringify(s.customPreset) : '');
     database.exec('COMMIT');
   } catch (err) {
     database.exec('ROLLBACK');
@@ -200,11 +242,41 @@ function normalize(s: Partial<StoredServer>): StoredServer {
   const rawGroups = s.groups ?? {};
   const migratedGroups = migrateGroupValues(rawGroups);
   const migratedGroupDefs = migrateGroupDefIds(s.groupDefs);
-  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: migratedGroups, bans: s.bans ?? [], groupDefs: migratedGroupDefs.length ? migratedGroupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig), descriptions: normalizeDescriptions(s.descriptions), permissions: normalizePermissions(s.permissions) };
+  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: migratedGroups, bans: s.bans ?? [], groupDefs: migratedGroupDefs.length ? migratedGroupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig), descriptions: normalizeDescriptions(s.descriptions), permissions: normalizePermissions(s.permissions), ...normalizePreset(s.presetId, s.customPreset) };
 }
 
 function fromRow(row: Record<string, unknown>): StoredServer {
-  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)), claims: JSON.parse(String(row.claims_json || '[]')), botConfig: JSON.parse(String(row.bot_config_json || '{}')), descriptions: JSON.parse(String(row.descriptions_json || '{}')), permissions: JSON.parse(String(row.permissions_json || '{}')) });
+  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)), claims: JSON.parse(String(row.claims_json || '[]')), botConfig: JSON.parse(String(row.bot_config_json || '{}')), descriptions: JSON.parse(String(row.descriptions_json || '{}')), permissions: JSON.parse(String(row.permissions_json || '{}')), presetId: String(row.preset_id || DEFAULT_PRESET_ID), customPreset: parseStoredPreset(row.custom_preset_json) });
+}
+
+function parseStoredPreset(raw: unknown): ServerPreset | null {
+  if (typeof raw !== 'string' || !raw) return null;
+  try {
+    return parsePreset(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Garante que presetId e customPreset contam a mesma historia. Um id `custom:*`
+ * sem o JSON correspondente (banco editado a mao, import truncado) volta pro
+ * preset padrao em vez de deixar o servidor sem canais nem catalogo.
+ */
+function normalizePreset(
+  presetId: unknown,
+  customPreset: unknown,
+): { presetId: string; customPreset: ServerPreset | null } {
+  const id = typeof presetId === 'string' && presetId ? presetId : DEFAULT_PRESET_ID;
+  if (!id.startsWith('custom:')) {
+    return findPreset(id)
+      ? { presetId: id, customPreset: null }
+      : { presetId: DEFAULT_PRESET_ID, customPreset: null };
+  }
+  const custom = customPreset && typeof customPreset === 'object'
+    ? parsePreset(customPreset)
+    : null;
+  return custom ? { presetId: custom.id, customPreset: custom } : { presetId: DEFAULT_PRESET_ID, customPreset: null };
 }
 
 function normalizePermissions(raw: unknown): Partial<Record<PermissionAction, Group>> {

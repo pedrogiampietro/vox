@@ -1017,6 +1017,17 @@ label.field {
   font-size: 12px;
 }
 
+.preset-picker {
+  height: 30px;
+  padding: 0 6px;
+  font-size: 12px;
+  min-width: 160px;
+  background: var(--ink-600);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
 /* ============================================================= player info ==
  * Badges de char Tibia (vocacao, level, online/offline) preenchidos pelo bot
  * Rubinot a partir da descricao "Main: <nome>".
@@ -1142,6 +1153,30 @@ label.field {
   font-size: 12px;
   color: var(--text-dim);
   margin: 2px 0 6px;
+}
+
+.server-edit-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--ink-900);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--amber);
+  border-radius: var(--r);
+}
+
+.server-edit-stat {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 15px;
+}
+
+.server-edit-meta {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
 .claim-form input,
@@ -2996,7 +3031,8 @@ label.field {
 .settings-row select,
 .settings-row input[type='text'],
 .settings-row input[type='password'],
-.settings-row input[type='number'] {
+.settings-row input[type='number'],
+.settings-row textarea {
   width: 100%;
 }
 
