@@ -113,6 +113,14 @@ export class Connection {
   voicePacketsReceived = 0;
   /** Pacotes de voz descartados por congestionamento. */
   droppedVoice = 0;
+  /** Leitura de `droppedVoice` no fim da janela anterior. */
+  private droppedVoicePrior = 0;
+  /** Descartes na janela corrente — e o que pesa na qualidade. */
+  private droppedVoiceWindow = 0;
+  /** Pior jitter de recepcao medido pelo mixer, em ms. */
+  rxJitterMs = 0;
+  /** Pior perda de recepcao medida pelo mixer, em %. */
+  rxLossPct = 0;
 
   constructor(private readonly handlers: ConnectionHandlers) {}
 
@@ -496,11 +504,38 @@ export class Connection {
     }
   }
 
+  /**
+   * Fecha a janela de qualidade com o que o mixer mediu na recepcao.
+   *
+   * Os descartes locais viram contagem por janela aqui. Antes a qualidade
+   * olhava `droppedVoice` acumulado, entao um unico descarte no comeco da
+   * sessao deixava o link marcado como instavel para sempre.
+   */
+  noteReception(jitterMs: number, lossPct: number): void {
+    this.rxJitterMs = jitterMs;
+    this.rxLossPct = lossPct;
+    this.droppedVoiceWindow = this.droppedVoice - this.droppedVoicePrior;
+    this.droppedVoicePrior = this.droppedVoice;
+    this.voiceQuality = this.qualityFromMetrics();
+    this.handlers.onVoiceStats?.();
+  }
+
+  /**
+   * Qualidade do link de voz a partir de tres sinais independentes: ida e
+   * volta, variacao de chegada e perda. O pior deles manda — um RTT otimo nao
+   * compensa 8% de perda, que e o que se ouve como voz picotada.
+   *
+   * Vale para os dois transportes: no QUIC usamos o RTT do proprio link de
+   * voz; no WebSocket, o de controle, que percorre o mesmo caminho.
+   */
   private qualityFromMetrics(): VoiceQuality {
-    if (this.voiceTransport !== 'quic') return 'unknown';
-    if (this.voiceRtt === 0) return 'measuring';
-    if (this.droppedVoice > 0 || this.voiceRtt > 120) return 'unstable';
-    if (this.voiceRtt > 60) return 'good';
+    const rtt = this.voiceTransport === 'quic' ? this.voiceRtt : this.rtt;
+    // Sem nenhuma medida ainda nao ha o que afirmar.
+    if (rtt === 0 && this.rxJitterMs === 0 && this.voicePacketsReceived === 0) return 'measuring';
+    if (this.droppedVoiceWindow > 0 || this.rxLossPct > 5 || this.rxJitterMs > 40 || rtt > 120) {
+      return 'unstable';
+    }
+    if (this.rxLossPct > 1 || this.rxJitterMs > 20 || rtt > 60) return 'good';
     return 'excellent';
   }
 
@@ -511,6 +546,10 @@ export class Connection {
     this.voiceRegion = '';
     this.voicePacketsSent = 0;
     this.voicePacketsReceived = 0;
+    this.rxJitterMs = 0;
+    this.rxLossPct = 0;
+    this.droppedVoicePrior = this.droppedVoice;
+    this.droppedVoiceWindow = 0;
   }
 
   private async readDatagrams(wt: WebTransport, generation: number): Promise<void> {

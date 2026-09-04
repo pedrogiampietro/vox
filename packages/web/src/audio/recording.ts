@@ -1,6 +1,7 @@
 import type { MicHealth, MicSettings } from './microphone.js';
 import type { VoiceQuality, VoiceTransport } from '../net/connection.js';
-import type { VoicePlaybackHealth } from './mixer.js';
+import type { VoicePlaybackHealth, VoiceSenderStats } from './mixer.js';
+import type { VoiceSample } from '../client.js';
 
 export interface RecordingTelemetry {
   transport: VoiceTransport;
@@ -12,6 +13,13 @@ export interface RecordingTelemetry {
   droppedVoice: number;
   mic: MicSettings & { health: MicHealth };
   playback: VoicePlaybackHealth;
+  /** Jitter e perda de cada remetente no instante da leitura. */
+  senders: VoiceSenderStats[];
+  /**
+   * Serie de qualidade ate este instante. Vai nas duas leituras, mas so a do
+   * fim cobre a gravacao inteira — e ela que permite comparar dois testes.
+   */
+  history: VoiceSample[];
 }
 
 export interface RecordingReport {
@@ -244,6 +252,8 @@ function cloneTelemetry(value: RecordingTelemetry): RecordingTelemetry {
       health: { ...value.mic.health },
     },
     playback: { ...value.playback },
+    senders: value.senders.map((sender) => ({ ...sender })),
+    history: value.history.map((sample) => ({ ...sample })),
   };
 }
 

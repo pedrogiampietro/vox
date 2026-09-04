@@ -1122,8 +1122,8 @@ function fillConnectionStatus(stat: HTMLElement): void {
   const transport = text('span', 'via', usingQuic ? 'QUIC' : 'WS');
   const voiceRtt = text('b', 'voice-rtt', usingQuic && connection.voiceRtt > 0 ? `${connection.voiceRtt}ms` : '—');
   const voiceRegion = text('span', 'voice-region', usingQuic ? (connection.voiceRegion || 'edge') : 'voz');
-  const voiceQuality = text('span', `voice-quality ${connection.voiceQuality}`, usingQuic ? voiceQualityLabel(connection.voiceQuality) : 'fallback');
-  stat.replaceChildren(
+  const voiceQuality = text('span', `voice-quality ${connection.voiceQuality}`, voiceQualityLabel(connection.voiceQuality));
+  const parts: HTMLElement[] = [
     text('span', '', 'ctrl'),
     text('b', '', `${connection.rtt}ms`),
     text('span', '', '·'),
@@ -1135,10 +1135,29 @@ function fillConnectionStatus(stat: HTMLElement): void {
     voiceRegion,
     text('span', '', '·'),
     voiceQuality,
+  ];
+
+  // Jitter e perda so aparecem depois que alguem falou: antes disso seriam dois
+  // zeros ocupando o header sem dizer nada.
+  if (connection.rxJitterMs > 0 || connection.rxLossPct > 0) {
+    parts.push(
+      text('span', '', '·'),
+      text('span', '', 'jit'),
+      text('b', `voice-jitter${connection.rxJitterMs > 40 ? ' bad' : connection.rxJitterMs > 20 ? ' warn' : ''}`,
+        `${connection.rxJitterMs.toFixed(0)}ms`),
+      text('span', '', '·'),
+      text('span', '', 'perda'),
+      text('b', `voice-loss${connection.rxLossPct > 5 ? ' bad' : connection.rxLossPct > 1 ? ' warn' : ''}`,
+        `${connection.rxLossPct.toFixed(1)}%`),
+    );
+  }
+
+  parts.push(
     text('span', '', '·'),
     text('span', '', 'drop'),
     text('b', '', String(connection.droppedVoice)),
   );
+  stat.replaceChildren(...parts);
 }
 
 function voiceQualityLabel(quality: string): string {

@@ -9,16 +9,23 @@
  * transporte ordenado (WebSocket) ele custa zero, e quando a voz migrar para
  * datagramas ele ja reordena ate REORDER_LIMIT pacotes antes de desistir do
  * buraco.
+ *
+ * Aqui tambem sai a medicao de qualidade da recepcao. Ela e por remetente
+ * porque o problema quase sempre e de um link so: mostrar uma media esconde
+ * justamente a pessoa que esta ruim.
  */
 
 import { VoiceFlags, seqDelta } from '@vox/protocol';
 import type { VoicePacket } from '@vox/protocol';
+import { SenderMetrics } from './voice-stats.js';
 
 const FRAME_US = 20_000;
 /** Quantos pacotes esperamos por um que ficou para tras antes de pular. */
 const REORDER_LIMIT = 4;
 /** Sem pacote por esse tempo, a pessoa parou de falar. */
 const TALK_TIMEOUT_MS = 400;
+/** Remetente sem pacote ha mais que isso sai do agregado. */
+const STALE_SENDER_MS = 5_000;
 
 interface RemoteVoice {
   decoder: AudioDecoder;
@@ -32,6 +39,20 @@ interface RemoteVoice {
   volume: number;
   /** Mudo local: nao viaja para o servidor, e decisao de quem ouve. */
   muted: boolean;
+  /** Jitter e perda deste remetente; ver voice-stats.ts. */
+  metrics: SenderMetrics;
+}
+
+/** Qualidade da recepcao de um remetente especifico. */
+export interface VoiceSenderStats {
+  clientId: number;
+  /** Variacao do tempo de chegada (RFC 3550), em ms. */
+  jitterMs: number;
+  /** Perda na ultima janela medida, em porcentagem. */
+  lossPct: number;
+  receivedPackets: number;
+  /** Buracos no seq desde o inicio: o que nunca chegou. */
+  lostPackets: number;
 }
 
 export interface VoicePlaybackHealth {
@@ -39,6 +60,12 @@ export interface VoicePlaybackHealth {
   latePackets: number;
   reorderedPackets: number;
   skippedPackets: number;
+  /**
+   * Pior jitter e pior perda entre quem falou na janela — nao a media. Numa
+   * call o que importa e o link que esta ruim, e a media o dilui.
+   */
+  jitterMs: number;
+  lossPct: number;
 }
 
 export class VoiceMixer {
@@ -55,6 +82,8 @@ export class VoiceMixer {
     latePackets: 0,
     reorderedPackets: 0,
     skippedPackets: 0,
+    jitterMs: 0,
+    lossPct: 0,
   };
   private recordTap: AudioNode | null = null;
   private outputVolume = 1;
@@ -96,7 +125,9 @@ export class VoiceMixer {
     if (packet.payload.length === 0) return;
     this.health.receivedPackets++;
     const voice = this.ensure(packet.clientId);
-    voice.lastPacketAt = performance.now();
+    const arrival = performance.now();
+    voice.metrics.observe(packet.seq, arrival);
+    voice.lastPacketAt = arrival;
 
     if (voice.nextSeq < 0) voice.nextSeq = packet.seq;
 
@@ -186,6 +217,7 @@ export class VoiceMixer {
       lastPacketAt: 0,
       volume: pref.volume,
       muted: pref.muted,
+      metrics: new SenderMetrics(),
     };
     gain.gain.value = pref.muted ? 0 : pref.volume;
 
@@ -202,6 +234,35 @@ export class VoiceMixer {
 
     this.voices.set(clientId, voice);
     return voice;
+  }
+
+  // ------------------------------------------------------------- medicao --
+
+  /**
+   * Fecha a janela de medicao e atualiza o agregado. Quem chama define a
+   * cadencia — a cada dois segundos ja da um numero estavel sem custar nada.
+   */
+  sample(): VoiceSenderStats[] {
+    const now = performance.now();
+    const stats: VoiceSenderStats[] = [];
+    let worstJitter = 0;
+    let worstLoss = 0;
+
+    for (const [clientId, voice] of this.voices) {
+      if (!voice.metrics.hasData) continue;
+      const snapshot = voice.metrics.closeWindow();
+      // Quem parou de falar ha muito tempo nao deve continuar pesando no
+      // numero que aparece no header.
+      if (now - voice.lastPacketAt < STALE_SENDER_MS) {
+        worstJitter = Math.max(worstJitter, snapshot.jitterMs);
+        worstLoss = Math.max(worstLoss, snapshot.lossPct);
+      }
+      stats.push({ clientId, ...snapshot });
+    }
+
+    this.health.jitterMs = Math.round(worstJitter * 10) / 10;
+    this.health.lossPct = Math.round(worstLoss * 10) / 10;
+    return stats;
   }
 
   setVolume(clientId: number, volume: number): void {

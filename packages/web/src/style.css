@@ -859,6 +859,17 @@ label.field {
   color: var(--alert);
 }
 
+/* Jitter e perda: o numero em si so importa quando sai da faixa boa. */
+.stat .voice-jitter.warn,
+.stat .voice-loss.warn {
+  color: var(--amber);
+}
+
+.stat .voice-jitter.bad,
+.stat .voice-loss.bad {
+  color: var(--alert);
+}
+
 .claims-page,
 .stats-page {
   flex: 1;

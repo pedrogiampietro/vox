@@ -6,9 +6,9 @@
 
 import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, DEFAULT_PRESET_ID, FailureCode, Group, NO_CHANNEL, Op, PermissionAction, findPreset, parsePreset } from '@vox/protocol';
 import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, ServerPreset } from '@vox/protocol';
-import { Connection, type LinkState, type Target } from './net/connection.js';
+import { Connection, type LinkState, type Target, type VoiceTransport } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
-import { VoiceMixer, type VoicePlaybackHealth } from './audio/mixer.js';
+import { VoiceMixer, type VoicePlaybackHealth, type VoiceSenderStats } from './audio/mixer.js';
 import { VoiceRecorder, type RecordingTelemetry, type VoiceRecordingResult } from './audio/recording.js';
 import { Sounds, type SoundName } from './audio/sounds.js';
 import { loadIdentity, type Identity } from './identity.js';
@@ -34,6 +34,22 @@ export interface Notice {
 
 const MAX_CHAT_LINES = 300;
 const VOLUME_KEY = 'vox.peers';
+/** Cadencia da medicao de voz: estavel o bastante, barata o bastante. */
+const VOICE_SAMPLE_MS = 2_000;
+/** ~5 minutos de historico — o suficiente para comparar antes e depois. */
+const VOICE_HISTORY_SAMPLES = 150;
+
+/** Um ponto da serie de qualidade da voz. */
+export interface VoiceSample {
+  at: number;
+  transport: VoiceTransport;
+  rttMs: number;
+  voiceRttMs: number;
+  /** Pior jitter de recepcao na janela, em ms. */
+  jitterMs: number;
+  /** Pior perda de recepcao na janela, em %. */
+  lossPct: number;
+}
 
 /** Preferencias de audio por identidade, nao por sessao: o id muda, a pessoa nao. */
 interface PeerPrefs {
@@ -106,6 +122,10 @@ export class VoxClient {
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
   private mixer: VoiceMixer | null = null;
+  /** Fecha a janela de medicao de jitter/perda em cadencia fixa. */
+  private voiceSampler: ReturnType<typeof setInterval> | null = null;
+  private senderStats: VoiceSenderStats[] = [];
+  private readonly history: VoiceSample[] = [];
   private recorder: VoiceRecorder | null = null;
   private sounds: Sounds | null = null;
   private readonly peers = new Map<string, PeerPrefs>();
@@ -291,6 +311,47 @@ export class VoxClient {
     void this.microphone.stop();
   }
 
+  // -------------------------------------------------------- qualidade --
+
+  /**
+   * Fecha a janela de medicao a cada VOICE_SAMPLE_MS e guarda uma amostra.
+   * Duas coisas dependem disso: a leitura ao vivo no header e a serie que o
+   * relatorio de gravacao carrega — sem historico nao da para dizer se uma
+   * mudanca melhorou alguma coisa.
+   */
+  private startVoiceSampler(): void {
+    if (this.voiceSampler) return;
+    this.voiceSampler = setInterval(() => {
+      const mixer = this.mixer;
+      // Offline nao ha o que medir, e uma amostra de zeros sujaria a serie que
+      // existe justamente para comparar sessoes.
+      if (!mixer || this.link !== 'online') return;
+      this.senderStats = mixer.sample();
+      this.connection.noteReception(mixer.health.jitterMs, mixer.health.lossPct);
+      this.history.push({
+        at: Date.now(),
+        transport: this.connection.voiceTransport,
+        rttMs: this.connection.rtt,
+        voiceRttMs: this.connection.voiceRtt,
+        jitterMs: mixer.health.jitterMs,
+        lossPct: mixer.health.lossPct,
+      });
+      if (this.history.length > VOICE_HISTORY_SAMPLES) this.history.shift();
+      this.onLiveConnectionStatus();
+    }, VOICE_SAMPLE_MS);
+    this.voiceSampler.unref?.();
+  }
+
+  /** Qualidade de recepcao por remetente, para a interface apontar quem esta ruim. */
+  get voiceSenders(): readonly VoiceSenderStats[] {
+    return this.senderStats;
+  }
+
+  /** Serie recente de qualidade, do mais antigo para o mais novo. */
+  get voiceHistory(): readonly VoiceSample[] {
+    return this.history;
+  }
+
   // ---------------------------------------------------------------- audio --
 
   /**
@@ -315,6 +376,7 @@ export class VoxClient {
       this.mixer = new VoiceMixer(this.ctx);
       this.mixer.volume = this.outputVolume;
       this.mixer.preamp = this.preamp;
+      this.startVoiceSampler();
     }
     this.sounds ??= new Sounds(this.ctx);
     this.sounds.enabled = this.soundsEnabled;
@@ -399,6 +461,8 @@ export class VoxClient {
       latePackets: 0,
       reorderedPackets: 0,
       skippedPackets: 0,
+      jitterMs: 0,
+      lossPct: 0,
     };
     return {
       transport: this.connection.voiceTransport,
@@ -412,6 +476,8 @@ export class VoxClient {
         health: { ...health },
       },
       playback: { ...playback },
+      senders: this.senderStats.map((sender) => ({ ...sender })),
+      history: this.history.map((sample) => ({ ...sample })),
     };
   }
 
