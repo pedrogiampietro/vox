@@ -1746,13 +1746,21 @@ function renderRespawnCatalogGroup(
   taken: Map<string, RespClaimInfo>,
   alreadyHasClaim: boolean,
 ): HTMLElement {
-  const group = $('section', 'resp-group');
+  const group = $('section', 'resp-group collapsed');
   const head = $('div', 'resp-group-head');
-  head.append(text('strong', '', title), text('span', 'label', `${items.length}`));
+  const arrow = text('span', 'resp-group-arrow', '▸');
+  head.append(arrow, text('strong', '', title), text('span', 'label', `${items.length}`));
+  head.style.cursor = 'pointer';
+  head.addEventListener('click', () => {
+    group.classList.toggle('collapsed');
+    arrow.textContent = group.classList.contains('collapsed') ? '▸' : '▾';
+  });
   group.append(head);
+  const body = $('div', 'resp-group-body');
   for (const item of items) {
-    group.append(renderRespawnCatalogRow(item, taken.get(item.name.toLowerCase()), alreadyHasClaim));
+    body.append(renderRespawnCatalogRow(item, taken.get(item.name.toLowerCase()), alreadyHasClaim));
   }
+  group.append(body);
   return group;
 }
 

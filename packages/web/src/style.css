@@ -1292,12 +1292,24 @@ label.field {
   gap: 4px;
 }
 
+.resp-group.collapsed .resp-group-body {
+  display: none;
+}
+
 .resp-group-head {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 7px 2px 3px;
   border-bottom: 1px solid var(--line);
+  user-select: none;
+}
+
+.resp-group-arrow {
+  font-size: 11px;
+  color: var(--text-2);
+  width: 10px;
+  flex-shrink: 0;
 }
 
 .resp-group-head strong {
