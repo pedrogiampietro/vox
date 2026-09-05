@@ -24,6 +24,7 @@ export class ScreenShare {
   error = '';
 
   private readonly peers = new Map<number, RTCPeerConnection>();
+  private readonly pendingCandidates = new Map<number, RTCIceCandidateInit[]>();
 
   constructor(
     private readonly provider: ScreenPeerProvider,
@@ -152,8 +153,6 @@ export class ScreenShare {
     try {
       if (kind === 'offer') {
         if (pc.signalingState === 'have-local-offer') {
-          // Glare: ambos enviaram oferta ao mesmo tempo.
-          // O lado com ID menor faz rollback e aceita a oferta do outro.
           if (senderId > this.provider.selfId()) {
             await pc.setLocalDescription({ type: 'rollback' });
           } else {
@@ -161,6 +160,7 @@ export class ScreenShare {
           }
         }
         await pc.setRemoteDescription(JSON.parse(data) as RTCSessionDescriptionInit);
+        await this.flushCandidates(senderId, pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         this.signal(senderId, 'answer', JSON.stringify(pc.localDescription));
@@ -169,10 +169,18 @@ export class ScreenShare {
       if (kind === 'answer') {
         if (pc.signalingState !== 'have-local-offer') return;
         await pc.setRemoteDescription(JSON.parse(data) as RTCSessionDescriptionInit);
+        await this.flushCandidates(senderId, pc);
         return;
       }
       if (kind === 'candidate' && data) {
-        await pc.addIceCandidate(JSON.parse(data) as RTCIceCandidateInit);
+        const candidate = JSON.parse(data) as RTCIceCandidateInit;
+        if (!pc.remoteDescription) {
+          let queue = this.pendingCandidates.get(senderId);
+          if (!queue) { queue = []; this.pendingCandidates.set(senderId, queue); }
+          queue.push(candidate);
+        } else {
+          await pc.addIceCandidate(candidate);
+        }
       }
     } catch (err) {
       this.error = `falha no compartilhamento: ${String(err)}`;
@@ -225,9 +233,17 @@ export class ScreenShare {
     return pc;
   }
 
+  private async flushCandidates(peerId: number, pc: RTCPeerConnection): Promise<void> {
+    const queued = this.pendingCandidates.get(peerId);
+    if (!queued) return;
+    this.pendingCandidates.delete(peerId);
+    for (const c of queued) await pc.addIceCandidate(c);
+  }
+
   private dropRemote(clientId: number): void {
     this.peers.get(clientId)?.close();
     this.peers.delete(clientId);
+    this.pendingCandidates.delete(clientId);
     this.remotes.delete(clientId);
     this.onChange();
   }
