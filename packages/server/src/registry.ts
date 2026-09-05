@@ -29,6 +29,9 @@ export class Registry {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private nextServerId = 1;
 
+  onHubCreated: ((hubId: number) => void) | null = null;
+  onHubRemoved: ((hubId: number) => void) | null = null;
+
   private voiceInfo: { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] } = {
     host: '',
     port: 0,
@@ -167,6 +170,7 @@ export class Registry {
     };
     const hub = this.attach(stored);
     this.scheduleSave();
+    this.onHubCreated?.(hub.id);
     return hub;
   }
 
@@ -207,6 +211,7 @@ export class Registry {
     hub.shutdown('servidor removido');
     this.hubs.delete(id);
     this.scheduleSave();
+    this.onHubRemoved?.(id);
     return true;
   }
 

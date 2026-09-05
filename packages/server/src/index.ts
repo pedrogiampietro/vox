@@ -25,6 +25,7 @@ import { startBackups } from './backup.js';
 import { closeDeusotBrowser } from '../../bot/src/scrapers/deusot.js';
 import { closeDeusoldBrowser } from '../../bot/src/scrapers/deusold.js';
 import { providerFor } from './bot-ctrl.js';
+import { spawnAllJukeboxes, spawnJukebox, stopAllJukeboxes } from './jukebox-spawn.js';
 
 // --------------------------------------------------------------- estado --
 
@@ -296,11 +297,16 @@ server.listen(config.port, config.host, () => {
       bot.start().catch((err) => console.error(`[bot] servidor ${hub.id}: falha ao iniciar:`, err));
     }
   }
+
+  registry.onHubCreated = (hubId) => spawnJukebox(hubId);
+  registry.onHubRemoved = (hubId) => stopJukebox(hubId);
+  spawnAllJukeboxes(registry.list().map((h) => h.id));
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     console.log('\n[vox] encerrando...');
+    stopAllJukeboxes();
     for (const hub of registry.list()) hub.rubinot?.stop();
     void shutdownRubinotClient();
     clearInterval(sweeper);
