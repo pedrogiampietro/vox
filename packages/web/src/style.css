@@ -2319,6 +2319,13 @@ label.field {
               right var(--dur) var(--ease), bottom var(--dur) var(--ease);
 }
 
+.screen-dock.minimized {
+  width: auto;
+  max-height: none;
+  padding: 6px 10px;
+  gap: 0;
+}
+
 /* Modo expandido: encaixa na area do chat (grid-area 'talk') no lugar da
  * conversa. Enquanto expandido, .talk fica escondido — o :has() na .shell
  * cuida disso. Voltando pra reduzido, o layout se restaura sozinho. */

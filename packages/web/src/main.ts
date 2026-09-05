@@ -107,6 +107,8 @@ let renderPending = false;
 
 /** Modo expandido do dock de compartilhamento. Persiste enquanto o dock existir. */
 let screenDockExpanded = false;
+/** Dock de compartilhamento minimizado — so mostra o header. */
+let screenDockMinimized = false;
 /** Tile em foco quando ha varias telas: 'self' para propria, clientId para outros. */
 let focusedScreenId: 'self' | number | null = null;
 
@@ -118,9 +120,19 @@ if (typeof document !== 'undefined') {
     }
   });
   const releaseDrag = (): void => {
-    if (!sliderDragging) return;
-    sliderDragging = false;
-    if (renderPending) {
+    let needsRender = false;
+    if (sliderDragging) {
+      sliderDragging = false;
+      needsRender = true;
+    }
+    if (dragActive || dragClientId) {
+      clearDropHighlight();
+      if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+      dragClientId = 0;
+      dragActive = false;
+      needsRender = true;
+    }
+    if (needsRender && renderPending) {
       renderPending = false;
       render();
     }
@@ -135,7 +147,7 @@ if (typeof document !== 'undefined') {
 // ---------------------------------------------------------------- render --
 
 function render(): void {
-  if (sliderDragging) {
+  if (sliderDragging || dragActive) {
     renderPending = true;
     return;
   }
@@ -927,6 +939,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
       if (dragGhost) { dragGhost.remove(); dragGhost = null; }
       dragClientId = 0;
       dragActive = false;
+      if (renderPending) { renderPending = false; render(); }
     });
     row.addEventListener('lostpointercapture', () => {
       if (dragClientId === c.id) {
@@ -935,6 +948,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
         if (dragGhost) { dragGhost.remove(); dragGhost = null; }
         dragClientId = 0;
         dragActive = false;
+        if (renderPending) { renderPending = false; render(); }
       }
     });
   }
@@ -2453,6 +2467,7 @@ function renderScreenDock(): HTMLElement | null {
 
   const dock = $('div', 'screen-dock');
   if (screenDockExpanded) dock.classList.add('expanded');
+  if (screenDockMinimized && !screenDockExpanded) dock.classList.add('minimized');
   const head = $('div', 'screen-head');
   const focused = tiles.find((t) => t.id === focusedScreenId);
   const title = focused
@@ -2462,28 +2477,39 @@ function renderScreenDock(): HTMLElement | null {
     : 'compartilhamento';
   head.append(text('span', 'screen-title', title));
 
+  // Botao minimizar/restaurar — recolhe o dock para so o header.
+  const minBtn = $('button', 'ghost');
+  minBtn.textContent = screenDockMinimized ? '▲' : '▼';
+  minBtn.title = screenDockMinimized ? 'restaurar visualização' : 'minimizar';
+  minBtn.addEventListener('click', () => {
+    screenDockMinimized = !screenDockMinimized;
+    render();
+  });
+  head.append(minBtn);
+
   // Botao "voltar ao grid" quando ha varios e um focado.
-  if (tiles.length > 1) {
+  if (tiles.length > 1 && !screenDockMinimized) {
     const gridBtn = $('button', 'ghost');
     gridBtn.textContent = '▦ grade';
     gridBtn.title = 'ver todas as telas em miniatura';
     gridBtn.addEventListener('click', () => {
       focusedScreenId = null;
-      // Grid vira null; render abaixo escolhe layout de mosaico.
       forceGridMode = true;
       render();
     });
     head.append(gridBtn);
   }
 
-  const expandBtn = $('button', 'ghost');
-  expandBtn.textContent = screenDockExpanded ? '⤡ reduzir' : '⤢ expandir';
-  expandBtn.title = screenDockExpanded ? 'reduzir para o canto' : 'expandir na tela';
-  expandBtn.addEventListener('click', () => {
-    screenDockExpanded = !screenDockExpanded;
-    render();
-  });
-  head.append(expandBtn);
+  if (!screenDockMinimized) {
+    const expandBtn = $('button', 'ghost');
+    expandBtn.textContent = screenDockExpanded ? '⤡ reduzir' : '⤢ expandir';
+    expandBtn.title = screenDockExpanded ? 'reduzir para o canto' : 'expandir na tela';
+    expandBtn.addEventListener('click', () => {
+      screenDockExpanded = !screenDockExpanded;
+      render();
+    });
+    head.append(expandBtn);
+  }
 
   if (client.screen.sharing) {
     const stop = $('button', 'ghost');
@@ -2499,40 +2525,39 @@ function renderScreenDock(): HTMLElement | null {
     dock.append(err);
   }
 
-  const showGrid = forceGridMode && tiles.length > 1;
-  if (showGrid) {
-    // Mosaico: todas as telas como miniaturas, clique escolhe uma pra focar.
-    const grid = $('div', 'screen-grid');
-    for (const t of tiles) {
-      const tile = renderScreenVideo(t.label, t.stream, t.muted);
-      tile.classList.add('screen-tile-thumb');
-      tile.addEventListener('click', (e) => {
-        // Ignora clique nos botoes internos (fullscreen).
-        if ((e.target as HTMLElement).closest('.screen-full')) return;
-        focusedScreenId = t.id;
-        forceGridMode = false;
-        render();
-      });
-      grid.append(tile);
-    }
-    dock.append(grid);
-  } else if (focused) {
-    dock.append(renderScreenVideo(focused.label, focused.stream, focused.muted));
-    // Miniaturas dos outros embaixo — clique troca o foco.
-    if (tiles.length > 1) {
-      const strip = $('div', 'screen-thumbs');
+  if (!screenDockMinimized || screenDockExpanded) {
+    const showGrid = forceGridMode && tiles.length > 1;
+    if (showGrid) {
+      const grid = $('div', 'screen-grid');
       for (const t of tiles) {
-        if (t.id === focusedScreenId) continue;
-        const thumb = renderScreenVideo(t.label, t.stream, t.muted);
-        thumb.classList.add('screen-tile-thumb');
-        thumb.addEventListener('click', (e) => {
+        const tile = renderScreenVideo(t.label, t.stream, t.muted);
+        tile.classList.add('screen-tile-thumb');
+        tile.addEventListener('click', (e) => {
           if ((e.target as HTMLElement).closest('.screen-full')) return;
           focusedScreenId = t.id;
+          forceGridMode = false;
           render();
         });
-        strip.append(thumb);
+        grid.append(tile);
       }
-      dock.append(strip);
+      dock.append(grid);
+    } else if (focused) {
+      dock.append(renderScreenVideo(focused.label, focused.stream, focused.muted));
+      if (tiles.length > 1) {
+        const strip = $('div', 'screen-thumbs');
+        for (const t of tiles) {
+          if (t.id === focusedScreenId) continue;
+          const thumb = renderScreenVideo(t.label, t.stream, t.muted);
+          thumb.classList.add('screen-tile-thumb');
+          thumb.addEventListener('click', (e) => {
+            if ((e.target as HTMLElement).closest('.screen-full')) return;
+            focusedScreenId = t.id;
+            render();
+          });
+          strip.append(thumb);
+        }
+        dock.append(strip);
+      }
     }
   }
 

@@ -118,6 +118,18 @@ export class Registry {
     return this.list()[0];
   }
 
+  /**
+   * Retorna o primário apenas quando o host NÃO é um subdomain do baseDomain.
+   * Subdomains inexistentes devem rejeitar em vez de cair no primário.
+   */
+  primaryIfBase(host: string): Hub | undefined {
+    const hostname = host.split(':')[0]?.toLowerCase() ?? '';
+    const base = config.baseDomain.toLowerCase();
+    const suffix = `.${base}`;
+    if (hostname === base || !hostname.endsWith(suffix)) return this.primary();
+    return undefined;
+  }
+
   get totalClients(): number {
     let total = 0;
     for (const hub of this.hubs.values()) total += hub.clientCount;

@@ -47,7 +47,7 @@ export function attachWebSocket(
 
     const hub = route[1]
       ? registry.get(Number(route[1]))
-      : registry.getByHost(String(req.headers.host ?? '')) ?? registry.primary();
+      : registry.getByHost(String(req.headers.host ?? '')) ?? registry.primaryIfBase(String(req.headers.host ?? ''));
     if (!hub) return reject(socket, 404, 'servidor virtual inexistente');
 
     const ip = clientIp(req);

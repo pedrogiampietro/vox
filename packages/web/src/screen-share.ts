@@ -70,14 +70,16 @@ export class ScreenShare {
     this.onChange();
   }
 
-  /** Envia oferta pra todos os membros do meu canal atual. Idempotente. */
+  /** Envia oferta pra todos os membros do meu canal atual. */
   private reofferAll(): void {
     if (!this.localStream) return;
     const channelId = this.provider.selfChannelId();
     for (const member of this.provider.membersOf(channelId)) {
-      if (member.id !== this.provider.selfId() && !this.peers.has(member.id)) {
-        void this.offerTo(member.id);
-      }
+      if (member.id === this.provider.selfId()) continue;
+      const existing = this.peers.get(member.id);
+      // Pula se ja temos uma conexao enviando nossos tracks.
+      if (existing && existing.getSenders().some((s) => s.track !== null)) continue;
+      void this.offerTo(member.id);
     }
   }
 
@@ -88,7 +90,8 @@ export class ScreenShare {
   onPeerReachable(clientId: number): void {
     if (!this.localStream) return;
     if (clientId === this.provider.selfId()) return;
-    if (this.peers.has(clientId)) return;
+    const existing = this.peers.get(clientId);
+    if (existing && existing.getSenders().some((s) => s.track !== null)) return;
     const channelId = this.provider.selfChannelId();
     const inMyChannel = this.provider.membersOf(channelId).some((m) => m.id === clientId);
     if (!inMyChannel) return;
@@ -113,8 +116,19 @@ export class ScreenShare {
   stop(): void {
     for (const track of this.localStream?.getTracks() ?? []) track.stop();
     this.localStream = null;
-    for (const pc of this.peers.values()) pc.close();
-    this.peers.clear();
+    // Fecha somente PCs que eram exclusivamente de envio.
+    // PCs que tambem recebem tela de outro usuario sao mantidos.
+    for (const [peerId, pc] of this.peers) {
+      if (this.remotes.has(peerId)) {
+        // Bidirecional: remove nossos tracks mas mantem a conexao para receber.
+        for (const sender of pc.getSenders()) {
+          if (sender.track) try { pc.removeTrack(sender); } catch {}
+        }
+      } else {
+        pc.close();
+        this.peers.delete(peerId);
+      }
+    }
     this.signal(0, 'stop', '');
     this.onChange();
   }
@@ -137,6 +151,15 @@ export class ScreenShare {
     const pc = this.peerFor(senderId, false);
     try {
       if (kind === 'offer') {
+        if (pc.signalingState === 'have-local-offer') {
+          // Glare: ambos enviaram oferta ao mesmo tempo.
+          // O lado com ID menor faz rollback e aceita a oferta do outro.
+          if (senderId > this.provider.selfId()) {
+            await pc.setLocalDescription({ type: 'rollback' });
+          } else {
+            return;
+          }
+        }
         await pc.setRemoteDescription(JSON.parse(data) as RTCSessionDescriptionInit);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -144,6 +167,7 @@ export class ScreenShare {
         return;
       }
       if (kind === 'answer') {
+        if (pc.signalingState !== 'have-local-offer') return;
         await pc.setRemoteDescription(JSON.parse(data) as RTCSessionDescriptionInit);
         return;
       }
@@ -166,7 +190,15 @@ export class ScreenShare {
 
   private peerFor(clientId: number, withLocalTracks: boolean): RTCPeerConnection {
     const existing = this.peers.get(clientId);
-    if (existing) return existing;
+    if (existing) {
+      if (withLocalTracks && this.localStream) {
+        const hasSendTrack = existing.getSenders().some((s) => s.track !== null);
+        if (!hasSendTrack) {
+          for (const track of this.localStream.getTracks()) existing.addTrack(track, this.localStream);
+        }
+      }
+      return existing;
+    }
 
     const pc = new RTCPeerConnection(RTC_CONFIG);
     this.peers.set(clientId, pc);
