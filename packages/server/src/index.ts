@@ -25,7 +25,7 @@ import { startBackups } from './backup.js';
 import { closeDeusotBrowser } from '../../bot/src/scrapers/deusot.js';
 import { closeDeusoldBrowser } from '../../bot/src/scrapers/deusold.js';
 import { providerFor } from './bot-ctrl.js';
-import { spawnAllJukeboxes, spawnJukebox, stopAllJukeboxes } from './jukebox-spawn.js';
+import { spawnAllJukeboxes, spawnJukebox, stopAllJukeboxes, stopJukebox } from './jukebox-spawn.js';
 
 // --------------------------------------------------------------- estado --
 
