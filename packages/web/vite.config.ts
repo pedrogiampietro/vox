@@ -25,6 +25,7 @@ export default defineConfig({
         landing: fileURLToPath(new URL('./landing.html', import.meta.url)),
         customer: fileURLToPath(new URL('./customer.html', import.meta.url)),
         checkout: fileURLToPath(new URL('./checkout.html', import.meta.url)),
+        privacy: fileURLToPath(new URL('./privacy.html', import.meta.url)),
       },
     },
   },

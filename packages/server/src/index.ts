@@ -88,6 +88,10 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return serveStatic(WEB_ROOT, 'landing.html', res);
   }
 
+  if ((path === '/privacidade' || path === '/privacidade/') && hasWeb) {
+    return serveStatic(WEB_ROOT, 'privacy.html', res);
+  }
+
   if (path === '/health') {
     const hostHub = registry.getByHost(String(req.headers.host ?? ''));
     res.writeHead(200, { 'content-type': 'application/json' });

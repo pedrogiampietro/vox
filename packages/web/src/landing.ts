@@ -440,7 +440,8 @@ function renderFooter(): HTMLElement {
   const brand = $('a', 'landing-brand') as HTMLAnchorElement;
   brand.href = '/';
   brand.append(iconBrandMark(), text('span', '', 'v0x'));
-  footer.append(brand, text('span', '', 'voz para quem joga junto'), text('span', 'landing-footer-copy', `© ${new Date().getFullYear()} v0x`));
+  const privacy = landingLink('Política de privacidade', '/privacidade', 'landing-footer-copy');
+  footer.append(brand, text('span', '', 'voz para quem joga junto'), privacy, text('span', 'landing-footer-copy', `© ${new Date().getFullYear()} v0x`));
   return footer;
 }
 
