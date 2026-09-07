@@ -79,6 +79,7 @@ let connectionBackgroundRun = 0;
 let connectionCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let connectionReadyTimer: ReturnType<typeof setTimeout> | null = null;
 const CHANNEL_INFO_HEIGHT_KEY = 'vox.channel-info-height';
+const RESP_CLAIM_DURATION_MIN = 3 * 60;
 let channelInfoHeight = loadChannelInfoHeight();
 const collapsedChannels = new Set<number>();
 const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist']);
@@ -161,6 +162,11 @@ function render(): void {
     return;
   }
   const app = document.getElementById('app')!;
+  // O shell e remontado inteiro a cada mudanca de estado. Guardar o scroll da
+  // arvore antes de trocar os nos evita que um clique em um channel devolva a
+  // lista para o topo.
+  const tree = app.querySelector('.tree');
+  const treeScrollTop = tree instanceof HTMLElement ? tree.scrollTop : null;
   const chatInput = app.querySelector('.composer input') as HTMLInputElement | null;
   const hadFocus = chatInput && document.activeElement === chatInput;
   const savedValue = chatInput?.value ?? '';
@@ -169,6 +175,11 @@ function render(): void {
     app.replaceChildren(renderBrowserView({ client, serverList, connectTo, rerender: render }));
   } else {
     app.replaceChildren(renderShell());
+  }
+
+  if (treeScrollTop !== null) {
+    const newTree = app.querySelector('.tree');
+    if (newTree instanceof HTMLElement) newTree.scrollTop = treeScrollTop;
   }
 
   // O primeiro render de "sessão pronta" traz o snapshot completo para o
@@ -1610,21 +1621,8 @@ function renderRespClaimsPanel(): HTMLElement {
   const note = $('input') as HTMLInputElement;
   note.placeholder = 'nota opcional';
 
-  const duration = $('select') as HTMLSelectElement;
-  for (const [value, label] of [
-    [60, '1h'],
-    [120, '2h'],
-    [180, '3h'],
-    [240, '4h'],
-    [360, '6h'],
-    [720, '12h'],
-  ] as const) {
-    const opt = document.createElement('option');
-    opt.value = String(value);
-    opt.textContent = label;
-    if (value === 120) opt.selected = true;
-    duration.append(opt);
-  }
+  const duration = text('span', 'claim-duration', '3h');
+  duration.title = 'duração fixa do claim';
 
   const claimBtn = $('button', 'primary');
   claimBtn.textContent = 'claim';
@@ -1669,7 +1667,7 @@ function renderRespClaimsPanel(): HTMLElement {
       updateSearch();
       return;
     }
-    client.claimResp(name, note.value.trim(), Number(duration.value) || 120);
+    client.claimResp(name, note.value.trim(), RESP_CLAIM_DURATION_MIN);
     respawn.value = '';
     note.value = '';
     updateSearch();
@@ -1789,7 +1787,7 @@ function renderRespawnCatalogRow(
   }
   action.addEventListener('click', () => {
     if (claim) client.joinRespQueue(claim.id);
-    else client.claimResp(name, '', 120);
+    else client.claimResp(name, '', RESP_CLAIM_DURATION_MIN);
   });
   row.append(main, action);
   return row;
@@ -2509,9 +2507,11 @@ function renderScreenDock(): HTMLElement | null {
   }
 
   if (!screenDockMinimized) {
-    const expandBtn = $('button', 'ghost');
-    expandBtn.textContent = screenDockExpanded ? '⤡ reduzir' : '⤢ expandir';
-    expandBtn.title = screenDockExpanded ? 'reduzir para o canto' : 'expandir na tela';
+    const expandBtn = $('button', 'ghost screen-toggle');
+    expandBtn.type = 'button';
+    expandBtn.textContent = screenDockExpanded ? '↙ minimizar' : '↗ expandir';
+    expandBtn.title = screenDockExpanded ? 'minimizar para o canto' : 'expandir na tela';
+    expandBtn.setAttribute('aria-label', expandBtn.title);
     expandBtn.addEventListener('click', () => {
       screenDockExpanded = !screenDockExpanded;
       render();

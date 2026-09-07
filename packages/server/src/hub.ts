@@ -785,7 +785,7 @@ export class Hub {
       }
 
       case Op.ClaimResp:
-        this.claimResp(s, m.respawn, m.note, m.durationMin);
+        this.claimResp(s, m.respawn, m.note);
         break;
 
       case Op.ReleaseResp:
@@ -1328,7 +1328,7 @@ export class Hub {
 
   // --------------------------------------------------------------- claims --
 
-  private claimResp(s: Session, respawn: string, note: string, durationMin: number): void {
+  private claimResp(s: Session, respawn: string, note: string): void {
     const preset = this.activePreset();
     if (preset.respawns.length === 0) {
       return this.fail(s, FailureCode.NotPermitted, 'este preset nao usa claims de respawn');
@@ -1358,7 +1358,9 @@ export class Hub {
       ownerName: s.nickname,
       ownerFingerprint: s.fingerprint,
       claimedAt: now,
-      expiresAt: now + clamp(durationMin || 120, 15, 12 * 60) * 60 * 1000,
+      // Claims de respawn têm duração fixa: a regra também precisa valer para
+      // clientes antigos ou modificados que ainda enviem outro valor.
+      expiresAt: now + 3 * 60 * 60 * 1000,
       queue: [],
     };
     this.claims.set(claim.id, claim);
@@ -1379,7 +1381,7 @@ export class Hub {
       claim.ownerFingerprint = next.fingerprint;
       claim.ownerName = this.liveNameForFingerprint(next.fingerprint) || next.name;
       claim.claimedAt = now;
-      claim.expiresAt = now + 2 * 60 * 60 * 1000;
+      claim.expiresAt = now + 3 * 60 * 60 * 1000;
       this.announce(`${claim.ownerName} assumiu ${claim.respawn}`);
     } else {
       this.claims.delete(claimId);

@@ -1223,6 +1223,21 @@ label.field {
   height: 34px;
 }
 
+.claim-duration {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ink-900);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .resp-search {
   display: grid;
   gap: 5px;
