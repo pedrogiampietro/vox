@@ -48,6 +48,9 @@ import {
 import { closeMenu, openMenu } from './ui/menu.js';
 import { keyLabel, loadPttKey, savePttKey } from './ui/ptt.js';
 import { isDesktopShell } from './net/connection.js';
+import { registerPwaServiceWorker } from './pwa.js';
+
+registerPwaServiceWorker();
 
 // ------------------------------------------------------------------- state --
 

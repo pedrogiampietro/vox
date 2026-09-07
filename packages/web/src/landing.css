@@ -468,7 +468,7 @@
 
 .landing-download-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -528,6 +528,8 @@
 .landing-download-pair .landing-button { padding: 0 8px; }
 .landing-download-soon { color: var(--text-faint); font-family: var(--mono); font-size: 10px; }
 .landing-download-desktop { width: 100%; display: grid; gap: 8px; }
+.landing-install { width: 100%; cursor: pointer; }
+.landing-install:disabled { cursor: default; opacity: 0.55; }
 .landing-download-notes { display: flex; flex-wrap: wrap; gap: 12px; }
 .landing-download-note { color: var(--text-faint); font-family: var(--mono); font-size: 10px; text-decoration: none; }
 .landing-download-note:hover { color: var(--amber); }

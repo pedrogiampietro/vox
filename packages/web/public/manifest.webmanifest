@@ -1,0 +1,18 @@
+{
+  "name": "v0x — voz para quem joga junto",
+  "short_name": "v0x",
+  "description": "Voz em tempo real para guildas, com canais rápidos e baixa latência.",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0e0d0c",
+  "theme_color": "#0e0d0c",
+  "icons": [
+    {
+      "src": "/vox.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 import { iconBrandMark } from './ui/icons.js';
 import { $, text } from './ui/dom.js';
+import { registerPwaServiceWorker, setupPwaInstall } from './pwa.js';
 import './landing.css';
 
 const root = document.getElementById('landing');
@@ -149,21 +150,34 @@ function renderDownload(): HTMLElement {
   section.append(sectionIntro('baixe e escolha seu jeito', 'O Vox acompanha a sua rotina de jogo.'));
   const grid = $('div', 'landing-download-grid');
   grid.append(
-    downloadCard('web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', landingLink('Abrir Vox', '/app', 'landing-button landing-button-primary')),
-    downloadCard('desktop', 'Windows / Tauri', 'disponível agora', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', downloadDesktop()),
-    downloadCard('mobile', 'Android e iOS', 'próxima etapa', 'A mesma experiência do Vox chegando ao celular para você acompanhar o time de qualquer lugar.', text('span', 'landing-download-soon', 'roadmap em breve')),
+    downloadCard('01', 'web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', downloadWeb()),
+    downloadCard('02', 'desktop', 'Windows / Tauri', 'disponível agora', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', downloadDesktop()),
+    downloadCard('03', 'store', 'Microsoft Store', 'em preparação', 'Estamos preparando o pacote para publicação na Microsoft Store, com instalação centralizada pelo Windows.', text('span', 'landing-download-soon', 'disponível após aprovação')),
+    downloadCard('04', 'mobile', 'Android e iOS', 'próxima etapa', 'A mesma experiência do Vox chegando ao celular para você acompanhar o time de qualquer lugar.', text('span', 'landing-download-soon', 'roadmap em breve')),
   );
   section.append(grid);
   return section;
 }
 
-function downloadCard(kind: string, title: string, status: string, detail: string, action: HTMLElement): HTMLElement {
+function downloadCard(number: string, kind: string, title: string, status: string, detail: string, action: HTMLElement): HTMLElement {
   const card = $('article', `landing-download-card landing-download-${kind}`);
-  card.append(text('span', 'landing-card-number', kind === 'web' ? '01' : kind === 'desktop' ? '02' : '03'), text('span', 'landing-download-status', status), text('h3', '', title), text('p', '', detail));
+  card.append(text('span', 'landing-card-number', number), text('span', 'landing-download-status', status), text('h3', '', title), text('p', '', detail));
   const actions = $('div', 'landing-download-actions');
   actions.append(action);
   card.append(actions);
   return card;
+}
+
+function downloadWeb(): HTMLElement {
+  const wrap = $('div', 'landing-download-desktop');
+  wrap.append(landingLink('Abrir Vox', '/app', 'landing-button landing-button-primary'));
+  const install = text('button', 'landing-button landing-button-outline landing-install', 'Instalar como aplicativo') as HTMLButtonElement;
+  install.type = 'button';
+  install.hidden = true;
+  install.disabled = true;
+  setupPwaInstall(install);
+  wrap.append(install, text('span', 'landing-download-note', 'Chrome ou Edge · opção gratuita'));
+  return wrap;
 }
 
 /**
@@ -467,5 +481,6 @@ async function refreshLandingStatus(page: HTMLElement): Promise<void> {
 // O configurador usa os dados declarados acima; monte a página somente depois
 // de o módulo concluir a inicialização dessas constantes.
 if (root) {
+  registerPwaServiceWorker();
   root.append(renderLandingPage());
 }
