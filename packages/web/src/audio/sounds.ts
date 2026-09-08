@@ -1,9 +1,9 @@
 /**
  * Avisos sonoros do cliente.
  *
- * Os pacotes sao sintetizados no AudioContext: nao adicionam download nem
- * dependem de arquivos externos. A tabela e deliberadamente separada do
- * player para, no futuro, aceitar pacotes OGG/WAV sem trocar os eventos.
+ * Os pacotes de tons sao sintetizados no AudioContext. Os pacotes de voz usam
+ * SpeechSynthesis e as vozes instaladas no sistema, sem baixar arquivos e sem
+ * trocar a tabela de eventos quando adicionarmos pacotes gravados no futuro.
  */
 
 interface Blip {
@@ -28,11 +28,23 @@ export type SoundName =
   | 'screen'
   | 'claim';
 
-export type SoundPackId = 'radio' | 'minimal';
+export type SoundPackId =
+  | 'radio'
+  | 'minimal'
+  | 'voice-pt-male'
+  | 'voice-pt-female'
+  | 'voice-en-male'
+  | 'voice-en-female';
+
+export type VoiceSoundPackId = Exclude<SoundPackId, 'radio' | 'minimal'>;
 
 export const SOUND_PACK_LABELS: Record<SoundPackId, string> = {
-  radio: 'v0x Radio',
-  minimal: 'Minimal',
+  radio: 'v0x Radio (tons)',
+  minimal: 'Minimal (tons)',
+  'voice-pt-male': 'Voz masculina · Português (Brasil)',
+  'voice-pt-female': 'Voz feminina · Português (Brasil)',
+  'voice-en-male': 'Voz masculina · Inglês',
+  'voice-en-female': 'Voz feminina · Inglês',
 };
 
 export const SOUND_EVENT_LABELS: Record<SoundName, string> = {
@@ -69,7 +81,87 @@ export const DEFAULT_SOUND_EVENTS: Record<SoundName, boolean> = {
 
 type SoundPack = Record<SoundName, Blip>;
 
-const SOUND_PACKS: Record<SoundPackId, SoundPack> = {
+interface VoiceProfile {
+  lang: 'pt-BR' | 'en-US';
+  gender: 'male' | 'female';
+  rate: number;
+  pitch: number;
+  preferredNames: string[];
+}
+
+const VOICE_PACKS: Record<VoiceSoundPackId, VoiceProfile> = {
+  'voice-pt-male': {
+    lang: 'pt-BR',
+    gender: 'male',
+    rate: 1.05,
+    pitch: 0.92,
+    preferredNames: ['daniel', 'antonio', 'felipe', 'ricardo', 'male', 'masculine'],
+  },
+  'voice-pt-female': {
+    lang: 'pt-BR',
+    gender: 'female',
+    rate: 1.05,
+    pitch: 1.08,
+    preferredNames: ['maria', 'francisca', 'female', 'feminine'],
+  },
+  'voice-en-male': {
+    lang: 'en-US',
+    gender: 'male',
+    rate: 1.05,
+    pitch: 0.92,
+    preferredNames: ['david', 'richard', 'mark', 'alex', 'guy', 'male', 'masculine'],
+  },
+  'voice-en-female': {
+    lang: 'en-US',
+    gender: 'female',
+    rate: 1.05,
+    pitch: 1.08,
+    preferredNames: ['zira', 'samantha', 'jenny', 'aria', 'female', 'feminine'],
+  },
+};
+
+const VOICE_LINES: Record<'pt-BR' | 'en-US', Record<SoundName, string>> = {
+  'pt-BR': {
+    join: 'Alguém entrou',
+    leave: 'Alguém saiu',
+    message: 'Mensagem recebida',
+    poke: 'Poke recebido',
+    connected: 'Conectado',
+    lost: 'Conexão perdida',
+    mute: 'Microfone mutado',
+    unmute: 'Microfone ativado',
+    deafen: 'Fones mutados',
+    undeafen: 'Fones ativados',
+    channel: 'Troca de canal',
+    screen: 'Compartilhamento de tela',
+    claim: 'Respawn reivindicado',
+  },
+  'en-US': {
+    join: 'Someone joined',
+    leave: 'Someone left',
+    message: 'Message received',
+    poke: 'Poke received',
+    connected: 'Connected',
+    lost: 'Connection lost',
+    mute: 'Microphone muted',
+    unmute: 'Microphone unmuted',
+    deafen: 'Headphones muted',
+    undeafen: 'Headphones unmuted',
+    channel: 'Channel changed',
+    screen: 'Screen sharing',
+    claim: 'Respawn claimed',
+  },
+};
+
+export function isSoundPackId(value: unknown): value is SoundPackId {
+  return typeof value === 'string' && value in SOUND_PACK_LABELS;
+}
+
+function isVoiceSoundPackId(value: SoundPackId): value is VoiceSoundPackId {
+  return value in VOICE_PACKS;
+}
+
+const SOUND_PACKS: Record<'radio' | 'minimal', SoundPack> = {
   radio: {
     join: { tones: [523.25, 783.99], duration: 0.11, gain: 0.18 },
     leave: { tones: [523.25, 349.23], duration: 0.13, gain: 0.16 },
@@ -107,11 +199,17 @@ export class Sounds {
   private readonly bus: GainNode;
   private selectedPack: SoundPackId = 'radio';
   private readonly eventEnabled: Record<SoundName, boolean> = { ...DEFAULT_SOUND_EVENTS };
+  private voices: SpeechSynthesisVoice[] = [];
+  private readonly speech: SpeechSynthesis | null = typeof window !== 'undefined' && 'speechSynthesis' in window
+    ? window.speechSynthesis
+    : null;
 
   constructor(private readonly ctx: AudioContext) {
     this.bus = ctx.createGain();
     this.bus.gain.value = 0.7;
     this.bus.connect(ctx.destination);
+    this.refreshVoices();
+    this.speech?.addEventListener('voiceschanged', () => this.refreshVoices());
   }
 
   get pack(): SoundPackId {
@@ -119,7 +217,7 @@ export class Sounds {
   }
 
   set pack(value: SoundPackId) {
-    if (value in SOUND_PACKS) this.selectedPack = value;
+    if (isSoundPackId(value)) this.selectedPack = value;
   }
 
   set volume(v: number) {
@@ -141,6 +239,10 @@ export class Sounds {
 
   private playInternal(name: SoundName, preview: boolean): void {
     if (!this.enabled || (!preview && !this.eventEnabled[name]) || this.ctx.state !== 'running') return;
+    if (isVoiceSoundPackId(this.selectedPack)) {
+      this.speak(name);
+      return;
+    }
     const blip = SOUND_PACKS[this.selectedPack][name];
     const now = this.ctx.currentTime;
 
@@ -158,6 +260,65 @@ export class Sounds {
     env.gain.exponentialRampToValueAtTime(blip.gain, now + 0.008);
     env.gain.exponentialRampToValueAtTime(0.0001, now + blip.duration);
 
+    osc.connect(env).connect(this.bus);
+    osc.start(now);
+    osc.stop(now + blip.duration + 0.02);
+  }
+
+  private refreshVoices(): void {
+    this.voices = this.speech?.getVoices() ?? [];
+  }
+
+  private speak(name: SoundName): void {
+    const profile = VOICE_PACKS[this.selectedPack as VoiceSoundPackId];
+    if (!this.speech || !profile) {
+      // Navegadores sem SpeechSynthesis ainda entregam um aviso audível.
+      this.playBlip(name);
+      return;
+    }
+
+    const line = VOICE_LINES[profile.lang][name];
+    const utterance = new SpeechSynthesisUtterance(line);
+    utterance.lang = profile.lang;
+    utterance.rate = profile.rate;
+    utterance.pitch = profile.pitch;
+    utterance.volume = this.bus.gain.value;
+    const voice = this.pickVoice(profile);
+    if (voice) utterance.voice = voice;
+
+    // Avisos devem ser imediatos: uma sequência de eventos não pode formar
+    // uma fila de falas atrasadas depois que a situação já mudou.
+    this.speech.cancel();
+    this.speech.speak(utterance);
+  }
+
+  private pickVoice(profile: VoiceProfile): SpeechSynthesisVoice | undefined {
+    const wanted = profile.lang.toLowerCase();
+    const sameLanguage = this.voices.filter((voice) => {
+      const lang = voice.lang.toLowerCase();
+      return lang === wanted || lang.startsWith(`${wanted.slice(0, 2)}-`);
+    });
+    const preferred = sameLanguage.find((voice) => {
+      const name = voice.name.toLowerCase();
+      return profile.preferredNames.some((part) => name.includes(part));
+    });
+    return preferred ?? sameLanguage[0] ?? this.voices.find((voice) => voice.lang.toLowerCase().startsWith(wanted.slice(0, 2)));
+  }
+
+  private playBlip(name: SoundName): void {
+    const blip = SOUND_PACKS.radio[name];
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(blip.tones[0]!, now);
+    for (let i = 1; i < blip.tones.length; i++) {
+      const at = now + (blip.duration * i) / (blip.tones.length - 1);
+      osc.frequency.exponentialRampToValueAtTime(blip.tones[i]!, at);
+    }
+    const env = this.ctx.createGain();
+    env.gain.setValueAtTime(0.0001, now);
+    env.gain.exponentialRampToValueAtTime(blip.gain, now + 0.008);
+    env.gain.exponentialRampToValueAtTime(0.0001, now + blip.duration);
     osc.connect(env).connect(this.bus);
     osc.start(now);
     osc.stop(now + blip.duration + 0.02);

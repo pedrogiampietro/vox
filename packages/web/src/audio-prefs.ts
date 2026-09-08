@@ -5,7 +5,7 @@
  */
 import type { MicSettings } from './audio/microphone.js';
 import { DEFAULT_MIC } from './audio/microphone.js';
-import { DEFAULT_SOUND_EVENTS, type SoundName, type SoundPackId } from './audio/sounds.js';
+import { DEFAULT_SOUND_EVENTS, isSoundPackId, type SoundName, type SoundPackId } from './audio/sounds.js';
 
 export interface AudioPrefs {
   /** Configuracoes de captura */
@@ -46,7 +46,7 @@ export function loadAudioPrefs(serverId: number): AudioPrefs {
     const raw = localStorage.getItem(storageKey(serverId));
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<AudioPrefs>;
-      const soundPack: SoundPackId = parsed.soundPack === 'minimal' ? 'minimal' : 'radio';
+      const soundPack: SoundPackId = isSoundPackId(parsed.soundPack) ? parsed.soundPack : 'radio';
       const soundVolume = Number.isFinite(parsed.soundVolume)
         ? Math.max(0, Math.min(1, Number(parsed.soundVolume)))
         : DEFAULT_PREFS.soundVolume;

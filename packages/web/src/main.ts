@@ -3222,7 +3222,7 @@ function buildPlaybackSection(body: HTMLElement): void {
   // Sound pack
   body.append($('hr'));
   body.append(text('h3', '', 'AVISOS SONOROS'));
-  body.append(text('span', 'settings-note', 'Sons curtos do sistema, separados do volume da voz.'));
+  body.append(text('span', 'settings-note', 'Escolha tons ou uma voz masculina/feminina em português ou inglês. A voz disponível depende do sistema.'));
 
   const sndRow = $('div', 'settings-toggle');
   const sndCheck = $('input') as HTMLInputElement;
