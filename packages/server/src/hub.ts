@@ -51,6 +51,7 @@ import type { StoredBan, StoredBotConfig, StoredChannel, StoredRespClaim, Stored
 import { DEFAULT_BOT_CONFIG } from './persistence.js';
 import type { BotConfig } from '../../bot/src/bot.js';
 import { Session, type PeerSocket, type VoiceSink, type VoiceState } from './session.js';
+import { serverMetrics } from './metrics.js';
 import { clean, clamp } from './util.js';
 
 export interface ServerSettings {
@@ -629,10 +630,12 @@ export class Hub {
     if (frame.length === 0) return;
 
     if (frame[0] === FrameKind.Voice) {
+      serverMetrics.recordInbound('voice', frame.byteLength);
       if (!s.voiceLimit.take(now)) return;
       this.routeVoice(s, frame);
       return;
     }
+    serverMetrics.recordInbound('control', frame.byteLength);
     if (frame[0] !== FrameKind.Control) {
       this.kick(s, FailureCode.Malformed, 'frame desconhecido');
       return;

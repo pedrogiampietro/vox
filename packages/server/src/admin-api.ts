@@ -18,6 +18,7 @@ import { adminEnabled, config } from './config.js';
 import type { Registry } from './registry.js';
 import { createAccount, ensureAccount, findAccount, findAccountById, verifyPassword } from './accounts.js';
 import type { StoredBotConfig } from './persistence.js';
+import { serverMetrics } from './metrics.js';
 import { applyBotConfig, currentBotConfig, providerInfoFor, startBotAndWait, stopBot, testBot } from './bot-ctrl.js';
 import { addTicketMessage, createTicket, getTicket, listTickets, updateTicketStatus, type TicketStatus } from './tickets.js';
 import { list as listAudit, record as recordAudit } from './audit.js';
@@ -1130,6 +1131,9 @@ export class AdminApi {
         servers: servers.length,
       },
       role: session.ownerId === null ? 'master' : 'owner',
+      // CPU, memoria e trafego sao metricas da maquina inteira. Nao expor isso
+      // para donos de servidores virtuais evita vazar informacao da VPS.
+      runtime: session.ownerId === null ? serverMetrics.snapshot() : null,
       stamp: Date.now(),
     };
   }

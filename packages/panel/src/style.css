@@ -200,6 +200,88 @@ body {
   font-size: 24px;
 }
 
+.runtime-panel {
+  display: grid;
+  gap: 12px;
+  background:
+    linear-gradient(135deg, rgba(232, 163, 61, 0.08), transparent 44%),
+    var(--ink-800);
+}
+
+.runtime-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.runtime-health {
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: none;
+}
+
+.runtime-health-ok {
+  border-color: rgba(91, 214, 143, 0.4);
+  color: var(--signal);
+}
+
+.runtime-health-warn {
+  border-color: var(--amber-dim);
+  color: var(--amber);
+}
+
+.runtime-health-critical {
+  border-color: rgba(235, 93, 93, 0.5);
+  color: var(--alert);
+}
+
+.runtime-empty {
+  margin: 0;
+}
+
+.runtime-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runtime-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: rgba(16, 15, 14, 0.52);
+}
+
+.runtime-card strong {
+  color: var(--text);
+  font-size: 20px;
+}
+
+.runtime-card-cpu strong { color: var(--amber); }
+.runtime-card-in strong { color: #9ec7ff; }
+.runtime-card-out strong { color: var(--signal); }
+
+.runtime-details {
+  display: flex;
+  gap: 8px 18px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
 .form {
   display: grid;
   gap: 10px;
@@ -638,6 +720,10 @@ body {
   .ticket-compose {
     grid-template-columns: 1fr;
   }
+
+  .runtime-cards {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 560px) {
@@ -654,5 +740,9 @@ body {
     bottom: 12px;
     left: 12px;
     max-width: none;
+  }
+
+  .runtime-cards {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,4 +1,5 @@
 import { Group, NO_CHANNEL } from '@vox/protocol';
+import { serverMetrics } from './metrics.js';
 
 /**
  * Saida de voz alternativa (hoje, WebTransport). Quando existe, a voz sai por
@@ -110,6 +111,7 @@ export class Session {
   }
 
   send(data: Uint8Array): void {
+    serverMetrics.recordOutbound('control', data.byteLength);
     this.socket.send(data);
   }
 
@@ -118,6 +120,7 @@ export class Session {
    * outro em WebSocket convivem no mesmo canal sem o Hub saber a diferenca.
    */
   sendVoice(frame: Uint8Array): void {
+    serverMetrics.recordOutbound('voice', frame.byteLength);
     if (this.voice) this.voice.send(frame);
     else this.socket.send(frame);
   }

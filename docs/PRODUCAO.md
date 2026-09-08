@@ -208,6 +208,44 @@ systemctl restart vox.service
 O `.env`, `/etc/caddy` e os dados ficam fora do Git e não são sobrescritos pelo
 deploy.
 
+## Teste de carga e métricas
+
+O painel master exibe, na Visão Geral, CPU do processo Vox, memória RSS,
+memória usada da máquina, tráfego de entrada/saída, tráfego separado entre
+controle e voz, latência do event loop e uptime. Os contadores de banda medem
+os payloads do protocolo; cabeçalhos TCP/TLS ficam fora da conta.
+
+Para um teste local controlado, inicie o servidor com uma janela compatível
+com a quantidade de clientes. O limite padrão por IP é 8 para proteção contra
+abuso, então um teste com mais clientes precisa ser feito em ambiente de teste:
+
+```powershell
+$env:VOX_MAX_PER_IP = '0'
+$env:VOX_MAX_CLIENTS = '512'
+npm run dev:server
+```
+
+Em outro terminal:
+
+```powershell
+npm run stress -- --clients 100 --speakers 5 --duration 60
+```
+
+O comando conclui o handshake real, mede RTT p50/p95/p99 e gera voz
+sintética. Para incluir no resumo as mesmas métricas do painel, informe um
+token master:
+
+```powershell
+$env:STRESS_ADMIN_TOKEN = 'token-do-painel'
+npm run stress -- --clients 100 --speakers 5 --duration 60
+```
+
+O teste remoto exige a confirmação explícita `STRESS_CONFIRM=1`. Comece com
+20–50 clientes, observe CPU, RAM, banda e `event loop p95`, e aumente em
+degraus. Não execute carga em produção sem combinar janela e limite com quem
+opera a VPS; o script não tenta contornar limites de IP, capacidade do plano
+ou banimentos.
+
 ## Checkout Pro do Mercado Pago
 
 O checkout pago usa o Checkout Pro: o Vox cria uma preferência no servidor e

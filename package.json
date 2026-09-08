@@ -24,6 +24,7 @@
     "typecheck": "tsc -p packages/protocol && tsc -p packages/bot && tsc -p packages/server && tsc -p packages/web && tsc -p packages/panel && tsc -p packages/edge",
     "smoke": "tsx packages/server/scripts/smoke.ts",
     "smoke:claims": "tsx packages/server/scripts/claims-smoke.ts",
+    "stress": "tsx packages/server/scripts/stress.ts",
     "check:voice-stats": "tsx packages/web/scripts/voice-stats-check.ts"
   },
   "devDependencies": {

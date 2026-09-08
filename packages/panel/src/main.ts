@@ -18,7 +18,39 @@ type Overview = {
   orders: AccountOrder[];
   totals: { clients: number; servers: number };
   role: 'master' | 'owner';
+  runtime?: RuntimeMetrics | null;
   stamp: number;
+};
+
+type RuntimeMetrics = {
+  at: number;
+  uptimeSec: number;
+  cpuCount: number;
+  processCpuPercent: number;
+  hostCpuPercent: number;
+  eventLoopLagMs: number;
+  eventLoopLagP95Ms: number;
+  memory: {
+    rssBytes: number;
+    heapUsedBytes: number;
+    heapTotalBytes: number;
+    externalBytes: number;
+    systemTotalBytes: number;
+    systemFreeBytes: number;
+    systemUsedPercent: number;
+  };
+  traffic: {
+    inboundBytesPerSec: number;
+    outboundBytesPerSec: number;
+    inboundKbps: number;
+    outboundKbps: number;
+    inboundBytesTotal: number;
+    outboundBytesTotal: number;
+    controlInboundBytesTotal: number;
+    controlOutboundBytesTotal: number;
+    voiceInboundBytesTotal: number;
+    voiceOutboundBytesTotal: number;
+  };
 };
 
 type AccountOrder = {
@@ -317,6 +349,7 @@ function renderMain(): HTMLElement {
       grid.append(stat('canais', String(server.channels), server.protected ? 'com senha' : 'aberto', 'span-3'));
       grid.append(stat('admins', String(server.admins), `servidor #${server.id}`, 'span-3'));
       grid.append(stat('atualizado', overview ? new Date(overview.stamp).toLocaleTimeString() : '--', 'SSE ativo', 'span-3'));
+      grid.append(renderRuntimeMetrics(overview?.runtime ?? null));
       grid.append(renderServerSettings(detail), renderClients(detail), renderDownloads());
     } else if (activeTab === 'server') {
       grid.append(renderServerSettings(detail), renderAnnouncement(detail));
@@ -380,6 +413,96 @@ function stat(label: string, value: string, hint: string, cls: string): HTMLElem
   const box = $('div', `panel stat ${cls}`);
   box.append(text('span', 'label', label), text('strong', '', value), text('span', 'mono subtle', hint));
   return box;
+}
+
+function renderRuntimeMetrics(runtime: RuntimeMetrics | null): HTMLElement {
+  const box = $('section', 'panel span-12 runtime-panel');
+  const heading = $('div', 'runtime-heading');
+  heading.append(
+    text('div', '', 'saúde da instância'),
+    text('span', 'mono subtle', runtime ? `amostra ${new Date(runtime.at).toLocaleTimeString()}` : 'somente master'),
+  );
+  box.append(heading);
+
+  if (!runtime) {
+    box.append(text('p', 'subtle runtime-empty', 'As métricas da máquina ficam visíveis apenas para a conta master.'));
+    return box;
+  }
+
+  const health = runtimeHealth(runtime);
+  const badge = text('span', `runtime-health runtime-health-${health.kind}`, health.label);
+  heading.append(badge);
+
+  const cards = $('div', 'runtime-cards');
+  cards.append(
+    runtimeMetric('CPU do processo', `${formatPercent(runtime.processCpuPercent)}`, `${formatPercent(runtime.hostCpuPercent)} da máquina · ${runtime.cpuCount} núcleos`, 'cpu'),
+    runtimeMetric('Memória RSS', formatBytes(runtime.memory.rssBytes), `${formatPercent(runtime.memory.systemUsedPercent)} da máquina em uso`, 'memory'),
+    runtimeMetric('Banda de entrada', formatRate(runtime.traffic.inboundBytesPerSec), `${formatKbps(runtime.traffic.inboundKbps)} · total ${formatBytes(runtime.traffic.inboundBytesTotal)}`, 'in'),
+    runtimeMetric('Banda de saída', formatRate(runtime.traffic.outboundBytesPerSec), `${formatKbps(runtime.traffic.outboundKbps)} · total ${formatBytes(runtime.traffic.outboundBytesTotal)}`, 'out'),
+  );
+  box.append(cards);
+
+  const details = $('div', 'runtime-details');
+  details.append(
+    text('span', 'mono subtle', `event loop p95 ${formatMs(runtime.eventLoopLagP95Ms)} · atual ${formatMs(runtime.eventLoopLagMs)}`),
+    text('span', 'mono subtle', `voz ${formatBytes(runtime.traffic.voiceInboundBytesTotal)} in / ${formatBytes(runtime.traffic.voiceOutboundBytesTotal)} out`),
+    text('span', 'mono subtle', `controle ${formatBytes(runtime.traffic.controlInboundBytesTotal)} in / ${formatBytes(runtime.traffic.controlOutboundBytesTotal)} out`),
+    text('span', 'mono subtle', `uptime ${formatDuration(runtime.uptimeSec)}`),
+  );
+  box.append(details);
+  return box;
+}
+
+function runtimeMetric(label: string, value: string, hint: string, kind: string): HTMLElement {
+  const card = $('div', `runtime-card runtime-card-${kind}`);
+  card.append(text('span', 'label', label), text('strong', '', value), text('span', 'mono subtle', hint));
+  return card;
+}
+
+function runtimeHealth(runtime: RuntimeMetrics): { kind: 'ok' | 'warn' | 'critical'; label: string } {
+  const cpu = runtime.processCpuPercent;
+  const memory = runtime.memory.systemUsedPercent;
+  const lag = runtime.eventLoopLagP95Ms;
+  if (cpu >= 95 || memory >= 95 || lag >= 250) return { kind: 'critical', label: 'atenção imediata' };
+  if (cpu >= 80 || memory >= 85 || lag >= 100) return { kind: 'warn', label: 'carga elevada' };
+  return { kind: 'ok', label: 'saudável' };
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
+function formatKbps(value: number): string {
+  return `${value.toFixed(value >= 100 ? 0 : 1)} kbps`;
+}
+
+function formatRate(bytesPerSec: number): string {
+  return `${formatBytes(bytesPerSec)}/s`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = units[0] ?? 'KB';
+  for (let index = 1; value >= 1024 && index < units.length; index++) {
+    value /= 1024;
+    unit = units[index] ?? unit;
+  }
+  return `${value.toFixed(value >= 100 ? 0 : value >= 10 ? 1 : 2)} ${unit}`;
+}
+
+function formatMs(value: number): string {
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ms`;
+}
+
+function formatDuration(seconds: number): string {
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
 }
 
 function renderServerSettings(server: ServerDetail): HTMLElement {
