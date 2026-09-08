@@ -19,6 +19,29 @@ causa principal sozinho.
 
 ## Melhorias em ordem de impacto
 
+### 0. Observabilidade e seleção de rota
+
+O painel master agora guarda uma janela de 60 amostras e mostra CPU, event
+loop, fan-out, descartes, fila de saída, conexões de controle/voz e o estado
+de cada edge. Cada listener WebTransport registra tentativas, sucesso, falha,
+p50 e p95 do handshake; o relay também informa upstreams, sessões e tráfego
+por região.
+
+No cliente, os candidatos QUIC continuam sendo sondados em paralelo, mas a
+rota passa a lembrar o tempo de handshake e os erros consecutivos. Um edge que
+falha duas vezes entra em quarentena por 30 segundos. Se a rota ativa cair, o
+cliente volta imediatamente ao WebSocket e tenta outro candidato com backoff,
+sem deixar a interface sem áudio.
+
+O teste de matriz foi ajustado para cenários de 50, 100 e 150 clientes, com
+8, 16 e 24 falantes em 2, 4 e 8 canais. O perfil `continuous` mantém todos os
+falantes transmitindo; `realistic` intercala ciclos de fala e silêncio, além de
+variar tamanho e intervalo dos pacotes. Ele pode comparar `ws` (voz no
+controle), `ws-dedicated` (socket exclusivo de voz), `quic` ou `auto`. O
+relatório registra a divisão entre os transportes e o event loop p95. Para
+medir regiões de verdade, cada rodada ainda deve ser disparada a partir de
+origens geográficas diferentes; um único runner não representa vários IPs.
+
 ### 1. Medir e reduzir o trabalho do caminho quente
 
 O servidor agora registra o fan-out no painel: quantos pacotes entraram e
@@ -33,6 +56,11 @@ Antes de cada mudança de arquitetura, repetir o mesmo cenário e comparar:
 - pacotes descartados;
 - fan-out médio por pacote;
 - CPU do processo, CPU da máquina e banda de saída.
+
+O cliente já possui VAD com hangover para não transmitir silêncio, Opus mono
+com FEC e bitrate ajustável. O bitrate agora desce automaticamente em uma
+janela instável e volta ao valor escolhido quando a qualidade se recupera;
+isso reduz fila e perda sem alterar permanentemente a preferência do usuário.
 
 ### 2. Transformar cada edge regional em um relay multiplexado
 
@@ -52,10 +80,16 @@ número de usuários de uma mesma região.
 
 ### 3. Separar o plano de voz do plano de controle
 
-Depois do relay multiplexado, a voz deve poder rodar em processo/worker
-dedicado, enquanto autenticação, canais, chat e persistência ficam no processo
-de controle. Se uma região crescer, adicionamos edges sem duplicar o servidor
-inteiro.
+O cliente e o servidor agora já separam a voz em um WebSocket próprio quando o
+QUIC não está disponível. Isso tira a fila de áudio do socket de controle sem
+duplicar autenticação ou sessão. A próxima camada é mover esse hot path para
+um processo/worker dedicado, enquanto autenticação, canais, chat e
+persistência ficam no processo de controle.
+
+Essa é a próxima mudança estrutural. O primeiro passo recomendado é extrair
+somente o hot path de voz para um worker/serviço com contrato binário estável,
+mantendo o Hub Node como autoridade. Assim comparamos a mesma carga em Node,
+uWebSockets.js e Go/Rust sem reescrever autenticação, canais ou cobrança.
 
 ### 4. Só então avaliar outra linguagem
 

@@ -752,7 +752,7 @@ export class Hub {
       peer.sendVoice(frame, false);
     }
     for (const sink of groupedEdges.values()) sink.sendChannel!(channel.info.id, frame);
-    serverMetrics.recordVoiceFanout(frame.byteLength, recipients);
+    serverMetrics.recordVoiceFanout(frame.byteLength, recipients, `${this.id}:${channel.info.id}`);
   }
 
   // ----------------------------------------------------------- controle --

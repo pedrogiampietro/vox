@@ -217,10 +217,12 @@ npm run stress -- --clients 100 --speakers 5 --duration 60
 ```
 
 O comando conclui o handshake real, mede RTT p50/p95/p99 e gera voz
-sintética. O perfil `realistic` varia o tamanho e o intervalo dos quadros para
-se aproximar do comportamento de fala contínua. Para testar o caminho regional
+sintética. O perfil `realistic` alterna ciclos de fala e silêncio, variando
+também o tamanho e o intervalo dos quadros; `continuous` representa o pior
+caso, com todos os falantes transmitindo sem pausa. Para testar o caminho regional
 de voz, use `--voice-transport quic`; o controle continua no WebSocket da
-origem. Para incluir no resumo as mesmas métricas do painel, informe um token
+origem. Para medir o fallback sem QUIC, use `--voice-transport ws-dedicated`.
+Para incluir no resumo as mesmas métricas do painel, informe um token
 master:
 
 ```powershell
@@ -278,6 +280,27 @@ criados e apagados durante a medição. Rode com `VOX_JUKEBOX_ENABLED=0` para a
 linha de base e com `1` para medir o processo de música. A capacidade segura é
 o maior cenário que mantém cerca de 30% de folga e `event loop p95` abaixo de
 50–100 ms.
+
+### Janela de carga pela Actions
+
+O workflow manual `Production voice stress` executa em sequência os cenários
+isolados de 50, 100 e 150 clientes, com 8, 16 e 24 falantes distribuídos em 2,
+4 e 8 canais. Cada caso usa um runner separado, publica seu `report.json` como
+artefato e aguarda um intervalo de resfriamento antes do próximo. Ao final, a
+Action monta um resumo consolidado na própria página, permitindo comparar CPU,
+memória, banda, event loop, RTT, descartes e transportes sem somar as cargas.
+
+Antes de iniciar, confirme que a VPS aceita a quantidade de conexões por IP e
+combine a janela com quem opera a produção. Cadastre `STRESS_ADMIN_TOKEN` como
+Secret do repositório; ele nunca deve ser colocado no workflow ou na URL.
+Depois abra **Actions → Production voice stress → Run workflow**, informe a
+URL WSS, a duração, o transporte e digite `PRODUCAO` no campo de confirmação.
+
+Os três runners têm IPs diferentes, mas a infraestrutura do GitHub fica na
+mesma região geral. Para representar jogadores do Brasil, Europa e América do
+Norte, repita a execução a partir de máquinas ou runners nessas regiões e
+compare os artefatos pelo mesmo cenário. O workflow é manual e não agenda
+carga automaticamente.
 
 ## Checkout Pro do Mercado Pago
 

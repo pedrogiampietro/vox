@@ -1,0 +1,182 @@
+name: Production voice stress
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'URL WSS do servidor que receberá a carga'
+        required: true
+        type: string
+      duration_sec:
+        description: 'Duração de cada cenário, em segundos'
+        required: true
+        default: '60'
+        type: string
+      voice_transport:
+        description: 'Transporte de voz a comparar'
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - quic
+          - ws-dedicated
+          - ws
+      confirmation:
+        description: 'Digite PRODUCAO para confirmar a janela de carga'
+        required: true
+        type: string
+
+concurrency:
+  group: vox-production-stress
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  guard:
+    name: Confirm production load
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          TARGET_URL: ${{ inputs.target_url }}
+          DURATION_SEC: ${{ inputs.duration_sec }}
+          ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+        run: |
+          if [[ "$CONFIRMATION" != "PRODUCAO" ]]; then
+            echo 'A carga nao foi confirmada. Digite PRODUCAO exatamente.' >&2
+            exit 1
+          fi
+          if [[ ! "$TARGET_URL" =~ ^wss:// ]]; then
+            echo 'O alvo precisa ser uma URL WSS de producao.' >&2
+            exit 1
+          fi
+          if [[ ! "$DURATION_SEC" =~ ^[0-9]+$ ]] || (( DURATION_SEC < 5 || DURATION_SEC > 600 )); then
+            echo 'A duracao precisa ser um numero entre 5 e 600 segundos.' >&2
+            exit 1
+          fi
+          if [[ -z "$ADMIN_TOKEN" ]]; then
+            echo 'Cadastre o Secret STRESS_ADMIN_TOKEN antes de iniciar a carga.' >&2
+            exit 1
+          fi
+
+  stress:
+    name: '${{ matrix.name }} voice load'
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: 50-clientes
+            clients: 50
+            speakers: 8
+            channels: 2
+          - name: 100-clientes
+            clients: 100
+            speakers: 16
+            channels: 4
+          - name: 150-clientes
+            clients: 150
+            speakers: 24
+            channels: 8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Run production stress scenario
+        env:
+          STRESS_CONFIRM: '1'
+          STRESS_ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          TARGET_URL: ${{ inputs.target_url }}
+          DURATION_SEC: ${{ inputs.duration_sec }}
+          VOICE_TRANSPORT: ${{ inputs.voice_transport }}
+        run: |
+          npm run stress -- \
+            --url "$TARGET_URL" \
+            --clients '${{ matrix.clients }}' \
+            --speakers '${{ matrix.speakers }}' \
+            --channels '${{ matrix.channels }}' \
+            --duration "$DURATION_SEC" \
+            --voice-profile realistic \
+            --voice-transport "$VOICE_TRANSPORT"
+      - name: Upload scenario report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-stress-${{ matrix.name }}-${{ github.run_id }}
+          path: report.json
+          if-no-files-found: warn
+      - name: Cool down before the next scenario
+        if: always()
+        run: sleep 15
+
+  summary:
+    name: Summarize production stress
+    if: always()
+    needs: stress
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download scenario reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: production-stress-*
+          path: reports
+        continue-on-error: true
+      - name: Write run summary
+        shell: bash
+        env:
+          TARGET_URL: ${{ inputs.target_url }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const root = 'reports';
+          const output = process.env.GITHUB_STEP_SUMMARY;
+          const files = [];
+          const visit = (directory) => {
+            if (!fs.existsSync(directory)) return;
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+              const file = path.join(directory, entry.name);
+              if (entry.isDirectory()) visit(file);
+              else if (entry.name === 'report.json') files.push(file);
+            }
+          };
+          visit(root);
+          files.sort();
+
+          const rows = files.map((file) => {
+            const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const runtime = report.adminRuntime;
+            const transport = report.voiceTransports ?? {};
+            return [
+              path.basename(path.dirname(file)),
+              `${report.clientsActive}/${report.clientsRequested}`,
+              `${Math.round(report.rttMs?.p95 ?? 0)} ms`,
+              runtime ? `${Number(runtime.processCpuPercent).toFixed(1)}%` : 'n/d',
+              runtime ? `${Number(runtime.eventLoopLagP95Ms).toFixed(1)} ms` : 'n/d',
+              runtime ? `${Number(runtime.traffic?.outboundKbps ?? 0).toFixed(1)} kbps` : 'n/d',
+              `${transport.quic ?? 0} QUIC / ${transport.wsDedicated ?? 0} WS dedicado / ${transport.ws ?? 0} WS controle`,
+              report.pass ? 'PASS' : 'FAIL',
+            ];
+          });
+
+          let markdown = '# Resumo do stress de produção\n\n';
+          markdown += `Alvo: \`${process.env.TARGET_URL ?? 'informado no workflow'}\`\n\n`;
+          markdown += '| Cenário | Ativos | RTT p95 | CPU processo | Event loop p95 | Saída | Transporte | Resultado |\n';
+          markdown += '|---|---:|---:|---:|---:|---:|---|---|\n';
+          for (const row of rows) markdown += `| ${row.join(' | ')} |\n`;
+          if (rows.length === 0) markdown += '| Nenhum relatório foi gerado | — | — | — | — | — | — | — |\n';
+          fs.appendFileSync(output, markdown);
+          NODE

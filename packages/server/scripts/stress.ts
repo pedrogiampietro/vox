@@ -40,9 +40,10 @@ type Options = {
   durationSec: number;
   voiceBytes: number;
   voiceProfile: 'continuous' | 'realistic';
-  voiceTransport: 'ws' | 'quic' | 'auto';
+  voiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto';
   voiceIntervalMs: number;
   batch: number;
+  channels: number;
   adminUrl: string;
   adminToken: string;
 };
@@ -54,6 +55,9 @@ type AdminRuntime = {
   eventLoopLagP95Ms: number;
   memory: { rssBytes: number; systemUsedPercent: number };
   traffic: { inboundKbps: number; outboundKbps: number };
+  connections?: { control: number; voiceWebSocket: number; voiceQuic: number; edgeUpstreams: number; edgeSessions: number };
+  voice?: { queuedBytes: number; queuedClients: number; maxQueueBytes: number };
+  edges?: { id: string; sessions: number; connected: boolean; handshakes: { successRate: number; p50Ms: number; p95Ms: number } }[];
 };
 
 type StressSummary = {
@@ -63,6 +67,8 @@ type StressSummary = {
   socketsOpen: number;
   voiceSent: number;
   voiceReceived: number;
+  channelsRequested: number;
+  voiceTransports: { ws: number; wsDedicated: number; quic: number };
   rttMs: { p50: number; p95: number; p99: number; samples: number };
   failures: string[];
   adminRuntime: AdminRuntime | null;
@@ -126,6 +132,71 @@ class VoiceLink {
   }
 }
 
+/** Socket de voz separado, equivalente ao fallback usado pelo cliente web. */
+class DedicatedVoiceLink {
+  private readonly ws: WebSocket;
+  private authenticated = false;
+  private readonly opened: Promise<void>;
+
+  constructor(
+    url: string,
+    token: Uint8Array,
+    private readonly onVoice: () => void,
+  ) {
+    this.ws = new WebSocket(url);
+    this.ws.binaryType = 'nodebuffer';
+    this.opened = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (error) reject(error);
+        else resolve();
+      };
+      this.ws.once('open', () => this.ws.send(token));
+      this.ws.on('message', (data: Buffer) => {
+        const frame = new Uint8Array(data);
+        if (!this.authenticated) {
+          if (frame.length === 1 && frame[0] === 1) {
+            this.authenticated = true;
+            finish();
+          } else {
+            finish(new Error('fallback de voz recusado'));
+          }
+          return;
+        }
+        if (frame[0] === FrameKind.Voice) {
+          if (decodeVoice(frame)) this.onVoice();
+          return;
+        }
+        if (frame[0] === FrameKind.VoiceBatch) {
+          const batch = decodeVoiceBatch(frame);
+          if (batch) for (const voice of batch) if (decodeVoice(voice)) this.onVoice();
+        }
+      });
+      this.ws.once('error', (error) => finish(error));
+      this.ws.once('close', () => {
+        if (!this.authenticated) finish(new Error('fallback de voz fechado'));
+      });
+    });
+  }
+
+  async waitReady(): Promise<void> {
+    await withTimeout(this.opened, 5000, 'handshake WebSocket dedicado');
+  }
+
+  send(seq: number, payload: Uint8Array): void {
+    if (!this.authenticated || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(encodeVoice(seq, 0, payload));
+  }
+
+  close(): void {
+    if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+      this.ws.close();
+    }
+  }
+}
+
 const options = parseOptions();
 const runId = Math.random().toString(36).slice(2, 8);
 const failures: string[] = [];
@@ -150,14 +221,21 @@ class StressClient {
   id = 0;
   sentVoice = 0;
   receivedVoice = 0;
-  private readonly requestedVoiceTransport: 'ws' | 'quic' | 'auto';
+  private readonly requestedVoiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto';
+  private readonly desiredChannelSlot: number;
+  private readonly controlUrl: string;
+  private joinedChannel = false;
+  private channelIds: number[] = [];
   private welcome: WelcomeVoice | null = null;
-  private voiceLink: VoiceLink | null = null;
+  private voiceLink: VoiceLink | DedicatedVoiceLink | null = null;
+  private activeVoiceTransport: 'quic' | 'ws-dedicated' | null = null;
   private identity: Identity | null = null;
   private readonly opened: Promise<void>;
 
-  constructor(readonly nickname: string, url: string, voiceTransport: 'ws' | 'quic' | 'auto') {
+  constructor(readonly nickname: string, url: string, voiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto', channelSlot = 0) {
     this.requestedVoiceTransport = voiceTransport;
+    this.desiredChannelSlot = Math.max(0, Math.trunc(channelSlot));
+    this.controlUrl = url;
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'nodebuffer';
     this.opened = new Promise<void>((resolve, reject) => {
@@ -229,7 +307,15 @@ class StressClient {
         this.welcome = message;
         break;
       case Op.Snapshot:
+        this.channelIds = message.channels.map((channel) => channel.id);
         this.live = this.id > 0 && message.clients.some((client) => client.id === this.id);
+        if (this.live && !this.joinedChannel && this.desiredChannelSlot > 0 && this.channelIds.length > 1) {
+          const channelId = this.channelIds[this.desiredChannelSlot % this.channelIds.length];
+          if (channelId !== undefined) {
+            this.joinedChannel = true;
+            this.send({ t: Op.JoinChannel, channelId, password: '' });
+          }
+        }
         break;
       case Op.Pong:
         this.latencies.push(Math.max(0, Date.now() - message.stamp));
@@ -256,7 +342,7 @@ class StressClient {
 
   sendVoice(seq: number, payload: Uint8Array): void {
     if (!this.live || this.ws.readyState !== WebSocket.OPEN) return;
-    if (this.requestedVoiceTransport === 'quic' && !this.voiceLink) return;
+    if ((this.requestedVoiceTransport === 'quic' || this.requestedVoiceTransport === 'ws-dedicated') && !this.voiceLink) return;
     if (this.voiceLink) {
       this.voiceLink.send(seq, payload);
     } else {
@@ -295,6 +381,7 @@ class StressClient {
         : transport.datagrams.writable;
       if (!datagrams) throw new Error('edge sem escrita de datagramas');
       this.voiceLink = new VoiceLink(transport, datagrams, () => this.receivedVoice++);
+      this.activeVoiceTransport = 'quic';
       return true;
     } catch (error) {
       transport?.close();
@@ -308,12 +395,35 @@ class StressClient {
     }
   }
 
-  get voiceTransport(): 'ws' | 'quic' {
-    return this.voiceLink ? 'quic' : 'ws';
+  async openDedicatedVoiceLink(): Promise<boolean> {
+    const welcome = this.welcome;
+    if (!welcome) return false;
+    let link: DedicatedVoiceLink | null = null;
+    try {
+      link = new DedicatedVoiceLink(dedicatedVoiceUrl(this.controlUrl), welcome.voiceToken, () => this.receivedVoice++);
+      await link.waitReady();
+      this.voiceLink = link;
+      this.activeVoiceTransport = 'ws-dedicated';
+      return true;
+    } catch (error) {
+      link?.close();
+      this.protocolFailures.push({
+        code: FailureCode.Malformed,
+        message: `WS dedicado: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return false;
+    }
+  }
+
+  get voiceTransport(): 'ws' | 'ws-dedicated' | 'quic' {
+    return this.activeVoiceTransport ?? 'ws';
   }
 
   async close(): Promise<void> {
     this.voiceLink?.close();
+    // Mantém o transporte escolhido até o resumo ser impresso. O link já foi
+    // fechado, mas apagar o estado aqui faria toda carga dedicada aparecer
+    // como WebSocket de controle no relatório.
     if (this.ws.readyState === WebSocket.CLOSED) return;
     await new Promise<void>((resolve) => {
       let settled = false;
@@ -336,7 +446,7 @@ class StressClient {
 async function main(): Promise<void> {
   ensureSafeTarget(options.url);
   console.log(`stress target=${options.url}`);
-  console.log(`clientes=${options.clients} · speakers=${options.speakers} · duracao=${options.durationSec}s · voz=${options.voiceBytes}B/${options.voiceIntervalMs}ms · perfil=${options.voiceProfile} · transporte=${options.voiceTransport}`);
+  console.log(`clientes=${options.clients} · speakers=${options.speakers} · canais=${options.channels} · duracao=${options.durationSec}s · voz=${options.voiceBytes}B/${options.voiceIntervalMs}ms · perfil=${options.voiceProfile} · transporte=${options.voiceTransport}`);
   if (options.clients > 8) {
     console.log('aviso: confirme que a instancia permite essa quantidade por IP (VOX_MAX_PER_IP); o padrao e 8');
   }
@@ -370,7 +480,12 @@ async function main(): Promise<void> {
     for (let offset = 0; offset < options.clients; offset += options.batch) {
       const batch = Array.from(
         { length: Math.min(options.batch, options.clients - offset) },
-        (_, index) => new StressClient(`stress-${runId}-${offset + index + 1}`, options.url, options.voiceTransport),
+        (_, index) => new StressClient(
+          `stress-${runId}-${offset + index + 1}`,
+          options.url,
+          options.voiceTransport,
+          options.channels > 1 ? offset + index : 0,
+        ),
       );
       clients.push(...batch);
       await Promise.all(batch.map(async (client) => {
@@ -384,7 +499,15 @@ async function main(): Promise<void> {
     }
 
     await pollAdmin();
-    if (options.voiceTransport !== 'ws') {
+    if (options.voiceTransport === 'ws-dedicated') {
+      const voiceClients = clients.filter((client) => client.live);
+      await Promise.all(voiceClients.map((client) => client.openDedicatedVoiceLink()));
+      const dedicatedClients = voiceClients.filter((client) => client.voiceTransport === 'ws-dedicated').length;
+      console.log(`voz WebSocket dedicado: ${dedicatedClients}/${voiceClients.length} conexões`);
+      if (dedicatedClients !== voiceClients.length) {
+        failures.push(`WS dedicado abriu em ${dedicatedClients}/${voiceClients.length} clientes`);
+      }
+    } else if (options.voiceTransport !== 'ws') {
       const voiceClients = clients.filter((client) => client.live);
       const opened = await Promise.all(voiceClients.map((client) => client.openVoiceLink()));
       const quicClients = voiceClients.filter((client) => client.voiceTransport === 'quic').length;
@@ -401,19 +524,36 @@ async function main(): Promise<void> {
     const voiceStops = speakers.map((speaker, index) => {
       let speakerSequence = sequence + index;
       let timer: ReturnType<typeof setTimeout> | null = null;
+      let talking = true;
+      let phaseUntil = Date.now() + 900 + Math.floor(Math.random() * 2200) + index * 80;
       const sendNext = (): void => {
-        const size = options.voiceProfile === 'realistic'
-          ? realisticVoiceBytes(options.voiceBytes)
-          : options.voiceBytes;
-        const voicePayload = new Uint8Array(size);
-        for (let offset = 0; offset < voicePayload.length; offset++) {
-          voicePayload[offset] = (speakerSequence + offset * 31 + index * 17) & 0xff;
+        if (options.voiceProfile === 'realistic' && Date.now() >= phaseUntil) {
+          talking = !talking;
+          phaseUntil = Date.now() + (talking
+            ? 1400 + Math.floor(Math.random() * 3000)
+            : 500 + Math.floor(Math.random() * 1700));
         }
-        speaker.sendVoice(speakerSequence, voicePayload);
-        speakerSequence++;
-        sequence = Math.max(sequence, speakerSequence);
-        const jitter = options.voiceProfile === 'realistic' ? Math.floor(Math.random() * 5) : 0;
-        timer = setTimeout(sendNext, options.voiceIntervalMs + jitter);
+        if (talking) {
+          const size = options.voiceProfile === 'realistic'
+            ? realisticVoiceBytes(options.voiceBytes)
+            : options.voiceBytes;
+          const voicePayload = new Uint8Array(size);
+          for (let offset = 0; offset < voicePayload.length; offset++) {
+            voicePayload[offset] = (speakerSequence + offset * 31 + index * 17) & 0xff;
+          }
+          speaker.sendVoice(speakerSequence, voicePayload);
+          speakerSequence++;
+          sequence = Math.max(sequence, speakerSequence);
+        }
+        const jitter = options.voiceProfile === 'realistic' && talking
+          ? Math.floor(Math.random() * 5)
+          : 0;
+        // Durante o silêncio só precisamos verificar a próxima troca de fase;
+        // não há motivo para gerar um timer a cada frame de 20 ms.
+        const interval = talking
+          ? options.voiceIntervalMs + jitter
+          : Math.max(100, options.voiceIntervalMs * 8);
+        timer = setTimeout(sendNext, interval);
         timer.unref?.();
       };
       timer = setTimeout(sendNext, Math.floor((index * options.voiceIntervalMs) / Math.max(1, speakers.length)));
@@ -451,6 +591,8 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
   const latencies = clients.flatMap((client) => client.latencies);
   const sentVoice = clients.reduce((sum, client) => sum + client.sentVoice, 0);
   const receivedVoice = clients.reduce((sum, client) => sum + client.receivedVoice, 0);
+  const quic = clients.filter((client) => client.voiceTransport === 'quic').length;
+  const dedicated = clients.filter((client) => client.voiceTransport === 'ws-dedicated').length;
   const performanceFailures: string[] = [];
   const maxRttP95Ms = boundedNumber(process.env.STRESS_MAX_RTT_P95_MS, 250, 1, 60_000);
   const maxEventLoopP95Ms = boundedNumber(process.env.STRESS_MAX_EVENT_LOOP_P95_MS, 100, 1, 60_000);
@@ -458,8 +600,8 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
   if (latencies.length > 0 && rttP95 > maxRttP95Ms) {
     performanceFailures.push(`RTT p95 acima do limite (${formatMs(rttP95)} > ${maxRttP95Ms}ms)`);
   }
-  if (adminRuntime && adminRuntime.eventLoopLagMs > maxEventLoopP95Ms) {
-    performanceFailures.push(`event loop atual acima do limite (${formatMs(adminRuntime.eventLoopLagMs)} > ${maxEventLoopP95Ms}ms)`);
+  if (adminRuntime && adminRuntime.eventLoopLagP95Ms > maxEventLoopP95Ms) {
+    performanceFailures.push(`event loop p95 acima do limite (${formatMs(adminRuntime.eventLoopLagP95Ms)} > ${maxEventLoopP95Ms}ms)`);
   }
   const summaryFailures = [...failures, ...performanceFailures];
   const summary: StressSummary = {
@@ -469,6 +611,8 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
     socketsOpen: connected,
     voiceSent: sentVoice,
     voiceReceived: receivedVoice,
+    channelsRequested: options.channels,
+    voiceTransports: { ws: live - quic - dedicated, wsDedicated: dedicated, quic },
     rttMs: {
       p50: percentile(latencies, 0.50),
       p95: percentile(latencies, 0.95),
@@ -481,6 +625,7 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
   };
   console.log('\nresultado');
   console.log(`  clientes: ${live}/${clients.length} ativos (${connected} sockets abertos)`);
+  console.log(`  canais: ${options.channels} solicitados · transporte: ${quic} QUIC / ${dedicated} WS dedicado / ${live - quic - dedicated} WS controle`);
   console.log(`  voz: ${sentVoice} enviados · ${receivedVoice} recebidos`);
   console.log(`  RTT: ${latencies.length > 0 ? `p50 ${formatMs(summary.rttMs.p50)} · p95 ${formatMs(summary.rttMs.p95)} · p99 ${formatMs(summary.rttMs.p99)}` : 'sem amostras'}`);
   if (adminRuntime) {
@@ -499,7 +644,7 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
 
 function parseOptions(): Options {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.log('Uso: npm run stress -- [--clients N] [--speakers N] [--duration SEC] [--url WS_URL] [--voice-profile continuous|realistic] [--voice-transport ws|quic|auto]');
+    console.log('Uso: npm run stress -- [--clients N] [--speakers N] [--channels N] [--duration SEC] [--url WS_URL] [--voice-profile continuous|realistic] [--voice-transport ws|ws-dedicated|quic|auto]');
     console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS');
     process.exit(0);
   }
@@ -513,6 +658,7 @@ function parseOptions(): Options {
     voiceTransport: parseVoiceTransport(argument('--voice-transport') ?? process.env.STRESS_VOICE_TRANSPORT),
     voiceIntervalMs: boundedNumber(process.env.STRESS_VOICE_INTERVAL_MS, 20, 10, 1000),
     batch: boundedNumber(process.env.STRESS_BATCH, 25, 1, 100),
+    channels: boundedNumber(argument('--channels') ?? process.env.STRESS_CHANNELS, 1, 1, 256),
     adminUrl: argument('--admin-url')
       ?? process.env.STRESS_ADMIN_URL
       ?? adminUrlFor(argument('--url') ?? process.env.STRESS_URL ?? DEFAULT_URL),
@@ -520,8 +666,10 @@ function parseOptions(): Options {
   };
 }
 
-function parseVoiceTransport(raw: string | undefined): 'ws' | 'quic' | 'auto' {
-  if (raw === 'quic' || raw === 'auto') return raw;
+function parseVoiceTransport(raw: string | undefined): 'ws' | 'ws-dedicated' | 'quic' | 'auto' {
+  if (raw === 'quic' || raw === 'auto' || raw === 'ws-dedicated' || raw === 'dedicated-ws') {
+    return raw === 'dedicated-ws' ? 'ws-dedicated' : raw;
+  }
   return 'ws';
 }
 
@@ -548,6 +696,18 @@ function adminUrlFor(wsUrl: string): string {
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname = '/api/overview';
   url.search = '';
+  return url.toString();
+}
+
+function dedicatedVoiceUrl(controlUrl: string): string {
+  const url = new URL(controlUrl);
+  const match = /^\/vox(?:\/(\d+))?\/?$/i.exec(url.pathname);
+  const serverId = match?.[1];
+  if (match || url.pathname === '/' || url.pathname === '') {
+    url.pathname = serverId ? `/vox-voice/${serverId}` : '/vox-voice';
+  } else {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/vox-voice`;
+  }
   return url.toString();
 }
 

@@ -178,6 +178,10 @@ export class Microphone {
         // FEC embutido: parte do quadro anterior viaja junto e cobre perdas.
         useinbandfec: true,
         packetlossperc: 10,
+        // DTX evita pacotes de energia quase nula durante pausas; o VAD já
+        // corta a maior parte do silêncio antes do encoder, e esta é a segunda
+        // camada para os intervalos que atravessarem a histerese.
+        usedtx: true,
         complexity: 10,
       },
     } as AudioEncoderConfig;

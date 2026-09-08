@@ -17,6 +17,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { MAX_VOICE_PACKET, VOICE_PROBE_MAGIC, VOICE_TOKEN_BYTES } from '@vox/protocol';
 import { config } from './config.js';
 import { serverMetrics } from './metrics.js';
@@ -224,7 +225,7 @@ class VoiceTransportManager {
       }
       console.error(`[vox] WebTransport de ${pair.host} não ficou disponível:`, String(err));
     });
-    void acceptLoop(server.sessionStream('/vox'), this.registry);
+    void acceptLoop(server.sessionStream('/vox'), this.registry, pair.host);
     endpoint.watcher = watchCertificate(endpoint);
     console.log(`[vox] voz por WebTransport para ${pair.host} em udp/${port} (${config.wtHost})`);
     return endpoint;
@@ -358,7 +359,7 @@ function mtimeOf(path: string): number {
   }
 }
 
-async function acceptLoop(sessions: ReadableStream<unknown>, registry: Registry): Promise<void> {
+async function acceptLoop(sessions: ReadableStream<unknown>, registry: Registry, edgeId: string): Promise<void> {
   const reader = sessions.getReader();
   for (;;) {
     let session: WTSession;
@@ -371,46 +372,73 @@ async function acceptLoop(sessions: ReadableStream<unknown>, registry: Registry)
       return;
     }
     // Uma sessao ruim nao pode derrubar o laco que aceita as outras.
-    void serve(session, registry).catch(() => closeQuietly(session));
+    void serve(session, registry, edgeId).catch(() => closeQuietly(session));
   }
 }
 
-async function serve(session: WTSession, registry: Registry): Promise<void> {
-  await session.ready;
+async function serve(session: WTSession, registry: Registry, edgeId: string): Promise<void> {
+  const startedAt = performance.now();
+  let handshakeRecorded = false;
+  const recordHandshake = (success: boolean, reason = ''): void => {
+    if (handshakeRecorded) return;
+    handshakeRecorded = true;
+    serverMetrics.recordVoiceHandshake(edgeId, performance.now() - startedAt, success, reason);
+  };
 
-  const token = await withTimeout(readToken(session), HANDSHAKE_TIMEOUT_MS);
-  if (!token) return closeQuietly(session);
+  try {
+    await session.ready;
 
-  const sink = makeSink(session);
-  // O segredo identifica a sessao em qualquer servidor virtual; o caminho do
-  // WebTransport e um so justamente por isso.
-  const owner = registry.bindVoice(token.value, sink);
-  const hub = owner ? registry.hubOf(owner) : undefined;
-  await token.reply(owner && hub ? 1 : 0);
-
-  if (!owner || !hub) return closeQuietly(session);
-
-  // A partir daqui a sessao pertence a um cliente autenticado.
-  void session.closed.then(
-    () => release(owner, sink),
-    () => release(owner, sink),
-  );
-  void echoProbeStreams(session);
-
-  const reader = session.datagrams.readable.getReader();
-  for (;;) {
-    let frame: Uint8Array | undefined;
-    try {
-      const { done, value } = await reader.read();
-      if (done) break;
-      frame = value;
-    } catch {
-      break;
+    const token = await withTimeout(readToken(session), HANDSHAKE_TIMEOUT_MS);
+    if (!token) {
+      recordHandshake(false, 'token ausente ou timeout');
+      return closeQuietly(session);
     }
-    // Datagrama maior que o teto so pode ser cliente quebrado ou malicioso.
-    if (frame && frame.length <= MAX_VOICE_PACKET) hub.handleFrame(owner, frame);
+
+    const sink = makeSink(session, edgeId);
+    // O segredo identifica a sessao em qualquer servidor virtual; o caminho do
+    // WebTransport e um so justamente por isso.
+    const owner = registry.bindVoice(token.value, sink);
+    const hub = owner ? registry.hubOf(owner) : undefined;
+    await token.reply(owner && hub ? 1 : 0);
+
+    if (!owner || !hub) {
+      recordHandshake(false, 'token recusado');
+      return closeQuietly(session);
+    }
+
+    recordHandshake(true);
+    serverMetrics.recordVoiceTransport('ws', -1);
+    serverMetrics.recordVoiceTransport('quic', 1);
+    let released = false;
+    const releaseOnce = (): void => {
+      if (released) return;
+      released = true;
+      serverMetrics.recordVoiceTransport('quic', -1);
+      serverMetrics.recordVoiceTransport('ws', 1);
+      release(owner, sink);
+    };
+    // A partir daqui a sessao pertence a um cliente autenticado.
+    void session.closed.then(releaseOnce, releaseOnce);
+    void echoProbeStreams(session);
+
+    const reader = session.datagrams.readable.getReader();
+    for (;;) {
+      let frame: Uint8Array | undefined;
+      try {
+        const { done, value } = await reader.read();
+        if (done) break;
+        frame = value;
+      } catch {
+        break;
+      }
+      // Datagrama maior que o teto so pode ser cliente quebrado ou malicioso.
+      if (frame && frame.length <= MAX_VOICE_PACKET) hub.handleFrame(owner, frame);
+    }
+    releaseOnce();
+  } catch (error) {
+    recordHandshake(false, error instanceof Error ? error.message : String(error));
+    closeQuietly(session);
   }
-  release(owner, sink);
 }
 
 /**
@@ -490,7 +518,7 @@ async function echoProbeStream(stream: {
   }
 }
 
-function makeSink(session: WTSession): VoiceSink {
+function makeSink(session: WTSession, edgeId: string): VoiceSink {
   const writable = session.datagrams.createWritable
     ? session.datagrams.createWritable()
     : session.datagrams.writable!;
@@ -502,7 +530,7 @@ function makeSink(session: WTSession): VoiceSink {
     send(frame) {
       if (dead) return;
       if (inflight >= MAX_INFLIGHT) {
-        serverMetrics.recordVoiceDrop(frame.byteLength);
+        serverMetrics.recordVoiceDrop(frame.byteLength, edgeId);
         return;
       }
       inflight++;

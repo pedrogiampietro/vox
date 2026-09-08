@@ -128,6 +128,7 @@ export class VoxClient {
   private connectGeneration = 0;
   private profileSentForConnection = false;
   private profileReceivedForConnection = false;
+  private adaptiveBitrateChangedAt = 0;
 
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
@@ -172,7 +173,10 @@ export class VoxClient {
       // Métricas de voz mudam continuamente. A tela atualiza somente o
       // indicador no header; reconstruir o shell aqui faria o scroll piscar.
       onVoiceTransport: () => this.onLiveConnectionStatus(),
-      onVoiceStats: () => this.onLiveConnectionStatus(),
+      onVoiceStats: () => {
+        this.adaptVoiceBitrate();
+        this.onLiveConnectionStatus();
+      },
     });
     this.microphone = new Microphone((frame) => this.connection.sendVoice(frame));
     this.screen = new ScreenShare(
@@ -395,6 +399,29 @@ export class VoxClient {
     this.voiceSampler.unref?.();
   }
 
+  /**
+   * Mantem a preferencia escolhida como teto, mas reduz o bitrate quando a
+   * rede entra em estado instavel. Assim a voz perde menos pacotes antes de
+   * recorrer ao descarte de backpressure; quando a janela volta a ficar boa,
+   * o valor escolhido pelo usuario e restaurado.
+   */
+  private adaptVoiceBitrate(): void {
+    if (this.link !== 'online') return;
+    const quality = this.connection.voiceQuality;
+    if (quality === 'unknown' || quality === 'measuring') return;
+    const preferred = this.mic.bitrate;
+    const target = quality === 'unstable'
+      ? Math.min(preferred, 24_000)
+      : quality === 'good'
+        ? Math.min(preferred, 32_000)
+        : preferred;
+    if (target === this.microphone.settings.bitrate) return;
+    const now = Date.now();
+    if (now - this.adaptiveBitrateChangedAt < 4_000) return;
+    this.adaptiveBitrateChangedAt = now;
+    this.microphone.reconfigure({ bitrate: target });
+  }
+
   /** Qualidade de recepcao por remetente, para a interface apontar quem esta ruim. */
   get voiceSenders(): readonly VoiceSenderStats[] {
     return this.senderStats;
@@ -526,6 +553,7 @@ export class VoxClient {
       droppedVoice: this.connection.droppedVoice,
       mic: {
         ...this.mic,
+        bitrate: this.microphone.settings.bitrate,
         health: { ...health },
       },
       playback: { ...playback },

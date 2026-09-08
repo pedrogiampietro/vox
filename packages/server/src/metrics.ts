@@ -2,6 +2,40 @@ import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 
 export type TrafficKind = 'control' | 'voice';
+export type VoiceTransportKind = 'ws' | 'quic';
+
+export interface RuntimeHistoryPoint {
+  at: number;
+  processCpuPercent: number;
+  eventLoopLagP95Ms: number;
+  voiceFanoutRecipients: number;
+  voiceDroppedPackets: number;
+  voiceQueuedBytes: number;
+}
+
+export interface EdgeMetricsSnapshot {
+  id: string;
+  connected: boolean;
+  upstreams: number;
+  sessions: number;
+  handshakes: {
+    attempts: number;
+    successes: number;
+    failures: number;
+    successRate: number;
+    p50Ms: number;
+    p95Ms: number;
+    lastFailure: string;
+    lastFailureAt: number;
+    lastSuccessAt: number;
+  };
+  traffic: {
+    inboundBytesTotal: number;
+    outboundBytesTotal: number;
+    droppedPackets: number;
+    droppedBytes: number;
+  };
+}
 
 export interface RuntimeMetricsSnapshot {
   at: number;
@@ -36,6 +70,28 @@ export interface RuntimeMetricsSnapshot {
     voiceDroppedPacketsTotal: number;
     voiceDroppedBytesTotal: number;
   };
+  connections: {
+    control: number;
+    voiceWebSocket: number;
+    voiceQuic: number;
+    edgeUpstreams: number;
+    edgeSessions: number;
+  };
+  voice: {
+    queuedBytes: number;
+    queuedClients: number;
+    maxQueueBytes: number;
+    channelFanout: {
+      key: string;
+      serverId: number;
+      channelId: number;
+      frames: number;
+      recipients: number;
+      averageRecipients: number;
+    }[];
+  };
+  edges: EdgeMetricsSnapshot[];
+  history: RuntimeHistoryPoint[];
 }
 
 interface TrafficTotals {
@@ -49,6 +105,34 @@ interface TrafficTotals {
   voiceFanoutRecipients: number;
   voiceDroppedPackets: number;
   voiceDroppedBytes: number;
+}
+
+interface EdgeTotals {
+  connected: boolean;
+  upstreams: number;
+  sessions: number;
+  handshakeAttempts: number;
+  handshakeSuccesses: number;
+  handshakeFailures: number;
+  handshakeDurations: number[];
+  lastFailure: string;
+  lastFailureAt: number;
+  lastSuccessAt: number;
+  reportedP50Ms: number;
+  reportedP95Ms: number;
+  reportedFailureCount: number;
+  reportedSuccessCount: number;
+  inboundBytes: number;
+  outboundBytes: number;
+  droppedPackets: number;
+  droppedBytes: number;
+}
+
+interface ChannelTotals {
+  serverId: number;
+  channelId: number;
+  frames: number;
+  recipients: number;
 }
 
 /**
@@ -70,6 +154,19 @@ export class RuntimeMetricsCollector {
     voiceDroppedBytes: 0,
   };
 
+  private readonly connections = {
+    control: 0,
+    voiceWebSocket: 0,
+    voiceQuic: 0,
+    edgeUpstreams: 0,
+    edgeSessions: 0,
+  };
+  private readonly edges = new Map<string, EdgeTotals>();
+  private readonly channels = new Map<string, ChannelTotals>();
+  private readonly voiceQueues = new Map<string, number>();
+  private readonly history: RuntimeHistoryPoint[] = [];
+  private maxQueueBytes = 0;
+
   private previousTotals = { ...this.totals };
   private previousCpu = process.cpuUsage();
   private previousAt = process.hrtime.bigint();
@@ -89,6 +186,96 @@ export class RuntimeMetricsCollector {
     else this.totals.controlInbound += bytes;
   }
 
+  recordConnection(kind: keyof typeof this.connections, delta: number): void {
+    if (!Number.isFinite(delta) || delta === 0) return;
+    this.connections[kind] = Math.max(0, this.connections[kind] + Math.trunc(delta));
+  }
+
+  recordVoiceTransport(kind: VoiceTransportKind, delta: number): void {
+    this.recordConnection(kind === 'ws' ? 'voiceWebSocket' : 'voiceQuic', delta);
+  }
+
+  recordVoiceQueue(id: string, bytes: number): void {
+    if (!id) return;
+    const value = Number.isFinite(bytes) ? Math.max(0, Math.trunc(bytes)) : 0;
+    if (value === 0) this.voiceQueues.delete(id);
+    else this.voiceQueues.set(id, value);
+    this.maxQueueBytes = Math.max(this.maxQueueBytes, value);
+  }
+
+  releaseVoiceQueue(id: string): void {
+    if (id) this.voiceQueues.delete(id);
+  }
+
+  recordVoiceHandshake(edgeId: string, durationMs: number, success: boolean, reason = ''): void {
+    const edge = this.edge(edgeId);
+    edge.handshakeAttempts++;
+    if (success) {
+      edge.handshakeSuccesses++;
+      edge.lastSuccessAt = Date.now();
+      if (Number.isFinite(durationMs) && durationMs >= 0) {
+        edge.handshakeDurations.push(Math.min(60_000, durationMs));
+        if (edge.handshakeDurations.length > 256) edge.handshakeDurations.shift();
+      }
+    } else {
+      edge.handshakeFailures++;
+      edge.lastFailure = reason.slice(0, 160);
+      edge.lastFailureAt = Date.now();
+    }
+  }
+
+  recordEdgeUpstream(edgeId: string, delta: number): void {
+    const edge = this.edge(edgeId);
+    edge.upstreams = Math.max(0, edge.upstreams + Math.trunc(delta));
+    edge.connected = edge.upstreams > 0;
+    this.recordConnection('edgeUpstreams', delta);
+  }
+
+  recordEdgeSession(edgeId: string, delta: number): void {
+    const edge = this.edge(edgeId);
+    edge.sessions = Math.max(0, edge.sessions + Math.trunc(delta));
+    this.recordConnection('edgeSessions', delta);
+  }
+
+  recordEdgeTraffic(edgeId: string, direction: 'inbound' | 'outbound', bytes: number, dropped = false): void {
+    if (!Number.isFinite(bytes) || bytes <= 0) return;
+    const edge = this.edge(edgeId);
+    if (dropped) {
+      edge.droppedPackets++;
+      edge.droppedBytes += bytes;
+      return;
+    }
+    if (direction === 'inbound') edge.inboundBytes += bytes;
+    else edge.outboundBytes += bytes;
+  }
+
+  updateEdgeStatus(edgeId: string, status: {
+    attempts: number;
+    successes: number;
+    failures: number;
+    p50Ms: number;
+    p95Ms: number;
+    sessions: number;
+    lastFailure: string;
+  }): void {
+    const edge = this.edge(edgeId);
+    const sessions = Math.max(0, Math.trunc(status.sessions));
+    this.recordConnection('edgeSessions', sessions - edge.sessions);
+    edge.sessions = sessions;
+    edge.handshakeAttempts = Math.max(0, Math.trunc(status.attempts));
+    edge.handshakeSuccesses = Math.max(0, Math.trunc(status.successes));
+    edge.handshakeFailures = Math.max(0, Math.trunc(status.failures));
+    edge.reportedP50Ms = finiteNonNegative(status.p50Ms);
+    edge.reportedP95Ms = finiteNonNegative(status.p95Ms);
+    if (status.lastFailure) {
+      edge.lastFailure = status.lastFailure.slice(0, 160);
+      if (edge.handshakeFailures > edge.reportedFailureCount) edge.lastFailureAt = Date.now();
+    }
+    if (edge.handshakeSuccesses > edge.reportedSuccessCount) edge.lastSuccessAt = Date.now();
+    edge.reportedFailureCount = edge.handshakeFailures;
+    edge.reportedSuccessCount = edge.handshakeSuccesses;
+  }
+
   recordOutbound(kind: TrafficKind, bytes: number): void {
     if (!Number.isFinite(bytes) || bytes <= 0) return;
     this.totals.outbound += bytes;
@@ -101,18 +288,34 @@ export class RuntimeMetricsCollector {
    * atualizacao para os N destinatarios, em vez de repetir os mesmos testes
    * de tipo e validade para cada socket.
    */
-  recordVoiceFanout(bytes: number, recipients: number): void {
+  recordVoiceFanout(bytes: number, recipients: number, channelKey = ''): void {
     if (!Number.isFinite(bytes) || bytes <= 0 || !Number.isInteger(recipients) || recipients <= 0) return;
     this.totals.outbound += bytes * recipients;
     this.totals.voiceOutbound += bytes * recipients;
     this.totals.voiceFanoutFrames++;
     this.totals.voiceFanoutRecipients += recipients;
+    if (channelKey) {
+      const [serverRaw, channelRaw] = channelKey.split(':');
+      const serverId = Number(serverRaw);
+      const channelId = Number(channelRaw);
+      if (Number.isInteger(serverId) && Number.isInteger(channelId)) {
+        const channel = this.channels.get(channelKey) ?? { serverId, channelId, frames: 0, recipients: 0 };
+        channel.frames++;
+        channel.recipients += recipients;
+        this.channels.set(channelKey, channel);
+        if (this.channels.size > 256) {
+          const first = this.channels.keys().next().value as string | undefined;
+          if (first) this.channels.delete(first);
+        }
+      }
+    }
   }
 
-  recordVoiceDrop(bytes: number): void {
+  recordVoiceDrop(bytes: number, edgeId = ''): void {
     if (!Number.isFinite(bytes) || bytes <= 0) return;
     this.totals.voiceDroppedPackets++;
     this.totals.voiceDroppedBytes += bytes;
+    if (edgeId) this.recordEdgeTraffic(edgeId, 'outbound', bytes, true);
   }
 
   snapshot(now = Date.now()): RuntimeMetricsSnapshot {
@@ -146,6 +349,16 @@ export class RuntimeMetricsCollector {
     this.previousCpu = cpu;
     this.previousTotals = { ...this.totals };
     this.lastSnapshotAt = now;
+    const point: RuntimeHistoryPoint = {
+      at: now,
+      processCpuPercent: round(Math.max(0, (cpuMicros / elapsedMicros) * 100)),
+      eventLoopLagP95Ms: round(lagP95),
+      voiceFanoutRecipients: this.totals.voiceFanoutRecipients,
+      voiceDroppedPackets: this.totals.voiceDroppedPackets,
+      voiceQueuedBytes: [...this.voiceQueues.values()].reduce((sum, value) => sum + value, 0),
+    };
+    this.history.push(point);
+    if (this.history.length > 60) this.history.shift();
     this.lastSnapshot = {
       at: now,
       uptimeSec: Math.round(process.uptime()),
@@ -182,8 +395,79 @@ export class RuntimeMetricsCollector {
         voiceDroppedPacketsTotal: this.totals.voiceDroppedPackets,
         voiceDroppedBytesTotal: this.totals.voiceDroppedBytes,
       },
+      connections: { ...this.connections },
+      voice: {
+        queuedBytes: point.voiceQueuedBytes,
+        queuedClients: this.voiceQueues.size,
+        maxQueueBytes: this.maxQueueBytes,
+        channelFanout: [...this.channels.values()]
+          .sort((a, b) => b.recipients - a.recipients)
+          .slice(0, 12)
+          .map((channel) => ({
+            key: `${channel.serverId}:${channel.channelId}`,
+            serverId: channel.serverId,
+            channelId: channel.channelId,
+            frames: channel.frames,
+            recipients: channel.recipients,
+            averageRecipients: channel.frames > 0 ? round(channel.recipients / channel.frames) : 0,
+          })),
+      },
+      edges: [...this.edges.entries()].map(([id, edge]) => ({
+        id,
+        connected: edge.connected,
+        upstreams: edge.upstreams,
+        sessions: edge.sessions,
+        handshakes: {
+          attempts: edge.handshakeAttempts,
+          successes: edge.handshakeSuccesses,
+          failures: edge.handshakeFailures,
+          successRate: edge.handshakeAttempts > 0
+            ? round((edge.handshakeSuccesses / edge.handshakeAttempts) * 100)
+            : 0,
+          p50Ms: edge.reportedP50Ms || percentile(edge.handshakeDurations, 0.5),
+          p95Ms: edge.reportedP95Ms || percentile(edge.handshakeDurations, 0.95),
+          lastFailure: edge.lastFailure,
+          lastFailureAt: edge.lastFailureAt,
+          lastSuccessAt: edge.lastSuccessAt,
+        },
+        traffic: {
+          inboundBytesTotal: edge.inboundBytes,
+          outboundBytesTotal: edge.outboundBytes,
+          droppedPackets: edge.droppedPackets,
+          droppedBytes: edge.droppedBytes,
+        },
+      })),
+      history: this.history.map((item) => ({ ...item })),
     };
     return this.lastSnapshot;
+  }
+
+  private edge(id: string): EdgeTotals {
+    const key = id.trim() || 'origin';
+    const existing = this.edges.get(key);
+    if (existing) return existing;
+    const created: EdgeTotals = {
+      connected: false,
+      upstreams: 0,
+      sessions: 0,
+      handshakeAttempts: 0,
+      handshakeSuccesses: 0,
+      handshakeFailures: 0,
+      handshakeDurations: [],
+      lastFailure: '',
+      lastFailureAt: 0,
+      lastSuccessAt: 0,
+      reportedP50Ms: 0,
+      reportedP95Ms: 0,
+      reportedFailureCount: 0,
+      reportedSuccessCount: 0,
+      inboundBytes: 0,
+      outboundBytes: 0,
+      droppedPackets: 0,
+      droppedBytes: 0,
+    };
+    this.edges.set(key, created);
+    return created;
   }
 
   private scheduleLagProbe(): void {
@@ -202,4 +486,15 @@ export const serverMetrics = new RuntimeMetricsCollector();
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function percentile(values: number[], rank: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * rank) - 1));
+  return round(sorted[index] ?? 0);
+}
+
+function finiteNonNegative(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, round(value)) : 0;
 }

@@ -8,6 +8,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
 import { WebSocket } from 'ws';
 import {
   ChannelFlags,
@@ -33,6 +34,7 @@ const EDGE_MUX_DELIVERY = 0xf7;
 const EDGE_MUX_RELEASE = 0xf8;
 const EDGE_MUX_DELIVERY_CLIENT = 0xf9;
 const EDGE_MUX_REJECT = 0xfa;
+const EDGE_MUX_STATUS = 0xfb;
 
 loadEnv();
 
@@ -44,6 +46,14 @@ const originUrl = string('VOX_EDGE_ORIGIN', 'wss://server-1.v0x.online/internal/
 const secret = string('VOX_EDGE_SECRET', '');
 /** Nome estável deste edge, usado para a origem evitar eco regional. */
 const edgeId = string('VOX_EDGE_ID', '');
+
+const handshakeStats = {
+  attempts: 0,
+  successes: 0,
+  failures: 0,
+  durations: [] as number[],
+  lastFailure: '',
+};
 
 if (!certPath || !keyPath || !existsSync(certPath) || !existsSync(keyPath)) {
   throw new Error('VOX_EDGE_CERT/VOX_EDGE_KEY ausentes ou inexistentes');
@@ -221,11 +231,14 @@ class OriginMuxLink {
   private readonly clients = new Map<number, EdgeClient>();
   private nextRequestId = 1;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
 
   constructor() {
     this.readyPromise = Promise.reject(new Error('link ainda nao conectado'));
     this.readyPromise.catch(() => {});
+    this.statusTimer = setInterval(() => this.sendStatus(), 5000);
+    this.statusTimer.unref?.();
     this.connect();
   }
 
@@ -276,7 +289,22 @@ class OriginMuxLink {
   close(): void {
     this.stopped = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.statusTimer) clearInterval(this.statusTimer);
     try { this.ws?.close(); } catch { this.ws?.terminate(); }
+  }
+
+  private sendStatus(): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(encodeStatus(this.clients.size), { binary: true });
+    } catch {
+      // A reconexao do upstream ja cuida da indisponibilidade.
+    }
+  }
+
+  reportStatus(): void {
+    this.sendStatus();
   }
 
   private connect(): void {
@@ -393,47 +421,69 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 }
 
 async function serve(session: WTSession, router: EdgeRouter, origin: OriginMuxLink): Promise<void> {
-  await session.ready;
-  const token = await readToken(session);
-  if (!token) return closeSession(session);
-
-  let accepted: AcceptedState;
+  const startedAt = performance.now();
+  handshakeStats.attempts++;
+  let handshakeComplete = false;
+  const failure = (reason: string): void => {
+    handshakeStats.failures++;
+    handshakeStats.lastFailure = reason.slice(0, 160);
+    origin.reportStatus();
+  };
   try {
-    accepted = await origin.register(token.value);
-  } catch {
-    return closeSession(session);
-  }
-
-  const client = new EdgeClient(session, token, origin, router, accepted.clientId);
-  client.applyState(accepted);
-  origin.attach(client);
-  router.add(client);
-  void echoProbeStreams(session);
-  await token.reply(1);
-
-  void session.closed.then(() => client.close(), () => client.close());
-  const reader = session.datagrams.readable.getReader();
-  for (;;) {
-    let frame: Uint8Array | undefined;
-    try {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      frame = chunk.value;
-    } catch {
-      break;
+    await session.ready;
+    const token = await readToken(session);
+    if (!token) {
+      failure('token ausente ou timeout');
+      return closeSession(session);
     }
-    if (!frame || frame.length > MAX_VOICE_PACKET || frame[0] !== FrameKind.Voice) continue;
-    if (!client.canSpeak()) continue;
-    const packet = decodeVoice(frame);
-    if (!packet) continue;
 
-    const stamped = frame.slice();
-    stampSender(stamped, client.clientId);
-    router.markLocalEcho(client.clientId, packet.seq);
-    router.broadcastLocal(client, stamped);
-    client.sendVoice(frame);
+    let accepted: AcceptedState;
+    try {
+      accepted = await origin.register(token.value);
+    } catch (error) {
+      failure(error instanceof Error ? error.message : 'origem indisponivel');
+      return closeSession(session);
+    }
+
+    const client = new EdgeClient(session, token, origin, router, accepted.clientId);
+    client.applyState(accepted);
+    origin.attach(client);
+    router.add(client);
+    void echoProbeStreams(session);
+    await token.reply(1);
+    handshakeStats.successes++;
+    handshakeStats.durations.push(Math.max(0, Math.round(performance.now() - startedAt)));
+    if (handshakeStats.durations.length > 128) handshakeStats.durations.shift();
+    handshakeComplete = true;
+    origin.reportStatus();
+
+    void session.closed.then(() => client.close(), () => client.close());
+    const reader = session.datagrams.readable.getReader();
+    for (;;) {
+      let frame: Uint8Array | undefined;
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        frame = chunk.value;
+      } catch {
+        break;
+      }
+      if (!frame || frame.length > MAX_VOICE_PACKET || frame[0] !== FrameKind.Voice) continue;
+      if (!client.canSpeak()) continue;
+      const packet = decodeVoice(frame);
+      if (!packet) continue;
+
+      const stamped = frame.slice();
+      stampSender(stamped, client.clientId);
+      router.markLocalEcho(client.clientId, packet.seq);
+      router.broadcastLocal(client, stamped);
+      client.sendVoice(frame);
+    }
+    client.close();
+  } catch (error) {
+    if (!handshakeComplete) failure(error instanceof Error ? error.message : String(error));
+    throw error;
   }
-  client.close();
 }
 
 async function acceptLoop(sessions: ReadableStream<unknown>, router: EdgeRouter, origin: OriginMuxLink): Promise<void> {
@@ -553,6 +603,35 @@ function decodeAccepted(frame: Uint8Array): AcceptedState | null {
   if (frame.length < 8 || frame[0] !== EDGE_ACCEPT) return null;
   const state = decodeState(frame, 1);
   return state ? { clientId: readU16(frame, 1), ...state } : null;
+}
+
+function encodeStatus(sessions: number): Uint8Array {
+  const reason = new TextEncoder().encode(handshakeStats.lastFailure).slice(0, 120);
+  const out = new Uint8Array(20 + reason.length);
+  out[0] = EDGE_MUX_STATUS;
+  writeU32(out, 1, handshakeStats.attempts);
+  writeU32(out, 5, handshakeStats.successes);
+  writeU32(out, 9, handshakeStats.failures);
+  writeU16(out, 13, percentile(handshakeStats.durations, 0.5));
+  writeU16(out, 15, percentile(handshakeStats.durations, 0.95));
+  writeU16(out, 17, sessions);
+  out[19] = reason.length;
+  out.set(reason, 20);
+  return out;
+}
+
+function writeU32(out: Uint8Array, offset: number, value: number): void {
+  out[offset] = value & 0xff;
+  out[offset + 1] = (value >>> 8) & 0xff;
+  out[offset + 2] = (value >>> 16) & 0xff;
+  out[offset + 3] = (value >>> 24) & 0xff;
+}
+
+function percentile(values: number[], rank: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * rank) - 1));
+  return Math.min(0xffff, Math.max(0, Math.round(sorted[index] ?? 0)));
 }
 
 function decodeState(frame: Uint8Array, offset = 1): VoiceState | null {

@@ -55,6 +55,57 @@ type RuntimeMetrics = {
     voiceDroppedPacketsTotal: number;
     voiceDroppedBytesTotal: number;
   };
+  connections: {
+    control: number;
+    voiceWebSocket: number;
+    voiceQuic: number;
+    edgeUpstreams: number;
+    edgeSessions: number;
+  };
+  voice: {
+    queuedBytes: number;
+    queuedClients: number;
+    maxQueueBytes: number;
+    channelFanout: {
+      key: string;
+      serverId: number;
+      channelId: number;
+      frames: number;
+      recipients: number;
+      averageRecipients: number;
+    }[];
+  };
+  edges: {
+    id: string;
+    connected: boolean;
+    upstreams: number;
+    sessions: number;
+    handshakes: {
+      attempts: number;
+      successes: number;
+      failures: number;
+      successRate: number;
+      p50Ms: number;
+      p95Ms: number;
+      lastFailure: string;
+      lastFailureAt: number;
+      lastSuccessAt: number;
+    };
+    traffic: {
+      inboundBytesTotal: number;
+      outboundBytesTotal: number;
+      droppedPackets: number;
+      droppedBytes: number;
+    };
+  }[];
+  history: {
+    at: number;
+    processCpuPercent: number;
+    eventLoopLagP95Ms: number;
+    voiceFanoutRecipients: number;
+    voiceDroppedPackets: number;
+    voiceQueuedBytes: number;
+  }[];
 };
 
 type AccountOrder = {
@@ -460,6 +511,110 @@ function renderRuntimeMetrics(runtime: RuntimeMetrics | null): HTMLElement {
     text('span', 'mono subtle', `uptime ${formatDuration(runtime.uptimeSec)}`),
   );
   box.append(details);
+  box.append(renderRuntimeInsights(runtime));
+  return box;
+}
+
+function renderRuntimeInsights(runtime: RuntimeMetrics): HTMLElement {
+  const wrap = $('div', 'runtime-insights');
+  const history = runtime.history ?? [];
+  const charts = $('div', 'runtime-charts');
+  charts.append(
+    runtimeChart(
+      'CPU e event loop',
+      history,
+      (point) => point.processCpuPercent,
+      (point) => point.eventLoopLagP95Ms,
+      (point) => `${point.processCpuPercent.toFixed(1)}% · ${point.eventLoopLagP95Ms.toFixed(1)}ms`,
+    ),
+    runtimeChart(
+      'Fan-out e descartes',
+      history,
+      (point) => point.voiceFanoutRecipients,
+      (point) => point.voiceDroppedPackets,
+      (point) => `${point.voiceFanoutRecipients.toLocaleString('pt-BR')} destinos · ${point.voiceDroppedPackets} drops`,
+    ),
+  );
+  wrap.append(charts);
+
+  const transport = $('div', 'runtime-subpanel');
+  transport.append(text('strong', '', 'conexões por transporte'));
+  const transportGrid = $('div', 'runtime-transport-grid');
+  transportGrid.append(
+    runtimeStat('controle', runtime.connections?.control ?? 0),
+    runtimeStat('voz WS', runtime.connections?.voiceWebSocket ?? 0),
+    runtimeStat('voz QUIC', runtime.connections?.voiceQuic ?? 0),
+    runtimeStat('sessões edge', runtime.connections?.edgeSessions ?? 0),
+  );
+  transport.append(transportGrid);
+  const queue = runtime.voice;
+  transport.append(text('span', 'mono subtle', `fila de saída: ${formatBytes(queue?.queuedBytes ?? 0)} em ${queue?.queuedClients ?? 0} clientes · pico ${formatBytes(queue?.maxQueueBytes ?? 0)}`));
+  wrap.append(transport);
+
+  const edges = $('div', 'runtime-subpanel');
+  edges.append(text('strong', '', 'edges de voz'));
+  const edgeList = $('div', 'runtime-edge-list');
+  for (const edge of runtime.edges ?? []) {
+    const row = $('div', 'runtime-edge-row');
+    const state = edge.connected ? 'ativo' : 'offline';
+    const handshakes = edge.handshakes;
+    row.append(
+      text('strong', '', edge.id),
+      text('span', `runtime-edge-state ${edge.connected ? 'online' : 'offline'}`, state),
+      text('span', 'mono subtle', `${edge.sessions} sessões · handshake ${handshakes.successRate.toFixed(1)}% · p50 ${formatMs(handshakes.p50Ms)} · p95 ${formatMs(handshakes.p95Ms)} · ${edge.traffic.droppedPackets} drops`),
+    );
+    if (handshakes.lastFailure) {
+      row.append(text('span', 'mono runtime-edge-error', `última falha: ${handshakes.lastFailure}`));
+    }
+    edgeList.append(row);
+  }
+  if ((runtime.edges ?? []).length === 0) edgeList.append(text('span', 'mono subtle', 'nenhuma tentativa QUIC registrada ainda'));
+  edges.append(edgeList);
+  wrap.append(edges);
+
+  const channels = $('div', 'runtime-subpanel');
+  channels.append(text('strong', '', 'fan-out por canal'));
+  const channelList = $('div', 'runtime-channel-list');
+  for (const channel of runtime.voice?.channelFanout ?? []) {
+    channelList.append(text('span', 'mono subtle', `servidor #${channel.serverId} · canal #${channel.channelId} · ${channel.averageRecipients.toFixed(1)} destinos/pacote · ${channel.frames.toLocaleString('pt-BR')} pacotes`));
+  }
+  if ((runtime.voice?.channelFanout ?? []).length === 0) channelList.append(text('span', 'mono subtle', 'nenhum pacote de voz roteado ainda'));
+  channels.append(channelList);
+  wrap.append(channels);
+  return wrap;
+}
+
+function runtimeStat(label: string, value: number): HTMLElement {
+  const item = $('div', 'runtime-transport-stat');
+  item.append(text('span', 'label', label), text('strong', '', String(value)));
+  return item;
+}
+
+function runtimeChart(
+  title: string,
+  points: RuntimeMetrics['history'],
+  first: (point: RuntimeMetrics['history'][number]) => number,
+  second: (point: RuntimeMetrics['history'][number]) => number,
+  describe: (point: RuntimeMetrics['history'][number]) => string,
+): HTMLElement {
+  const box = $('div', 'runtime-chart');
+  box.append(text('strong', '', title));
+  const bars = $('div', 'runtime-bars');
+  const visible = points.slice(-30);
+  const firstMax = Math.max(1, ...visible.map(first));
+  const secondMax = Math.max(1, ...visible.map(second));
+  for (const point of visible) {
+    const group = $('div', 'runtime-bar-group');
+    group.title = describe(point);
+    const a = $('span', 'runtime-bar runtime-bar-primary');
+    const b = $('span', 'runtime-bar runtime-bar-secondary');
+    a.style.height = `${Math.max(4, Math.min(100, (first(point) / firstMax) * 100))}%`;
+    b.style.height = `${Math.max(4, Math.min(100, (second(point) / secondMax) * 100))}%`;
+    group.append(a, b);
+    bars.append(group);
+  }
+  if (visible.length === 0) bars.append(text('span', 'mono subtle', 'aguardando amostras…'));
+  box.append(bars);
   return box;
 }
 

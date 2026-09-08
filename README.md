@@ -50,7 +50,9 @@ direto, e o buffer de jitter do cliente cobre o buraco. Por isso a voz vai por
 navegador topar.
 
 O controle continua no WebSocket, porque ali o TCP entrega precisamente o que
-se quer: confiável e em ordem. QUIC não melhoraria nada.
+se quer: confiável e em ordem. QUIC não melhoraria nada. Se o QUIC não estiver
+disponível, a voz usa um segundo WebSocket dedicado, sem compartilhar a fila
+do controle.
 
 A migração é **oportunista**: o cliente entra falando por WebSocket e só
 depois tenta abrir o canal QUIC. Se qualquer coisa falhar — sem certificado,
@@ -59,9 +61,9 @@ Ninguém perde áudio por causa de uma otimização. O cabeçalho mostra qual es
 em uso.
 
 ```
-WebSocket  ──── controle (canais, chat, estado) ────►  sempre
-WebTransport ── voz (datagramas Opus) ─────────────►  quando disponível
-     └── se não, a voz volta pelo mesmo WebSocket
+WebSocket  ──── controle (canais, chat, estado) ─────►  sempre
+WebTransport ── voz (datagramas Opus) ───────────────►  quando disponível
+WebSocket  ──── voz dedicada (fallback) ─────────────►  se QUIC falhar
 ```
 
 O servidor liga as duas conexões por um segredo de 16 bytes que vai no

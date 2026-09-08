@@ -297,6 +297,62 @@ async function openVoiceLink(
   }
 }
 
+/** Abre o fallback WebSocket dedicado, usado quando o QUIC não está disponível. */
+async function openDedicatedVoiceLink(
+  client: TestClient,
+): Promise<{ received: HeardVoice[]; close: () => void } | null> {
+  const welcome = client.welcome;
+  if (!welcome) return null;
+
+  const voiceUrl = new globalThis.URL(URL);
+  voiceUrl.pathname = welcome.serverId > 0
+    ? `/vox-voice/${welcome.serverId}`
+    : '/vox-voice';
+  const ws = new WebSocket(voiceUrl.toString());
+  ws.binaryType = 'nodebuffer';
+  const received: HeardVoice[] = [];
+  let authenticated = false;
+
+  ws.on('message', (data: Buffer) => {
+    const frame = new Uint8Array(data);
+    if (!authenticated) {
+      if (frame.length === 1 && frame[0] === 1) authenticated = true;
+      return;
+    }
+    const packet = decodeVoice(frame);
+    if (packet) received.push({ clientId: packet.clientId, seq: packet.seq, payload: [...packet.payload] });
+  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearInterval(check);
+        if (error) reject(error);
+        else resolve();
+      };
+      const timer = setTimeout(() => finish(new Error('timeout no fallback de voz')), 2000);
+      const check = setInterval(() => {
+        if (authenticated) finish();
+      }, 10);
+      ws.once('open', () => {
+        ws.send(welcome.voiceToken);
+      });
+      ws.once('error', () => finish(new Error('erro no fallback de voz')));
+      ws.once('close', () => {
+        if (!authenticated) finish(new Error('fallback de voz fechado'));
+      });
+    });
+    return { received, close: () => ws.close() };
+  } catch {
+    try { ws.close(); } catch { /* já fechado */ }
+    return null;
+  }
+}
+
 /** Conta como sucesso quando o servidor recusa a conexao. */
 function refusedConnection(url: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -369,6 +425,30 @@ async function main(): Promise<void> {
   check('o seq e preservado', heard?.seq === 42);
   check('o payload chega intacto', heard?.payload.join() === [...payload].join());
   check('alice nao ouve a si mesma', alice.voice.length === 0);
+
+  // --- fallback WebSocket de voz separado -------------------------------
+
+  const dedicated = await openDedicatedVoiceLink(alice);
+  check('fallback WebSocket dedicado autentica com o token do Welcome', dedicated !== null);
+  if (dedicated) {
+    const beforeDedicated = dedicated.received.length;
+    bob.sendVoice(44, payload);
+    const dedicatedHeard = await until(
+      'alice recebe voz no socket dedicado',
+      () => dedicated.received.length > beforeDedicated,
+    );
+    check('voz chega pelo socket dedicado sem usar o controle', dedicatedHeard);
+    check('o pacote dedicado preserva o remetente', dedicated.received.at(-1)?.clientId === bob.id);
+    dedicated.close();
+    await wait(150);
+    const beforeFallback = alice.voice.length;
+    bob.sendVoice(45, payload);
+    const controlRecovered = await until(
+      'voz volta ao controle depois de fechar o socket dedicado',
+      () => alice.voice.length > beforeFallback,
+    );
+    check('fechar o socket dedicado não deixa a sessão muda', controlRecovered);
+  }
 
   // --- voz por WebTransport -----------------------------------------------
 

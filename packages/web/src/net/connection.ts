@@ -1,9 +1,9 @@
 /**
  * Conexao com o servidor Vox.
  *
- * Hoje: um unico WebSocket binario multiplexando controle e voz pelo primeiro
- * byte do frame. O dia que o WebTransport entrar, so esta classe muda - o
- * resto do cliente conversa por callbacks.
+ * O controle permanece em um WebSocket. A voz tenta WebTransport/QUIC e, se
+ * ele falhar, usa um WebSocket dedicado; o socket de controle nunca fica
+ * preso atrás da fila de áudio.
  */
 
 import {
@@ -25,6 +25,20 @@ export type LinkState = 'offline' | 'connecting' | 'online';
 /** Por onde a voz esta andando neste momento. */
 export type VoiceTransport = 'ws' | 'quic';
 export type VoiceQuality = 'unknown' | 'measuring' | 'excellent' | 'good' | 'unstable';
+
+export interface VoiceEdgeHealth {
+  host: string;
+  region: string;
+  attempts: number;
+  successes: number;
+  failures: number;
+  consecutiveFailures: number;
+  lastHandshakeMs: number;
+  p50HandshakeMs: number;
+  p95HandshakeMs: number;
+  lastError: string;
+  cooldownUntil: number;
+}
 
 export interface ConnectionHandlers {
   onState(state: LinkState, detail: string): void;
@@ -65,6 +79,12 @@ const OPEN_TIMEOUT_MS = 8000;
  * entrado uma vez, o servidor caiu e vale esperar ele voltar para sempre.
  */
 const COLD_ATTEMPTS = 3;
+const EDGE_FAILURE_COOLDOWN_MS = 30_000;
+const VOICE_RETRY_BASE_MS = 750;
+const VOICE_RETRY_MAX_MS = 15_000;
+const VOICE_FALLBACK_RETRY_MS = 2000;
+
+type EdgeHealthState = VoiceEdgeHealth & { handshakeSamples: number[] };
 
 export interface Target {
   address: string;
@@ -102,6 +122,16 @@ export class Connection {
   private wtProbeTimer: ReturnType<typeof setInterval> | null = null;
   private wtProbeSequence = 0;
   private wtInflight = 0;
+  private voiceToken: Uint8Array | null = null;
+  private voiceEdges: VoiceEdge[] = [];
+  private voiceRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private voiceRetryAttempt = 0;
+  private voiceWs: WebSocket | null = null;
+  private voiceWsOpenTimer: ReturnType<typeof setTimeout> | null = null;
+  private voiceWsRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private voiceWsReady = false;
+  private voiceUpgradeInFlight = false;
+  private readonly edgeHealth = new Map<string, EdgeHealthState>();
 
   /** WebSocket ate o WebTransport subir; 'quic' quando a voz migrou. */
   voiceTransport: VoiceTransport = 'ws';
@@ -128,6 +158,10 @@ export class Connection {
   rxJitterMs = 0;
   /** Pior perda de recepcao medida pelo mixer, em %. */
   rxLossPct = 0;
+
+  get voiceEdgeHealth(): VoiceEdgeHealth[] {
+    return [...this.edgeHealth.values()].map(({ handshakeSamples: _samples, ...health }) => ({ ...health }));
+  }
 
   constructor(private readonly handlers: ConnectionHandlers) {
     // O navegador sabe antes de nos que a rede voltou ou que a aba acordou.
@@ -279,7 +313,10 @@ export class Connection {
 
     if (frame[0] === FrameKind.Voice) {
       const packet = decodeVoice(frame);
-      if (packet) this.handlers.onVoice(packet);
+      if (packet) {
+        this.voicePacketsReceived++;
+        this.handlers.onVoice(packet);
+      }
       return;
     }
     if (frame[0] === FrameKind.VoiceBatch) {
@@ -287,7 +324,10 @@ export class Connection {
       if (batch) {
         for (const voice of batch) {
           const packet = decodeVoice(voice);
-          if (packet) this.handlers.onVoice(packet);
+          if (packet) {
+            this.voicePacketsReceived++;
+            this.handlers.onVoice(packet);
+          }
         }
       }
       return;
@@ -329,9 +369,12 @@ export class Connection {
         certHash: msg.wtCertHash,
       };
       const edges = msg.voiceEdges?.length > 0 ? msg.voiceEdges : [fallback];
+      this.voiceToken = msg.voiceToken.slice();
+      this.voiceEdges = edges.map((edge) => ({ ...edge, certHash: edge.certHash.slice() }));
+      this.voiceRetryAttempt = 0;
       this.voiceHost = edges[0]?.host ?? fallback.host;
       this.voiceRegion = edges[0]?.region || regionFromHost(this.voiceHost);
-      void this.upgradeVoice(msg.voiceToken, edges);
+      void this.upgradeVoice(this.voiceToken, this.voiceEdges);
     }
     this.handlers.onMessage(msg);
   }
@@ -372,9 +415,21 @@ export class Connection {
         },
         () => {
           this.wtInflight--;
-          this.dropVoiceChannel(generation);
+          this.dropVoiceChannel(generation, true);
         },
       );
+      this.voicePacketsSent++;
+      return;
+    }
+
+    const dedicated = this.voiceWs;
+    if (dedicated?.readyState === WebSocket.OPEN && this.voiceWsReady) {
+      if (dedicated.bufferedAmount > BACKPRESSURE_BYTES) {
+        this.droppedVoice++;
+        this.handlers.onVoiceStats?.();
+        return;
+      }
+      dedicated.send(frame);
       this.voicePacketsSent++;
       return;
     }
@@ -387,6 +442,7 @@ export class Connection {
       return;
     }
     ws.send(frame);
+    this.voicePacketsSent++;
   }
 
   // ------------------------------------------------------ canal de voz --
@@ -397,9 +453,18 @@ export class Connection {
    * nunca fica sem audio por causa de uma otimizacao.
    */
   private async upgradeVoice(token: Uint8Array, edges: VoiceEdge[]): Promise<void> {
-    const candidates = edges.filter((edge) => edge.host && edge.port > 0);
-    if (candidates.length === 0 || typeof WebTransport === 'undefined') return;
     const generation = this.generation;
+    const candidates = edges.filter((edge) => edge.host && edge.port > 0);
+    if (candidates.length === 0 || typeof WebTransport === 'undefined') {
+      this.openVoiceFallback(generation);
+      return;
+    }
+
+    // O token só pode apontar para um sink por vez. Enquanto testamos o QUIC,
+    // o fallback fica fechado para que uma reconexão tardia não substitua o
+    // edge que acabou de vencer.
+    this.voiceUpgradeInFlight = true;
+    this.closeVoiceFallback();
 
     try {
       // O edge só é considerado vencedor depois do handshake completo. Assim,
@@ -421,12 +486,142 @@ export class Connection {
       this.voiceRegion = edge.region || regionFromHost(edge.host);
       this.voiceTransport = 'quic';
       this.voiceQuality = 'measuring';
+      this.voiceRetryAttempt = 0;
+      if (this.voiceRetryTimer !== null) {
+        clearTimeout(this.voiceRetryTimer);
+        this.voiceRetryTimer = null;
+      }
       this.startVoiceProbe(wt, generation);
       this.handlers.onVoiceTransport?.('quic');
-      void wt.closed.catch(() => {}).then(() => this.dropVoiceChannel(generation));
+      void wt.closed.catch(() => {}).then(() => this.dropVoiceChannel(generation, true));
       void this.readDatagrams(wt, generation);
     } catch {
-      this.dropVoiceChannel(generation);
+      this.dropVoiceChannel(generation, true);
+    } finally {
+      if (generation === this.generation) {
+        this.voiceUpgradeInFlight = false;
+        if (this.voiceTransport === 'ws') {
+          this.openVoiceFallback(generation);
+        }
+      }
+    }
+  }
+
+  /**
+   * Fallback de voz em um WebSocket exclusivo. O controle continua em
+   * `this.ws`, então uma fila de áudio não consegue atrasar ping, presença ou
+   * troca de canal.
+   */
+  private openVoiceFallback(generation: number): void {
+    if (
+      generation !== this.generation
+      || this.voiceTransport !== 'ws'
+      || this.voiceUpgradeInFlight
+      || !this.voiceToken
+      || !this.online
+      || this.voiceWs
+    ) return;
+
+    const target = this.target;
+    if (!target) return;
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(resolveVoiceUrl(resolveUrl(target.address, target.serverId), target.serverId));
+    } catch {
+      this.scheduleVoiceFallbackRetry(generation);
+      return;
+    }
+    ws.binaryType = 'arraybuffer';
+    this.voiceWs = ws;
+    this.voiceWsReady = false;
+    const token = this.voiceToken.slice();
+
+    this.voiceWsOpenTimer = setTimeout(() => {
+      if (this.voiceWs !== ws || ws.readyState !== WebSocket.CONNECTING) return;
+      ws.close();
+    }, OPEN_TIMEOUT_MS);
+
+    ws.onopen = () => {
+      if (this.voiceWs !== ws || generation !== this.generation || this.voiceTransport !== 'ws') {
+        ws.close();
+        return;
+      }
+      ws.send(token);
+    };
+
+    ws.onmessage = (event) => {
+      if (this.voiceWs !== ws || typeof event.data === 'string') return;
+      const frame = event.data instanceof ArrayBuffer
+        ? new Uint8Array(event.data)
+        : null;
+      if (!frame) return;
+      if (!this.voiceWsReady) {
+        if (frame.length !== 1 || frame[0] !== 1) {
+          ws.close(1008, 'handshake de voz recusado');
+          return;
+        }
+        this.voiceWsReady = true;
+        if (this.voiceWsOpenTimer !== null) {
+          clearTimeout(this.voiceWsOpenTimer);
+          this.voiceWsOpenTimer = null;
+        }
+        if (this.voiceWsRetryTimer !== null) {
+          clearTimeout(this.voiceWsRetryTimer);
+          this.voiceWsRetryTimer = null;
+        }
+        this.handlers.onVoiceStats?.();
+        return;
+      }
+      this.receive(frame);
+    };
+
+    ws.onerror = () => {};
+    ws.onclose = () => {
+      if (this.voiceWs !== ws) return;
+      this.voiceWs = null;
+      this.voiceWsReady = false;
+      if (this.voiceWsOpenTimer !== null) {
+        clearTimeout(this.voiceWsOpenTimer);
+        this.voiceWsOpenTimer = null;
+      }
+      if (generation === this.generation && this.online && this.voiceTransport === 'ws' && !this.closedByUser) {
+        this.scheduleVoiceFallbackRetry(generation);
+      }
+    };
+  }
+
+  private scheduleVoiceFallbackRetry(generation: number): void {
+    if (
+      this.voiceWsRetryTimer !== null
+      || generation !== this.generation
+      || !this.voiceToken
+      || !this.online
+      || this.voiceTransport !== 'ws'
+    ) return;
+    this.voiceWsRetryTimer = setTimeout(() => {
+      this.voiceWsRetryTimer = null;
+      this.openVoiceFallback(generation);
+    }, VOICE_FALLBACK_RETRY_MS);
+  }
+
+  private closeVoiceFallback(): void {
+    if (this.voiceWsRetryTimer !== null) {
+      clearTimeout(this.voiceWsRetryTimer);
+      this.voiceWsRetryTimer = null;
+    }
+    if (this.voiceWsOpenTimer !== null) {
+      clearTimeout(this.voiceWsOpenTimer);
+      this.voiceWsOpenTimer = null;
+    }
+    const ws = this.voiceWs;
+    this.voiceWs = null;
+    this.voiceWsReady = false;
+    if (!ws) return;
+    try {
+      if (ws.readyState <= WebSocket.OPEN) ws.close(1000, 'trocando transporte');
+    } catch {
+      // ja fechada
     }
   }
 
@@ -440,8 +635,14 @@ export class Connection {
     token: Uint8Array,
     generation: number,
   ): Promise<{ wt: WebTransport; edge: VoiceEdge }> {
-    const transports: { wt: WebTransport; edge: VoiceEdge }[] = [];
-    for (const edge of edges) {
+    const now = Date.now();
+    const preferred = edges.filter((edge) => (this.edgeHealth.get(edgeKey(edge))?.cooldownUntil ?? 0) <= now);
+    const candidates = (preferred.length > 0 ? preferred : edges).sort((a, b) => this.edgeScore(a) - this.edgeScore(b));
+    const transports: { wt: WebTransport; edge: VoiceEdge; startedAt: number }[] = [];
+    for (const edge of candidates) {
+      const health = this.edgeState(edge);
+      health.attempts++;
+      const startedAt = performance.now();
       const init: WebTransportOptions = {};
       if (edge.certHash.length > 0) {
         init.serverCertificateHashes = [
@@ -449,9 +650,9 @@ export class Connection {
         ];
       }
       try {
-        transports.push({ wt: new WebTransport(`https://${edge.host}:${edge.port}/vox`, init), edge });
-      } catch {
-        // Um candidato malformado nao impede os outros de serem testados.
+        transports.push({ wt: new WebTransport(`https://${edge.host}:${edge.port}/vox`, init), edge, startedAt });
+      } catch (error) {
+        this.noteEdgeFailure(edge, error);
       }
     }
     if (transports.length === 0) throw new Error('nenhum edge de voz valido');
@@ -474,16 +675,19 @@ export class Connection {
         const candidate = settled.attempt.candidate;
         if (!settled.result.ok) {
           lastError = settled.result.error;
+          this.noteEdgeFailure(candidate.edge, settled.result.error);
           candidate.wt.close();
           continue;
         }
 
         try {
           await this.authenticateVoice(candidate.wt, token, generation);
+          this.noteEdgeSuccess(candidate.edge, performance.now() - candidate.startedAt);
           for (const attempt of pending) attempt.candidate.wt.close();
           return candidate;
         } catch (error) {
           lastError = error;
+          this.noteEdgeFailure(candidate.edge, error);
           candidate.wt.close();
         }
       }
@@ -586,6 +790,14 @@ export class Connection {
   }
 
   private resetVoiceMetrics(): void {
+    this.voiceToken = null;
+    this.voiceEdges = [];
+    if (this.voiceRetryTimer !== null) {
+      clearTimeout(this.voiceRetryTimer);
+      this.voiceRetryTimer = null;
+    }
+    this.voiceRetryAttempt = 0;
+    this.closeVoiceFallback();
     this.voiceRtt = 0;
     this.voiceQuality = 'unknown';
     this.voiceHost = '';
@@ -617,11 +829,11 @@ export class Connection {
         this.handlers.onVoice(packet);
       }
     }
-    this.dropVoiceChannel(generation);
+    this.dropVoiceChannel(generation, true);
   }
 
   /** Volta a voz para o WebSocket. Ignora avisos de uma conexao ja substituida. */
-  private dropVoiceChannel(generation: number): void {
+  private dropVoiceChannel(generation: number, retry: boolean): void {
     if (generation !== this.generation) return;
     const changed = this.voiceTransport !== 'ws';
     this.voiceTransport = 'ws';
@@ -646,6 +858,76 @@ export class Connection {
       // ja fechada
     }
     if (changed) this.handlers.onVoiceTransport?.('ws');
+    if (retry) {
+      this.openVoiceFallback(generation);
+      this.scheduleVoiceRetry(generation);
+    }
+  }
+
+  private scheduleVoiceRetry(generation: number): void {
+    if (this.voiceRetryTimer !== null || !this.voiceToken || this.voiceEdges.length === 0) return;
+    if (!this.online || typeof WebTransport === 'undefined') return;
+    const delay = Math.min(
+      VOICE_RETRY_MAX_MS,
+      VOICE_RETRY_BASE_MS * 2 ** Math.min(this.voiceRetryAttempt, 5),
+    );
+    this.voiceRetryAttempt++;
+    this.voiceRetryTimer = setTimeout(() => {
+      this.voiceRetryTimer = null;
+      if (generation !== this.generation || !this.voiceToken || !this.online) return;
+      void this.upgradeVoice(this.voiceToken, this.voiceEdges);
+    }, delay);
+  }
+
+  private edgeState(edge: VoiceEdge): EdgeHealthState {
+    const key = edgeKey(edge);
+    const existing = this.edgeHealth.get(key);
+    if (existing) return existing;
+    const state: EdgeHealthState = {
+      host: edge.host,
+      region: edge.region || regionFromHost(edge.host),
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      consecutiveFailures: 0,
+      lastHandshakeMs: 0,
+      p50HandshakeMs: 0,
+      p95HandshakeMs: 0,
+      lastError: '',
+      cooldownUntil: 0,
+      handshakeSamples: [],
+    };
+    this.edgeHealth.set(key, state);
+    return state;
+  }
+
+  private edgeScore(edge: VoiceEdge): number {
+    const state = this.edgeHealth.get(edgeKey(edge));
+    if (!state || state.successes === 0) return 0;
+    return state.p95HandshakeMs || state.lastHandshakeMs || 0;
+  }
+
+  private noteEdgeSuccess(edge: VoiceEdge, handshakeMs: number): void {
+    const state = this.edgeState(edge);
+    state.successes++;
+    state.consecutiveFailures = 0;
+    state.cooldownUntil = 0;
+    state.lastError = '';
+    state.lastHandshakeMs = Math.max(0, Math.round(handshakeMs));
+    state.handshakeSamples.push(state.lastHandshakeMs);
+    if (state.handshakeSamples.length > 128) state.handshakeSamples.shift();
+    state.p50HandshakeMs = percentile(state.handshakeSamples, 0.5);
+    state.p95HandshakeMs = percentile(state.handshakeSamples, 0.95);
+    this.handlers.onVoiceStats?.();
+  }
+
+  private noteEdgeFailure(edge: VoiceEdge, error: unknown): void {
+    const state = this.edgeState(edge);
+    state.failures++;
+    state.consecutiveFailures++;
+    state.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 160);
+    if (state.consecutiveFailures >= 2) state.cooldownUntil = Date.now() + EDGE_FAILURE_COOLDOWN_MS;
+    this.handlers.onVoiceStats?.();
   }
 
   /** Saida deliberada do usuario: cancela qualquer tentativa pendente. */
@@ -661,6 +943,8 @@ export class Connection {
     // Invalida qualquer upgrade de voz em andamento antes de soltar o socket.
     this.generation++;
     this.voiceTransport = 'ws';
+    this.voiceUpgradeInFlight = false;
+    this.closeVoiceFallback();
     this.resetVoiceMetrics();
     if (this.wtProbeTimer !== null) {
       clearInterval(this.wtProbeTimer);
@@ -738,6 +1022,17 @@ function regionFromHost(host: string): string {
   return host;
 }
 
+function edgeKey(edge: VoiceEdge): string {
+  return `${edge.host}:${edge.port}`.toLowerCase();
+}
+
+function percentile(values: number[], rank: number): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * rank) - 1));
+  return Math.round((sorted[index] ?? 0) * 10) / 10;
+}
+
 function resolveUrl(address: string, serverId = 0): string {
   // `/vox/3` entra no servidor virtual 3; `/vox` cai no primeiro do processo.
   const path = serverId > 0 ? `/vox/${serverId}` : '/vox';
@@ -769,4 +1064,15 @@ function resolveUrl(address: string, serverId = 0): string {
           : 'ws';
   const port = hasPort || scheme === 'wss' ? '' : `:${DEFAULT_PORT}`;
   return `${scheme}://${host}${port}${path}`;
+}
+
+function resolveVoiceUrl(controlUrl: string, serverId = 0): string {
+  const url = new URL(controlUrl);
+  const voicePath = serverId > 0 ? `/vox-voice/${serverId}` : '/vox-voice';
+  if (/^\/vox(?:\/\d+)?\/?$/i.test(url.pathname) || url.pathname === '/' || url.pathname === '') {
+    url.pathname = voicePath;
+  } else {
+    url.pathname = `${url.pathname.replace(/\/$/, '')}${voicePath}`;
+  }
+  return url.toString();
 }

@@ -31,6 +31,7 @@ const EDGE_MUX_DELIVERY = 0xf7;
 const EDGE_MUX_RELEASE = 0xf8;
 const EDGE_MUX_DELIVERY_CLIENT = 0xf9;
 const EDGE_MUX_REJECT = 0xfa;
+const EDGE_MUX_STATUS = 0xfb;
 
 let nextMuxId = 1;
 
@@ -61,6 +62,7 @@ export function attachEdgeWebSocket(
 
 function serve(ws: WebSocket, registry: Registry, edgeId: string): void {
   ws.binaryType = 'nodebuffer';
+  serverMetrics.recordEdgeUpstream(edgeId, 1);
   let owner: Session | null = null;
   let sink: EdgeVoiceSink | null = null;
   let released = false;
@@ -69,6 +71,12 @@ function serve(ws: WebSocket, registry: Registry, edgeId: string): void {
     if (released) return;
     released = true;
     if (owner && sink && owner.voice === sink) owner.voice = null;
+    if (owner) {
+      serverMetrics.recordEdgeSession(edgeId, -1);
+      serverMetrics.recordVoiceTransport('quic', -1);
+      serverMetrics.recordVoiceTransport('ws', 1);
+    }
+    serverMetrics.recordEdgeUpstream(edgeId, -1);
   };
 
   ws.on('message', (data, isBinary) => {
@@ -83,6 +91,9 @@ function serve(ws: WebSocket, registry: Registry, edgeId: string): void {
         sendControl(ws, new Uint8Array([EDGE_REJECT]));
         return close(ws, 1008, 'sessao de voz recusada');
       }
+      serverMetrics.recordEdgeSession(edgeId, 1);
+      serverMetrics.recordVoiceTransport('ws', -1);
+      serverMetrics.recordVoiceTransport('quic', 1);
       sendControl(ws, encodeAccept(owner.id, hub.voiceState(owner)));
       return;
     }
@@ -106,6 +117,7 @@ function serve(ws: WebSocket, registry: Registry, edgeId: string): void {
 function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: string): void {
   ws.binaryType = 'nodebuffer';
   const edgeId = announcedEdgeId || `edge-mux-${nextMuxId++}`;
+  serverMetrics.recordEdgeUpstream(edgeId, 1);
   const sessions = new Map<number, { owner: Session; sink: MultiplexedVoiceSink }>();
   let closed = false;
 
@@ -115,6 +127,9 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
     sessions.delete(clientId);
     if (entry.owner.voice === entry.sink) entry.owner.voice = null;
     entry.sink.markDetached();
+    serverMetrics.recordEdgeSession(edgeId, -1);
+    serverMetrics.recordVoiceTransport('quic', -1);
+    serverMetrics.recordVoiceTransport('ws', 1);
     if (notifyEdge) entry.sink.sendRelease();
   };
 
@@ -139,6 +154,9 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
       }
       sink.setClientId(owner.id);
       sessions.set(owner.id, { owner, sink });
+      serverMetrics.recordEdgeSession(edgeId, 1);
+      serverMetrics.recordVoiceTransport('ws', -1);
+      serverMetrics.recordVoiceTransport('quic', 1);
       return sendControl(ws, encodeMuxAccept(requestId, owner.id, hub.voiceState(owner)));
     }
 
@@ -148,6 +166,7 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
       }
       const entry = sessions.get(readU16(frame, 1));
       if (!entry) return;
+      serverMetrics.recordEdgeTraffic(edgeId, 'inbound', frame.byteLength - 3);
       const hub = registry.hubOf(entry.owner);
       if (hub) hub.handleFrame(entry.owner, frame.subarray(3));
       return;
@@ -156,6 +175,13 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
     if (kind === EDGE_MUX_RELEASE) {
       if (frame.length !== 3) return close(ws, 1008, 'liberacao invalida');
       detach(readU16(frame, 1), false);
+      return;
+    }
+
+    if (kind === EDGE_MUX_STATUS) {
+      const status = decodeEdgeStatus(frame);
+      if (!status) return close(ws, 1008, 'status de edge invalido');
+      serverMetrics.updateEdgeStatus(edgeId, status);
       return;
     }
 
@@ -168,8 +194,12 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
     for (const { owner, sink } of sessions.values()) {
       if (owner.voice === sink) owner.voice = null;
       sink.markDetached();
+      serverMetrics.recordEdgeSession(edgeId, -1);
+      serverMetrics.recordVoiceTransport('quic', -1);
+      serverMetrics.recordVoiceTransport('ws', 1);
     }
     sessions.clear();
+    serverMetrics.recordEdgeUpstream(edgeId, -1);
   };
   ws.once('close', releaseAll);
   ws.once('error', releaseAll);
@@ -240,13 +270,14 @@ class MultiplexedVoiceSink implements VoiceSink {
   private sendEnvelope(kind: number, id: number, frame: Uint8Array): void {
     if (this.closed || this.ws.readyState !== this.ws.OPEN) return;
     if (this.ws.bufferedAmount > 4 * 1024 * 1024) {
-      serverMetrics.recordVoiceDrop(frame.byteLength);
+      serverMetrics.recordVoiceDrop(frame.byteLength, this.edgeId);
       return;
     }
     const out = new Uint8Array(frame.byteLength + 3);
     out[0] = kind;
     writeU16(out, 1, id);
     out.set(frame, 3);
+    serverMetrics.recordEdgeTraffic(this.edgeId, 'outbound', frame.byteLength);
     this.ws.send(out, { binary: true });
   }
 }
@@ -320,6 +351,36 @@ function writeU16(out: Uint8Array, offset: number, value: number): void {
 
 function readU16(frame: Uint8Array, offset: number): number {
   return frame[offset]! | (frame[offset + 1]! << 8);
+}
+
+function readU32(frame: Uint8Array, offset: number): number {
+  return (frame[offset]!
+    | (frame[offset + 1]! << 8)
+    | (frame[offset + 2]! << 16)
+    | (frame[offset + 3]! << 24)) >>> 0;
+}
+
+function decodeEdgeStatus(frame: Uint8Array): {
+  attempts: number;
+  successes: number;
+  failures: number;
+  p50Ms: number;
+  p95Ms: number;
+  sessions: number;
+  lastFailure: string;
+} | null {
+  if (frame.length < 20 || frame[0] !== EDGE_MUX_STATUS) return null;
+  const reasonLength = frame[19]!;
+  if (20 + reasonLength !== frame.length) return null;
+  return {
+    attempts: readU32(frame, 1),
+    successes: readU32(frame, 5),
+    failures: readU32(frame, 9),
+    p50Ms: readU16(frame, 13),
+    p95Ms: readU16(frame, 15),
+    sessions: readU16(frame, 17),
+    lastFailure: new TextDecoder().decode(frame.subarray(20)),
+  };
 }
 
 function authorized(req: IncomingMessage): boolean {
