@@ -26,6 +26,7 @@ export type ClientMessage =
   | { t: Op.CreateChannel; name: string; parentId: number; maxClients: number; password: string }
   | { t: Op.DeleteChannel; channelId: number }
   | { t: Op.EditChannel; channelId: number; name: string; topic: string; maxClients: number }
+  | { t: Op.MoveChannel; channelId: number; parentId: number }
   | { t: Op.ChatSend; scope: ChatScope; targetId: number; text: string }
   | { t: Op.SetSelfState; flags: number; nickname?: string }
   | { t: Op.KickClient; clientId: number; reason: string }
@@ -332,6 +333,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.EditChannel:
       w.u16(m.channelId).str(m.name).str(m.topic).u16(m.maxClients);
       break;
+    case Op.MoveChannel:
+      w.u16(m.channelId).u16(m.parentId);
+      break;
     case Op.ChatSend:
       w.u8(m.scope).u16(m.targetId).str(m.text);
       break;
@@ -442,6 +446,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, channelId: r.u16() };
     case Op.EditChannel:
       return { t, channelId: r.u16(), name: r.str(), topic: r.str(), maxClients: r.u16() };
+    case Op.MoveChannel:
+      return { t, channelId: r.u16(), parentId: r.u16() };
     case Op.ChatSend:
       return { t, scope: r.u8() as ChatScope, targetId: r.u16(), text: r.str() };
     case Op.SetSelfState: {

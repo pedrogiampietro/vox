@@ -254,6 +254,10 @@
   font-size: 10px;
 }
 
+.landing-mobile-install {
+  margin-top: 12px;
+}
+
 .landing-stage {
   min-height: 440px;
   display: grid;
@@ -499,7 +503,7 @@
   text-transform: uppercase;
 }
 
-.landing-download-mobile .landing-download-status { color: var(--text-faint); }
+.landing-download-mobile .landing-download-status { color: var(--signal); }
 
 .landing-download-card h3 {
   margin: 28px 0 12px;

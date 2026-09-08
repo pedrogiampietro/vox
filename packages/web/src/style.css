@@ -719,10 +719,32 @@ label.field {
   cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22'><path d='M7 2v12l3.5-3.5L13 16h2l-2.5-5.5L17 10z' fill='%23f2b354' stroke='%23241706' stroke-width='1.2'/><circle cx='17' cy='5' r='3' fill='none' stroke='%23f2b354' stroke-width='1.5'/><path d='M19.1 7.1l2.5 2.5' stroke='%23f2b354' stroke-width='1.5' stroke-linecap='round'/></svg>") 7 2, grabbing;
 }
 
+.room.movable {
+  user-select: none;
+  cursor: grab;
+}
+
+@media (pointer: fine) {
+  .room.movable {
+    touch-action: none;
+  }
+}
+
+.room.channel-row.dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+}
+
 .room.drop-target {
   background: var(--ink-600);
   box-shadow: inset 2px 0 0 var(--amber);
   color: var(--text);
+}
+
+.tree.drop-root-target {
+  outline: 1px dashed var(--amber-dim);
+  outline-offset: -3px;
+  background: rgba(232, 163, 61, 0.04);
 }
 
 .drag-ghost {
@@ -3332,6 +3354,34 @@ label.field {
 .settings-test .dot.live {
   background: var(--signal);
   box-shadow: 0 0 6px rgba(94, 224, 138, 0.5);
+}
+
+.sound-event-list {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.sound-event-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.sound-event-row .settings-toggle {
+  min-width: 0;
+  flex: 1;
+}
+
+.sound-event-row > button {
+  flex: none;
+  min-width: 30px;
+  padding: 4px 7px;
 }
 
 .settings-recording {

@@ -712,6 +712,11 @@ export class Hub {
         break;
       }
 
+      case Op.MoveChannel:
+        if (!this.allow(s, this.permissionFor(PermissionAction.MoveChannel))) break;
+        this.moveChannel(s, m.channelId, m.parentId);
+        break;
+
       case Op.ChatSend:
         this.routeChat(s, m.scope, m.targetId, m.text);
         break;
@@ -1326,6 +1331,41 @@ export class Hub {
     this.deps.onChanged();
   }
 
+  private moveChannel(s: Session, channelId: number, parentId: number): void {
+    const channel = this.channels.get(channelId);
+    if (!channel) return this.fail(s, FailureCode.ChannelNotFound, 'canal inexistente');
+    if (channel.info.flags & ChannelFlags.Default) {
+      return this.fail(s, FailureCode.NotPermitted, 'o canal padrao nao pode ser movido');
+    }
+    if (parentId !== NO_CHANNEL && !this.channels.has(parentId)) {
+      return this.fail(s, FailureCode.ChannelNotFound, 'canal pai inexistente');
+    }
+    if (parentId === channelId || this.isChannelDescendant(parentId, channelId)) {
+      return this.fail(s, FailureCode.NotPermitted, 'um canal nao pode ficar dentro dele mesmo');
+    }
+
+    const siblings = [...this.channels.values()].filter(
+      (candidate) => candidate.info.parentId === parentId && candidate.info.id !== channelId,
+    );
+    const nextOrder = siblings.reduce((max, candidate) => Math.max(max, candidate.info.order), -1) + 1;
+    channel.info.parentId = parentId;
+    channel.info.order = nextOrder;
+    this.broadcast({ t: Op.ChannelUpdate, channel: channel.info });
+    this.deps.onChanged();
+  }
+
+  private isChannelDescendant(channelId: number, ancestorId: number): boolean {
+    const seen = new Set<number>();
+    let current = this.channels.get(channelId);
+    while (current && !seen.has(current.info.id)) {
+      if (current.info.id === ancestorId) return true;
+      seen.add(current.info.id);
+      if (current.info.parentId === NO_CHANNEL) break;
+      current = this.channels.get(current.info.parentId);
+    }
+    return false;
+  }
+
   // --------------------------------------------------------------- claims --
 
   private claimResp(s: Session, respawn: string, note: string): void {
@@ -1727,13 +1767,19 @@ export class Hub {
           sources = [...this.sessions.values()];
         }
         let count = 0;
+        let protectedCount = 0;
         for (const m of sources) {
-          if (m.id !== s.id && m.channelId !== destChannel.info.id && this.canEnter(m, destChannel)) {
-            this.forceMove(m, destChannel.info.id);
-            count++;
+          if (m.id === s.id || m.channelId === destChannel.info.id) continue;
+          if (this.isServiceSession(m)) {
+            protectedCount++;
+            continue;
           }
+          if (!this.canEnter(m, destChannel)) continue;
+          this.forceMove(m, destChannel.info.id);
+          count++;
         }
-        this.sendBotResult(s, true, `${count} usuarios movidos para ${destChannel.info.name}`);
+        const protectedNote = protectedCount > 0 ? `; ${protectedCount} bot(s)/player(s) preservado(s)` : '';
+        this.sendBotResult(s, true, `${count} usuarios movidos para ${destChannel.info.name}${protectedNote}`);
         break;
       }
       case 'kick': {
@@ -1949,6 +1995,15 @@ export class Hub {
       if (s.nickname.toLowerCase() === lower) return s;
     }
     return undefined;
+  }
+
+  /** Sessões automatizadas não devem ser arrastadas pelo masspush. */
+  private isServiceSession(session: Session): boolean {
+    const platform = session.platform.trim().toLowerCase();
+    const nickname = session.nickname.trim().toLowerCase();
+    return platform.includes('bot')
+      || platform.includes('jukebox')
+      || /^(?:music(?: player)?|rubinot)$/.test(nickname);
   }
 
   private findChannelObjByName(name: string): Channel | undefined {

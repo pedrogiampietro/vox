@@ -1,0 +1,222 @@
+/* -------------------------------------------------------- instalacao PWA -- */
+
+.pwa-install-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--amber-dim);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(232, 163, 61, 0.13), transparent 62%),
+    var(--ink-800);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.18);
+}
+
+.pwa-install-mobile-only {
+  display: none;
+}
+
+.pwa-install-shell {
+  position: fixed;
+  left: 50%;
+  bottom: calc(68px + env(safe-area-inset-bottom));
+  z-index: 60;
+  width: min(520px, calc(100vw - 24px));
+  transform: translateX(-50%);
+}
+
+.pwa-install-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  background: rgba(232, 163, 61, 0.09);
+}
+
+.pwa-install-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.pwa-install-copy strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.pwa-install-description {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
+.pwa-install-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.pwa-install-action,
+.pwa-install-close {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--amber);
+  border-radius: 4px;
+  color: #241706;
+  background: var(--amber);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pwa-install-action:hover,
+.pwa-install-close:hover {
+  background: #f2b354;
+}
+
+.pwa-install-dismiss {
+  width: 28px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--text-faint);
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.pwa-install-dismiss:hover {
+  color: var(--text);
+  border-color: var(--amber-dim);
+}
+
+.pwa-install-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.pwa-install-modal {
+  width: min(390px, 100%);
+  padding: 22px;
+  border: 1px solid var(--amber-dim);
+  border-radius: 10px;
+  background: var(--ink-800);
+  box-shadow: var(--shadow-xl);
+}
+
+.pwa-install-modal h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+}
+
+.pwa-install-intro {
+  margin: 10px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pwa-install-steps {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding-left: 24px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pwa-install-steps li::marker {
+  color: var(--amber);
+  font-family: var(--mono);
+}
+
+.pwa-install-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+@media (max-width: 680px) {
+  .pwa-install-mobile-only {
+    display: grid;
+  }
+
+  .pwa-install-card {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .pwa-install-shell {
+    bottom: calc(62px + env(safe-area-inset-bottom));
+    width: calc(100vw - 16px);
+  }
+
+  .pwa-install-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .pwa-install-copy strong {
+    font-size: 12px;
+  }
+
+  .pwa-install-description {
+    font-size: 10px;
+  }
+
+  .pwa-install-actions {
+    align-self: start;
+  }
+
+  .pwa-install-action {
+    min-height: 36px;
+    padding: 0 9px;
+    font-size: 9px;
+  }
+
+  .pwa-install-dismiss {
+    width: 26px;
+    height: 36px;
+  }
+}
+
+@media (max-width: 390px) {
+  .pwa-install-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .pwa-install-actions {
+    grid-column: 2;
+    width: 100%;
+  }
+
+  .pwa-install-action {
+    flex: 1;
+  }
+}

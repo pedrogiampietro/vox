@@ -48,7 +48,8 @@ import {
 import { closeMenu, openMenu } from './ui/menu.js';
 import { keyLabel, loadPttKey, savePttKey } from './ui/ptt.js';
 import { isDesktopShell } from './net/connection.js';
-import { registerPwaServiceWorker } from './pwa.js';
+import { createPwaInstallCard, registerPwaServiceWorker } from './pwa.js';
+import { SOUND_EVENT_LABELS, SOUND_PACK_LABELS, type SoundName, type SoundPackId } from './audio/sounds.js';
 
 registerPwaServiceWorker();
 
@@ -93,6 +94,9 @@ let dragGhost: HTMLElement | null = null;
 let dragStartY = 0;
 let dragActive = false;
 let dragPointerId = 0;
+let dragChannelId = 0;
+let dragChannelStartY = 0;
+let dragChannelPointerId = 0;
 let inputDevices: MediaDeviceInfo[] = [];
 let outputDevices: MediaDeviceInfo[] = [];
 
@@ -129,10 +133,11 @@ if (typeof document !== 'undefined') {
       sliderDragging = false;
       needsRender = true;
     }
-    if (dragActive || dragClientId) {
+    if (dragActive || dragClientId || dragChannelId) {
       clearDropHighlight();
       if (dragGhost) { dragGhost.remove(); dragGhost = null; }
       dragClientId = 0;
+      dragChannelId = 0;
       dragActive = false;
       needsRender = true;
     }
@@ -229,6 +234,11 @@ function renderShell(): HTMLElement {
   root.append(renderRail(), renderRooms(), renderTalk(), renderConsole());
   const dock = renderScreenDock();
   if (dock) root.append(dock);
+  const installCard = createPwaInstallCard({ compact: true, dismissible: true, mobileOnly: true });
+  if (installCard) {
+    installCard.classList.add('pwa-install-shell');
+    root.append(installCard);
+  }
   return root;
 }
 
@@ -522,7 +532,10 @@ function renderRooms(): HTMLElement {
   });
   footActions.append(disconnectBtn);
 
-  foot.append(footActions, text('span', 'rooms-footer-hint', 'duplo clique para entrar'));
+  const channelHint = client.myGroup >= client.permissionFor(PermissionAction.MoveChannel)
+    ? 'duplo clique para entrar · arraste canais para organizar'
+    : 'duplo clique para entrar';
+  foot.append(footActions, text('span', 'rooms-footer-hint', channelHint));
   pane.append(foot);
   return pane;
 }
@@ -663,6 +676,62 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
     e.stopPropagation();
     showChannelMenu(e, ch);
   });
+
+  if (client.canMoveChannel(ch)) {
+    row.classList.add('movable');
+    row.title = full
+      ? 'canal lotado · arraste sobre outro para criar subcanal; solte no espaço vazio para raiz'
+      : 'arraste sobre outro para criar subcanal; solte no espaço vazio para raiz';
+    row.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement;
+      if (target.closest('.room-disclosure')) return;
+      dragChannelId = ch.id;
+      dragChannelStartY = e.clientY;
+      dragChannelPointerId = e.pointerId;
+      dragActive = false;
+    });
+    row.addEventListener('pointermove', (e) => {
+      if (!dragChannelId || dragChannelId !== ch.id) return;
+      if (!dragActive && Math.abs(e.clientY - dragChannelStartY) < 6) return;
+      if (!dragActive) {
+        dragActive = true;
+        row.setPointerCapture(dragChannelPointerId);
+        row.classList.add('dragging');
+        dragGhost = $('div', 'drag-ghost');
+        dragGhost.textContent = `# ${ch.name}`;
+        document.body.append(dragGhost);
+      }
+      dragGhost!.style.left = `${e.clientX + 12}px`;
+      dragGhost!.style.top = `${e.clientY - 14}px`;
+      updateChannelDropHighlight(e.clientX, e.clientY, ch.id);
+    });
+    row.addEventListener('pointerup', (e) => {
+      if (!dragChannelId || dragChannelId !== ch.id) return;
+      row.classList.remove('dragging');
+      if (dragActive) {
+        try { row.releasePointerCapture(e.pointerId); } catch {}
+        if (dragGhost) dragGhost.style.display = 'none';
+        const target = getDropParentChannel(e.clientX, e.clientY, ch.id);
+        if (target !== null && target !== ch.id) client.moveChannel(ch.id, target);
+        clearDropHighlight();
+      }
+      if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+      dragChannelId = 0;
+      dragActive = false;
+      if (renderPending) { renderPending = false; render(); }
+    });
+    row.addEventListener('lostpointercapture', () => {
+      if (dragChannelId === ch.id) {
+        row.classList.remove('dragging');
+        clearDropHighlight();
+        if (dragGhost) { dragGhost.remove(); dragGhost = null; }
+        dragChannelId = 0;
+        dragActive = false;
+        if (renderPending) { renderPending = false; render(); }
+      }
+    });
+  }
 
   parent.append(row);
   if (!expanded) return;
@@ -2364,8 +2433,48 @@ function updateDropHighlight(x: number, y: number): void {
   if (room) room.classList.add('drop-target');
 }
 
+function getDropParentChannel(x: number, y: number, draggedChannelId: number): number | null {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return null;
+  const channelRow = (el as HTMLElement).closest('.channel-row') as HTMLElement | null;
+  if (channelRow?.dataset.channelId) {
+    const targetId = Number(channelRow.dataset.channelId);
+    if (targetId === draggedChannelId || isChannelDescendant(targetId, draggedChannelId)) return null;
+    return targetId;
+  }
+  return (el as HTMLElement).closest('.tree') ? NO_CHANNEL : null;
+}
+
+function isChannelDescendant(channelId: number, ancestorId: number): boolean {
+  const seen = new Set<number>();
+  let current = client.channels.get(channelId);
+  while (current && current.parentId !== NO_CHANNEL && !seen.has(current.id)) {
+    if (current.parentId === ancestorId) return true;
+    seen.add(current.id);
+    current = client.channels.get(current.parentId);
+  }
+  return false;
+}
+
+function updateChannelDropHighlight(x: number, y: number, draggedChannelId: number): void {
+  clearDropHighlight();
+  const el = document.elementFromPoint(x, y);
+  if (!el) return;
+  const channelRow = (el as HTMLElement).closest('.channel-row') as HTMLElement | null;
+  if (channelRow?.dataset.channelId) {
+    const targetId = Number(channelRow.dataset.channelId);
+    if (targetId !== draggedChannelId && !isChannelDescendant(targetId, draggedChannelId)) {
+      channelRow.classList.add('drop-target');
+    }
+    return;
+  }
+  const tree = (el as HTMLElement).closest('.tree');
+  if (tree) tree.classList.add('drop-root-target');
+}
+
 function clearDropHighlight(): void {
   document.querySelectorAll('.room.drop-target').forEach((el) => el.classList.remove('drop-target'));
+  document.querySelectorAll('.tree.drop-root-target').forEach((el) => el.classList.remove('drop-root-target'));
 }
 
 // ----------------------------------------------------------------- console --
@@ -2428,7 +2537,10 @@ function renderConsole(): HTMLElement {
   screenBtn.setAttribute('aria-label', screenBtn.title);
   if (client.screen.sharing) screenBtn.classList.add('armed');
   screenBtn.addEventListener('click', () => {
-    void client.screen.toggle().then(render);
+    void client.screen.toggle().then(() => {
+      client.previewSound('screen');
+      render();
+    });
   });
   bar.append(screenBtn);
 
@@ -3107,38 +3219,75 @@ function buildPlaybackSection(body: HTMLElement): void {
   volRow.append(volLabel);
   body.append(volRow);
 
-  // Sounds
+  // Sound pack
   body.append($('hr'));
+  body.append(text('h3', '', 'AVISOS SONOROS'));
+  body.append(text('span', 'settings-note', 'Sons curtos do sistema, separados do volume da voz.'));
+
   const sndRow = $('div', 'settings-toggle');
   const sndCheck = $('input') as HTMLInputElement;
   sndCheck.type = 'checkbox';
   sndCheck.checked = client.soundsEnabled;
-  sndCheck.addEventListener('change', () => {
-    client.setSoundsEnabled(sndCheck.checked);
-  });
-  sndRow.append(sndCheck, text('span', '', 'Reproduzir sons de aviso (join, leave, mensagem)'));
+  sndCheck.addEventListener('change', () => client.setSoundsEnabled(sndCheck.checked));
+  sndRow.append(sndCheck, text('span', '', 'Ativar avisos sonoros'));
   body.append(sndRow);
 
-  // Test sound
-  const testRow = $('div', 'settings-test');
-  const testBtn = $('button', 'ghost');
-  testBtn.textContent = '▶ reproduzir som de teste';
-  testBtn.addEventListener('click', () => {
-    // Play a simple test tone
-    const ctx = new AudioContext({ sampleRate: 48000 });
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.value = 440;
-    gain.gain.value = 0.3;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-    osc.stop(ctx.currentTime + 0.5);
-    osc.onended = () => ctx.close();
+  const packRow = $('div', 'settings-row');
+  const packLabel = $('label');
+  packLabel.append(text('span', '', 'Pacote de sons'));
+  const packSelect = $('select') as HTMLSelectElement;
+  for (const [id, label] of Object.entries(SOUND_PACK_LABELS)) {
+    const opt = $('option') as HTMLOptionElement;
+    opt.value = id;
+    opt.textContent = label;
+    opt.selected = id === client.soundPack;
+    packSelect.append(opt);
+  }
+  packSelect.addEventListener('change', () => client.setSoundPack(packSelect.value as SoundPackId));
+  packLabel.append(packSelect);
+  packRow.append(packLabel);
+  body.append(packRow);
+
+  const soundVolumeRow = $('div', 'settings-row');
+  const soundVolumeLabel = $('label');
+  soundVolumeLabel.append(text('span', '', 'Volume dos avisos'));
+  const soundVolumeSlider = $('div', 'settings-slider');
+  const soundVolumeRange = $('input') as HTMLInputElement;
+  soundVolumeRange.type = 'range';
+  soundVolumeRange.min = '0';
+  soundVolumeRange.max = '1';
+  soundVolumeRange.step = '0.05';
+  soundVolumeRange.value = String(client.soundVolume);
+  const soundVolumeValue = text('span', 'val', `${Math.round(client.soundVolume * 100)}%`);
+  soundVolumeRange.addEventListener('input', () => {
+    const value = Number(soundVolumeRange.value);
+    client.setSoundVolumeDirect(value);
+    soundVolumeValue.textContent = `${Math.round(value * 100)}%`;
   });
-  testRow.append(testBtn);
-  body.append(testRow);
+  soundVolumeSlider.append(soundVolumeRange, soundVolumeValue);
+  soundVolumeLabel.append(soundVolumeSlider);
+  soundVolumeRow.append(soundVolumeLabel);
+  body.append(soundVolumeRow);
+
+  const eventList = $('div', 'sound-event-list');
+  for (const [name, label] of Object.entries(SOUND_EVENT_LABELS) as [SoundName, string][]) {
+    const eventRow = $('div', 'sound-event-row');
+    const eventToggle = $('label', 'settings-toggle');
+    const eventCheck = $('input') as HTMLInputElement;
+    eventCheck.type = 'checkbox';
+    eventCheck.checked = client.soundEvents[name];
+    eventCheck.addEventListener('change', () => client.setSoundEventEnabled(name, eventCheck.checked));
+    eventToggle.append(eventCheck, text('span', '', label));
+    const eventTest = $('button', 'ghost');
+    eventTest.type = 'button';
+    eventTest.textContent = '▶';
+    eventTest.title = `testar: ${label}`;
+    eventTest.setAttribute('aria-label', `testar ${label}`);
+    eventTest.addEventListener('click', () => client.previewSound(name));
+    eventRow.append(eventToggle, eventTest);
+    eventList.append(eventRow);
+  }
+  body.append(eventList);
 
   // Voice volume adjustment (per-user is handled elsewhere, this is global preamp)
   body.append($('hr'));
@@ -3331,6 +3480,7 @@ function buildPermissionsSection(body: HTMLElement): void {
         PermissionAction.CreatePermanentChannel,
         PermissionAction.EditChannel,
         PermissionAction.DeleteChannel,
+        PermissionAction.MoveChannel,
       ],
     },
     {

@@ -10,7 +10,7 @@ import { Connection, type LinkState, type Target, type VoiceTransport } from './
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer, type VoicePlaybackHealth, type VoiceSenderStats } from './audio/mixer.js';
 import { VoiceRecorder, type RecordingTelemetry, type VoiceRecordingResult } from './audio/recording.js';
-import { Sounds, type SoundName } from './audio/sounds.js';
+import { DEFAULT_SOUND_EVENTS, Sounds, type SoundName, type SoundPackId } from './audio/sounds.js';
 import { loadIdentity, type Identity } from './identity.js';
 import { loadAudioPrefs, saveAudioPrefs, type AudioPrefs } from './audio-prefs.js';
 import { touchFavorite, type Favorite } from './favorites.js';
@@ -111,6 +111,9 @@ export class VoxClient {
   mic: MicSettings = { ...DEFAULT_MIC };
   outputVolume = 1;
   soundsEnabled = true;
+  soundPack: SoundPackId = 'radio';
+  soundVolume = 0.7;
+  soundEvents: Record<SoundName, boolean> = { ...DEFAULT_SOUND_EVENTS };
   preamp = 1;
   notificationsEnabled = true;
   onPoke: ((from: string, text: string) => void) | null = null;
@@ -234,6 +237,12 @@ export class VoxClient {
     return this.myGroup >= Group.Moderator && this.myGroup >= target.group;
   }
 
+  /** Pode reorganizar este canal na arvore? Canais padrao sao fixos. */
+  canMoveChannel(channel: ChannelInfo): boolean {
+    if (channel.flags & ChannelFlags.Default) return false;
+    return this.myGroup >= this.permissionFor(PermissionAction.MoveChannel);
+  }
+
   groupDef(group: Group): GroupDef {
     return this.groupDefs.find((g) => g.id === group) ?? DEFAULT_GROUP_DEFS[group] ?? { id: group, name: `Grupo ${group}`, icon: '', color: '' };
   }
@@ -272,6 +281,9 @@ export class VoxClient {
     this.mic = { ...prefs.mic };
     this.outputVolume = prefs.outputVolume;
     this.soundsEnabled = prefs.soundsEnabled;
+    this.soundPack = prefs.soundPack;
+    this.soundVolume = prefs.soundVolume;
+    this.soundEvents = { ...DEFAULT_SOUND_EVENTS, ...prefs.soundEvents };
     this.preamp = prefs.preamp;
     this.outputDeviceId = prefs.outputDeviceId ?? '';
     this.microphone.reconfigure(this.mic);
@@ -279,7 +291,7 @@ export class VoxClient {
       this.mixer.volume = this.outputVolume;
       this.mixer.preamp = this.preamp;
     }
-    if (this.sounds) this.sounds.enabled = this.soundsEnabled;
+    this.applySoundPrefs();
   }
 
   disconnect(): void {
@@ -409,7 +421,7 @@ export class VoxClient {
       this.startVoiceSampler();
     }
     this.sounds ??= new Sounds(this.ctx);
-    this.sounds.enabled = this.soundsEnabled;
+    this.applySoundPrefs();
   }
 
   private async startMic(): Promise<void> {
@@ -549,6 +561,32 @@ export class VoxClient {
     this.onChange();
   }
 
+  setSoundPack(pack: SoundPackId): void {
+    this.soundPack = pack;
+    if (this.sounds) this.sounds.pack = pack;
+    this.saveAudioPrefs();
+  }
+
+  setSoundVolumeDirect(v: number): void {
+    this.soundVolume = Math.max(0, Math.min(1, v));
+    if (this.sounds) this.sounds.volume = this.soundVolume;
+    this.saveAudioPrefs();
+  }
+
+  setSoundEventEnabled(name: SoundName, enabled: boolean): void {
+    this.soundEvents[name] = enabled;
+    this.sounds?.setEventEnabled(name, enabled);
+    this.saveAudioPrefs();
+  }
+
+  previewSound(name: SoundName): void {
+    if (this.sounds) {
+      this.sounds.preview(name);
+      return;
+    }
+    void this.ensureAudio().then(() => this.sounds?.preview(name)).catch(() => {});
+  }
+
   setPreamp(v: number): void {
     this.preamp = v;
     if (this.mixer) this.mixer.preamp = v;
@@ -567,6 +605,9 @@ export class VoxClient {
       mic: this.mic,
       outputVolume: this.outputVolume,
       soundsEnabled: this.soundsEnabled,
+      soundPack: this.soundPack,
+      soundVolume: this.soundVolume,
+      soundEvents: { ...this.soundEvents },
       preamp: this.preamp,
       outputDeviceId: this.outputDeviceId,
     };
@@ -575,6 +616,24 @@ export class VoxClient {
 
   private play(name: SoundName): void {
     this.sounds?.play(name);
+  }
+
+  private applySoundPrefs(): void {
+    if (!this.sounds) return;
+    this.sounds.enabled = this.soundsEnabled;
+    this.sounds.pack = this.soundPack;
+    this.sounds.volume = this.soundVolume;
+    for (const name of Object.keys(this.soundEvents) as SoundName[]) {
+      this.sounds.setEventEnabled(name, this.soundEvents[name]);
+    }
+  }
+
+  private playFlagChange(previous: number, next: number): void {
+    if ((previous ^ next) & ClientFlags.MutedSpeakers) {
+      this.play(next & ClientFlags.MutedSpeakers ? 'deafen' : 'undeafen');
+    } else if ((previous ^ next) & ClientFlags.MutedMic) {
+      this.play(next & ClientFlags.MutedMic ? 'mute' : 'unmute');
+    }
   }
 
   // ------------------------------------------------- audio por usuario --
@@ -637,6 +696,10 @@ export class VoxClient {
 
   editChannel(channelId: number, name: string, topic: string, maxClients: number): void {
     this.connection.send({ t: Op.EditChannel, channelId, name, topic, maxClients });
+  }
+
+  moveChannel(channelId: number, parentId: number): void {
+    this.connection.send({ t: Op.MoveChannel, channelId, parentId });
   }
 
   botCommand(command: string, ...args: string[]): void {
@@ -795,7 +858,9 @@ export class VoxClient {
   }
 
   private setFlags(flags: number): void {
+    const previous = this.flags;
     this.connection.send({ t: Op.SetSelfState, flags });
+    this.playFlagChange(previous, flags);
     if (this.mixer) this.mixer.volume = flags & ClientFlags.MutedSpeakers ? 0 : this.outputVolume;
     const me = this.self;
     if (me) me.flags = flags;
@@ -926,6 +991,7 @@ export class VoxClient {
         const c = this.clients.get(m.clientId);
         if (c) c.channelId = m.channelId;
         if (m.clientId === this.selfId) {
+          this.play('channel');
           this.syncMicMute();
           // Mudei de canal — recalcula oferta de tela para o novo grupo.
           this.screen.onSelfMoved();
@@ -938,8 +1004,12 @@ export class VoxClient {
 
       case Op.ClientState: {
         const c = this.clients.get(m.clientId);
+        const previous = c?.flags ?? (m.clientId === this.selfId ? this.flags : m.flags);
         if (c) c.flags = m.flags;
-        if (m.clientId === this.selfId) this.syncMicMute();
+        if (m.clientId === this.selfId) {
+          this.playFlagChange(previous, m.flags);
+          this.syncMicMute();
+        }
         break;
       }
 
@@ -955,6 +1025,8 @@ export class VoxClient {
         this.chat.push(line);
         if (this.chat.length > MAX_CHAT_LINES) this.chat.shift();
         const isPoke = m.senderId === 0 && m.text.includes('cutucou');
+        const isClaimNotice = m.senderId === 0 && m.scope === ChatScope.Server
+          && /claimou|assumiu|liberou|entrou na fila/i.test(m.text);
         if (isPoke) {
           this.play('poke');
           const pokeMatch = m.text.match(/👉\s*(.+?)\s+(?:te cutucou|cutucou todo[^:]*?)(?::\s*(.+))?$/);
@@ -962,6 +1034,8 @@ export class VoxClient {
           const customMsg = pokeMatch?.[2] ?? '';
           this.onPoke?.(from, customMsg);
           if (this.notificationsEnabled) notifications.poke(from);
+        } else if (isClaimNotice) {
+          this.play('claim');
         } else if (m.senderId !== this.selfId) {
           if (m.scope === ChatScope.Private) {
             const otherId = m.senderId;

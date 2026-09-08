@@ -9,6 +9,7 @@ import {
 } from './favorites.js';
 import { $, text } from './ui/dom.js';
 import { closeMenu, openCustomMenu } from './ui/menu.js';
+import { createPwaInstallCard } from './pwa.js';
 
 const SERVER_ADDRESS_PLACEHOLDER = 'ex.: v0x.online ou servidor.v0x.online';
 
@@ -31,6 +32,9 @@ export function renderBrowserView(options: BrowserViewOptions): HTMLElement {
   root.append(brand);
 
   const body = $('div', 'browser-body');
+
+  const installCard = createPwaInstallCard({ compact: true, dismissible: true, mobileOnly: true });
+  if (installCard) body.append(installCard);
 
   const favs = listFavorites();
   if (favs.length > 0) {

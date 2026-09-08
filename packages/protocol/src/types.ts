@@ -17,8 +17,9 @@
  * 15: presets de servidor (canais + respawns + fonte do bot num objeto so).
  * 16: editor de servidor e capacidade anunciada no handshake.
  * 17: permissões de visibilidade/entrada em canais e canal sem voz.
+ * 18: mover canais na arvore (drag-and-drop) com permissao propria.
  */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -57,6 +58,7 @@ export enum Op {
   CreateChannel = 0x11,
   DeleteChannel = 0x12,
   EditChannel = 0x13,
+  MoveChannel = 0x14,
   ChatSend = 0x20,
   SetSelfState = 0x30,
   KickClient = 0x50,
@@ -363,6 +365,7 @@ export enum PermissionAction {
   SetOtherDescription = 8,
   ViewChannels = 9,
   JoinChannel = 10,
+  MoveChannel = 11,
   BotPoke = 20,
   BotMassPoke = 21,
   BotPush = 22,
@@ -391,6 +394,7 @@ export const PERMISSION_LABELS: Record<PermissionAction, string> = {
   [PermissionAction.DeleteChannel]: 'Deletar canal',
   [PermissionAction.Kick]: 'Expulsar (kick)',
   [PermissionAction.Move]: 'Mover usuário',
+  [PermissionAction.MoveChannel]: 'Mover canal',
   [PermissionAction.Ban]: 'Banir',
   [PermissionAction.SetGroup]: 'Alterar grupo de outros',
   [PermissionAction.SetOtherDescription]: 'Editar descrição de outros',
@@ -424,6 +428,7 @@ export const DEFAULT_PERMISSIONS: Record<PermissionAction, Group> = {
   [PermissionAction.DeleteChannel]: Group.Moderator,
   [PermissionAction.Kick]: Group.Moderator,
   [PermissionAction.Move]: Group.Moderator,
+  [PermissionAction.MoveChannel]: Group.Moderator,
   [PermissionAction.Ban]: Group.Admin,
   [PermissionAction.SetGroup]: Group.Admin,
   [PermissionAction.SetOtherDescription]: Group.Moderator,

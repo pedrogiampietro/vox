@@ -1,6 +1,6 @@
 import { iconBrandMark } from './ui/icons.js';
 import { $, text } from './ui/dom.js';
-import { registerPwaServiceWorker, setupPwaInstall } from './pwa.js';
+import { createPwaInstallCard, registerPwaServiceWorker, setupPwaInstall } from './pwa.js';
 import './landing.css';
 
 const root = document.getElementById('landing');
@@ -55,6 +55,11 @@ function renderHero(): HTMLElement {
     landingLink('Conhecer Recursos', '#recursos', 'landing-button landing-button-outline'),
   );
   copy.append(actions, renderQuickConnect());
+  const mobileInstall = createPwaInstallCard({ compact: true, mobileOnly: true });
+  if (mobileInstall) {
+    mobileInstall.classList.add('landing-mobile-install');
+    copy.append(mobileInstall);
+  }
 
   const stage = $('div', 'landing-stage');
   stage.append(renderVoiceOrb(), renderServerWindow());
@@ -153,7 +158,7 @@ function renderDownload(): HTMLElement {
     downloadCard('01', 'web', 'Navegador', 'disponível agora', 'Entre em segundos, sem instalar nada e com voz QUIC quando sua rede permitir.', downloadWeb()),
     downloadCard('02', 'desktop', 'Windows / Tauri', 'disponível agora', 'Um cliente leve para deixar a call aberta ao lado da partida, com a mesma conta e os mesmos servidores.', downloadDesktop()),
     downloadCard('03', 'store', 'Microsoft Store', 'em preparação', 'Estamos preparando o pacote para publicação na Microsoft Store, com instalação centralizada pelo Windows.', text('span', 'landing-download-soon', 'disponível após aprovação')),
-    downloadCard('04', 'mobile', 'Android e iOS', 'próxima etapa', 'A mesma experiência do Vox chegando ao celular para você acompanhar o time de qualquer lugar.', text('span', 'landing-download-soon', 'roadmap em breve')),
+    downloadCard('04', 'mobile', 'Celular (PWA)', 'disponível agora', 'Instale o Vox direto pelo navegador no Android ou iPhone e abra a call pela sua tela inicial.', downloadMobile()),
   );
   section.append(grid);
   return section;
@@ -177,6 +182,15 @@ function downloadWeb(): HTMLElement {
   install.disabled = true;
   setupPwaInstall(install);
   wrap.append(install, text('span', 'landing-download-note', 'Chrome ou Edge · opção gratuita'));
+  return wrap;
+}
+
+function downloadMobile(): HTMLElement {
+  const wrap = $('div', 'landing-download-desktop');
+  const install = text('button', 'landing-button landing-button-primary landing-mobile-install-action', 'Instalar no celular') as HTMLButtonElement;
+  install.type = 'button';
+  setupPwaInstall(install, { alwaysVisible: true });
+  wrap.append(install, text('span', 'landing-download-note', 'Android · iPhone pelo Safari · gratuito'));
   return wrap;
 }
 
