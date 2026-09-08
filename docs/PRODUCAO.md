@@ -370,10 +370,16 @@ publicação anterior jogava contra em duas frentes: o arquivo saía de um domí
 sem histórico, e era recompilado a cada push na `master` — hash novo em todo
 deploy, então nunca acumulava nada.
 
-Agora **só sai release quando a versão muda**. Para publicar uma versão nova:
+Agora **só sai release quando a versão muda**. Esta é a regra para qualquer
+agente que trabalhe no repositório. Para publicar uma versão nova:
 
 1. suba `version` em `packages/desktop/src-tauri/tauri.conf.json`;
 2. faça o push na `master`.
+
+Se a tag já existir, escolha a próxima versão em vez de reutilizá-la. O CI
+detecta esse caso quando a versão foi alterada no push e encerra o job para
+evitar uma publicação silenciosamente ignorada. Commits que não alteram a
+versão continuam podendo atualizar somente o site e o servidor.
 
 Se a tag `v<versão>` já existir, o job não faz nada e diz isso no log. O nome
 dos arquivos não muda entre versões — é o que mantém o link `latest/download`

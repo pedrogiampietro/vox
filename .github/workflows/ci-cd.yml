@@ -193,6 +193,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: v0x-windows-downloads
@@ -203,6 +205,21 @@ jobs:
           version="$(node -p "require('./packages/desktop/src-tauri/tauri.conf.json').version")"
           if [ -z "$version" ]; then echo 'versao do desktop vazia' >&2; exit 1; fi
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+      - name: Detect desktop version bump
+        id: version_change
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          changed=false
+          zero='0000000000000000000000000000000000000000'
+          if [ "$EVENT_NAME" = 'push' ] && [ -n "$EVENT_BEFORE" ] && [ "$EVENT_BEFORE" != "$zero" ] && git cat-file -e "$EVENT_BEFORE^{commit}" 2>/dev/null; then
+            if ! git diff --quiet "$EVENT_BEFORE" "$GITHUB_SHA" -- packages/desktop/src-tauri/tauri.conf.json; then
+              changed=true
+            fi
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "Alteracao de versao do desktop neste push: $changed"
       - name: Check release token
         env:
           RELEASE_TOKEN: ${{ secrets.DESKTOP_RELEASE_TOKEN }}
@@ -216,6 +233,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DESKTOP_RELEASE_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION_CHANGED: ${{ steps.version_change.outputs.changed }}
           TARGET_REPO: pedrogiampietro/v0x-desktop
         run: |
           cd desktop-downloads
@@ -225,8 +243,13 @@ jobs:
           cat SHA256SUMS.txt
 
           if gh release view "$TAG" --repo "$TARGET_REPO" >/dev/null 2>&1; then
+            if [ "$VERSION_CHANGED" = 'true' ]; then
+              echo "A versao $TAG foi alterada neste push, mas a release ja existe em $TARGET_REPO." >&2
+              echo 'Nao reutilize uma versao publicada; aumente a versao do desktop e faca um novo push.' >&2
+              exit 1
+            fi
             echo "Release $TAG ja existe; nada a publicar."
-            echo 'Suba a versao em packages/desktop/src-tauri/tauri.conf.json para gerar uma nova.'
+            echo 'Nenhuma versao do desktop foi alterada; release mantida.'
             exit 0
           fi
 
