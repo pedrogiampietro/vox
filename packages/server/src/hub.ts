@@ -714,7 +714,7 @@ export class Hub {
 
       case Op.MoveChannel:
         if (!this.allow(s, this.permissionFor(PermissionAction.MoveChannel))) break;
-        this.moveChannel(s, m.channelId, m.parentId);
+        this.moveChannel(s, m.channelId, m.parentId, m.beforeChannelId);
         break;
 
       case Op.ChatSend:

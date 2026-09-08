@@ -141,7 +141,9 @@ function rubinotIconName(group: Group): string {
     case Group.Moderator: return 'moderador';
     case Group.Admin: return 'admin';
     case Group.Owner: return 'leader';
-    case Group.Dono: return 'dono';
+    // Dono e Leader/Owner representam o mesmo cargo visual: usam a caveira
+    // de owner, mesmo com o nome e a permissao separados no servidor.
+    case Group.Dono: return 'leader';
   }
 }
 
@@ -151,7 +153,7 @@ export const TIBIA_TEMPLATE: readonly TemplateCategory[] = RUBINOT_CHANNELS;
 export const RUBINOT_PRESET: ServerPreset = {
   id: 'rubinot',
   name: 'Rubinot',
-  description: 'OT global moderno. Bot com mortes, level up e presenca via API do Rubinot.',
+  description: 'OT global moderno. Bot com mortes, level up, transfers e Former Names via API do Rubinot.',
   version: 1,
   channels: RUBINOT_CHANNELS,
   respawns: RESPAWN_CATALOG,

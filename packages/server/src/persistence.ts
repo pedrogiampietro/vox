@@ -337,6 +337,17 @@ function migrateGroupDefIds(raw: GroupDef[] | undefined, migrateLegacyOwner = fa
   // mantem so uma entrada por id — a ultima vence.
   const byId = new Map<Group, GroupDef>();
   for (const g of remapped) byId.set(g.id as Group, g);
+  const leader = byId.get(Group.Owner);
+  const dono = byId.get(Group.Dono);
+  if (dono) {
+    // Leader e Dono sao cargos diferentes, mas compartilham a mesma
+    // identidade visual: a caveira de owner. Corrige tambem servidores que
+    // ja tinham persistido /icons/dono.png antes dessa regra.
+    byId.set(Group.Dono, {
+      ...dono,
+      icon: leader?.icon || '/icons/leader.png',
+    });
+  }
   return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 

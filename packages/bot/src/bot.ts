@@ -112,6 +112,7 @@ const INFO_CHANNEL_NAMES = {
   levelUp: 'UP Level',
   deathList: 'DeathList',
   transfers: 'Transfers',
+  formerNames: 'Former Names',
 } as const;
 
 const VOCATION_ORDER = ['ED', 'EK', 'MS', 'RP', 'MK', ''] as const;
@@ -145,7 +146,7 @@ export class RubinotBot {
   private readonly pendingLogins: OnlineEvent[] = [];
   private readonly pendingLogouts: OnlineEvent[] = [];
   private nextPresenceSummaryAt = 0;
-  private infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0, transfers: 0 };
+  private infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0, transfers: 0, formerNames: 0 };
   private readonly levelUpLog: LevelUpRecord[] = [];
   private readonly deathLog: DeathRecord[] = [];
   private transferLog: ProviderTransfer[] = [];
@@ -239,6 +240,7 @@ export class RubinotBot {
       levelUp: this.hub.ensureChannel(INFO_CHANNEL_NAMES.levelUp, botChannelId),
       deathList: this.hub.ensureChannel(INFO_CHANNEL_NAMES.deathList, botChannelId),
       transfers: this.hub.ensureChannel(INFO_CHANNEL_NAMES.transfers, botChannelId),
+      formerNames: this.hub.ensureChannel(INFO_CHANNEL_NAMES.formerNames, botChannelId),
     };
 
     await this.syncAllGuilds(signal);
@@ -294,10 +296,12 @@ export class RubinotBot {
     this.pendingLogins.length = 0;
     this.pendingLogouts.length = 0;
     this.nextPresenceSummaryAt = 0;
-    this.infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0, transfers: 0 };
+    this.infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0, transfers: 0, formerNames: 0 };
     this.levelUpLog.length = 0;
     this.deathLog.length = 0;
     this.transferLog = [];
+    this.charCache.clear();
+    this.charFetchQueue.length = 0;
     this.reportDay = '';
     this.startError = '';
     if (newCfg.enabled && newCfg.world) {
@@ -311,6 +315,7 @@ export class RubinotBot {
     // Nao rebaixa quem ja e amigo (via guild) para inimigo manual.
     if (existing?.kind === 'friend') return;
     this.tags.set(key, { kind: 'enemy', guild: '' });
+    if (this.running) this.refreshPlayerInfos();
     this.refreshInfoChannels();
   }
 
@@ -377,7 +382,6 @@ export class RubinotBot {
    */
   private refreshPlayerInfos(): void {
     const mains = this.hub.trackedMains();
-    if (mains.size === 0) return;
 
     // Indice por nome-lower dos jogadores atualmente online (world do bot).
     const onlineByLower = new Map<string, { name: string; level: number; vocation: string }>();
@@ -430,9 +434,32 @@ export class RubinotBot {
       this.hub.updatePlayerInfo(nameLower, { name: nameLower, online: false });
     }
 
+    this.enqueueHuntedCharacterLookups();
+
     // Pop 1 da fila e busca em paralelo — nao bloqueia o tick.
     const next = this.charFetchQueue.shift();
     if (next) void this.fetchOfflineChar(next);
+  }
+
+  /**
+   * O Rubinot nao publica uma lista global de renomes. Para montar o painel
+   * dos hunted, consulta cada nome conhecido em baixa frequencia e aproveita
+   * o campo `formerNames` da ficha publica.
+   */
+  private enqueueHuntedCharacterLookups(): void {
+    if (this.provider.id !== 'rubinot') return;
+    const now = Date.now();
+    for (const nameLower of this.enemiesList) {
+      const cached = this.charCache.get(nameLower);
+      const hasData = cached && (
+        cached.info.level > 0
+        || cached.info.vocation
+        || (cached.info.formerNames?.length ?? 0) > 0
+      );
+      const ttl = hasData ? 4 * 60 * 60 * 1000 : 30 * 60 * 1000;
+      if (cached && now - cached.fetchedAt < ttl) continue;
+      if (!this.charFetchQueue.includes(nameLower)) this.charFetchQueue.push(nameLower);
+    }
   }
 
   private async fetchOfflineChar(nameLower: string): Promise<void> {
@@ -444,16 +471,20 @@ export class RubinotBot {
           info: { name: nameLower, level: 0, vocation: '', world: '', online: false },
           fetchedAt: Date.now(),
         });
+        this.refreshInfoChannels();
         return;
       }
       this.charCache.set(nameLower, { info, fetchedAt: Date.now() });
       // Aplica na hora — nao espera o proximo tick.
-      this.hub.updatePlayerInfo(nameLower, {
-        name: info.name,
-        vocation: normalizeVocation(info.vocation),
-        level: info.level,
-        online: false,
-      });
+      if (this.hub.trackedMains().has(nameLower)) {
+        this.hub.updatePlayerInfo(nameLower, {
+          name: info.name,
+          vocation: normalizeVocation(info.vocation),
+          level: info.level,
+          online: false,
+        });
+      }
+      this.refreshInfoChannels();
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       console.error(`[bot] fetchCharacter falhou para "${nameLower}":`, (err as Error).message);
@@ -558,6 +589,7 @@ export class RubinotBot {
     this.hub.setChannelTopic(this.infoChannelIds.levelUp, this.renderLevelUps(now));
     this.hub.setChannelTopic(this.infoChannelIds.deathList, this.renderDeathList(now));
     this.hub.setChannelTopic(this.infoChannelIds.transfers, this.renderTransfers(now));
+    this.hub.setChannelTopic(this.infoChannelIds.formerNames, this.renderFormerNames(now));
   }
 
   private async refreshTransfers(signal: AbortSignal): Promise<void> {
@@ -671,6 +703,37 @@ export class RubinotBot {
       lines.push(
         `[${formatDateTime(transfer.transferredAt)}] ${transfer.player} (lvl ${transfer.level}) · ${transfer.fromWorld} → ${transfer.toWorld}`,
       );
+    }
+    return lines.join('\n');
+  }
+
+  private renderFormerNames(now: number): string {
+    const rows: { name: string; level: number; formerNames: string[] }[] = [];
+    const seen = new Set<string>();
+    for (const [nameLower, cached] of this.charCache) {
+      if (this.tags.get(nameLower)?.kind !== 'enemy') continue;
+      const formerNames = cached.info.formerNames ?? [];
+      if (formerNames.length === 0) continue;
+      const currentName = cached.info.name || nameLower;
+      const currentKey = currentName.toLowerCase();
+      if (seen.has(currentKey)) continue;
+      seen.add(currentKey);
+      rows.push({ name: currentName, level: cached.info.level, formerNames });
+    }
+    rows.sort((a, b) => a.name.localeCompare(b.name));
+
+    const lines = [
+      'FORMER NAMES · HUNTED',
+      `Atualizado ${formatDateTime(now)} (BR)`,
+      '',
+    ];
+    if (rows.length === 0) {
+      lines.push('Nenhum hunted com nome alterado encontrado.');
+      return lines.join('\n');
+    }
+    for (const row of rows) {
+      const level = row.level > 0 ? ` (lvl ${row.level})` : '';
+      lines.push(`${row.name}${level} · antes: ${row.formerNames.join(', ')}`);
     }
     return lines.join('\n');
   }

@@ -227,10 +227,11 @@ correto na aba `Bot` e ligue-o novamente para evitar alertas de outro OT.
 
 O provider também é usado para online, mortes, guilds e fichas de personagens;
 os eventos publicados no Vox permanecem no mesmo formato, independentemente da
-fonte. No preset Rubinot, o bot também cria o canal `Transfers` e consulta a
-lista de transferências recentes do world configurado, exibindo somente players
-com level 300 ou maior. A ficha de personagem usa a API JSON pública e preserva
-os `Former Names` quando a fonte os publica.
+fonte. No preset Rubinot, o bot também cria os canais `Transfers` e `Former
+Names`: o primeiro consulta as transferências recentes do world configurado e
+exibe somente players com level 300 ou maior; o segundo mostra antigos nomes
+dos players marcados na hunted list. A ficha de personagem usa a API JSON
+pública e preserva os `Former Names` quando a fonte os publica.
 
 Para busca por nome e links do SoundCloud, instale `yt-dlp` alem do `ffmpeg`, ou
 defina `VOX_YTDLP=/caminho/para/yt-dlp`. O jukebox nao usa YouTube nem cookies;

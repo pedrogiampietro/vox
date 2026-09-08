@@ -87,7 +87,7 @@ const CHANNEL_INFO_HEIGHT_KEY = 'vox.channel-info-height';
 const RESP_CLAIM_DURATION_MIN = 3 * 60;
 let channelInfoHeight = loadChannelInfoHeight();
 const collapsedChannels = new Set<number>();
-const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist', 'transfers']);
+const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist', 'transfers', 'former names']);
 
 // ---- drag-to-move state ----
 let dragClientId = 0;
@@ -929,7 +929,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
     iconImg.style.cssText = 'width:14px;height:14px;object-fit:contain;flex-shrink:0;';
     row.append(iconImg);
   } else if (c.group > Group.Guest) {
-    const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '👑' };
+    const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '♛' };
     const badge = text('span', 'rank', icons[c.group] || gdef.name.charAt(0).toUpperCase());
     badge.title = gdef.name;
     if (gdef.color) badge.style.color = gdef.color;
@@ -1475,7 +1475,7 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
         mIcon.style.cssText = 'width:12px;height:12px;object-fit:contain;';
         item.append(mIcon);
       } else if (m.group > Group.Guest) {
-        const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '👑' };
+        const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '♛' };
         const badge = text('span', 'rank', icons[m.group] || '');
         badge.style.fontSize = '8px';
         item.append(badge);
@@ -3489,7 +3489,8 @@ function iconSlug(name: string): string {
 
 /** URL do icone esperada em /root/icons/<slug>.png (servido em /icons/<slug>.png). */
 function defaultGroupIconUrl(groupName: string): string {
-  return `/icons/${iconSlug(groupName)}.png`;
+  const slug = iconSlug(groupName);
+  return `/icons/${slug === 'dono' ? 'leader' : slug}.png`;
 }
 
 /**
@@ -4035,7 +4036,7 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
       iconImg.style.cssText = 'width:16px;height:16px;object-fit:contain;';
       nickRow.append(iconImg);
     } else {
-      const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '👑' };
+      const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '♛' };
       const badge = text('span', 'rank', icons[target.group] || tgdef.name.charAt(0).toUpperCase());
       badge.title = tgdef.name;
       nickRow.append(badge);
