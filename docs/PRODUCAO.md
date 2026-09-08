@@ -226,6 +226,12 @@ também o tamanho e o intervalo dos quadros; `continuous` representa o pior
 caso, com todos os falantes transmitindo sem pausa. Para testar o caminho regional
 de voz, use `--voice-transport quic`; o controle continua no WebSocket da
 origem. Para medir o fallback sem QUIC, use `--voice-transport ws-dedicated`.
+O gerador distribui os clientes somente na quantidade de canais solicitada e
+abre os links de voz em lotes de 8, com uma pequena rampa entre eles. Isso
+evita que uma rajada artificial de 150 handshakes seja confundida com uso
+normal. Para reproduzir uma reconexão em massa, aumente deliberadamente
+`STRESS_BATCH` e `STRESS_VOICE_BATCH`; para uma entrada gradual, ajuste
+`STRESS_VOICE_RAMP_MS`.
 Para incluir no resumo as mesmas métricas do painel, informe um token
 master:
 

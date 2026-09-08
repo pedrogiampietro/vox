@@ -43,6 +43,8 @@ type Options = {
   voiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto';
   voiceIntervalMs: number;
   batch: number;
+  voiceBatch: number;
+  voiceRampMs: number;
   channels: number;
   adminUrl: string;
   adminToken: string;
@@ -484,7 +486,9 @@ async function main(): Promise<void> {
           `stress-${runId}-${offset + index + 1}`,
           options.url,
           options.voiceTransport,
-          options.channels > 1 ? offset + index : 0,
+          // Usa exatamente os canais pedidos, sem espalhar a carga pela
+          // arvore inteira de canais permanentes do servidor.
+          options.channels > 1 ? (offset + index) % options.channels : 0,
         ),
       );
       clients.push(...batch);
@@ -501,7 +505,12 @@ async function main(): Promise<void> {
     await pollAdmin();
     if (options.voiceTransport === 'ws-dedicated') {
       const voiceClients = clients.filter((client) => client.live);
-      await Promise.all(voiceClients.map((client) => client.openDedicatedVoiceLink()));
+      await openVoiceLinksInBatches(
+        voiceClients,
+        (client) => client.openDedicatedVoiceLink(),
+        options.voiceBatch,
+        options.voiceRampMs,
+      );
       const dedicatedClients = voiceClients.filter((client) => client.voiceTransport === 'ws-dedicated').length;
       console.log(`voz WebSocket dedicado: ${dedicatedClients}/${voiceClients.length} conexões`);
       if (dedicatedClients !== voiceClients.length) {
@@ -509,7 +518,12 @@ async function main(): Promise<void> {
       }
     } else if (options.voiceTransport !== 'ws') {
       const voiceClients = clients.filter((client) => client.live);
-      const opened = await Promise.all(voiceClients.map((client) => client.openVoiceLink()));
+      const opened = await openVoiceLinksInBatches(
+        voiceClients,
+        (client) => client.openVoiceLink(),
+        options.voiceBatch,
+        options.voiceRampMs,
+      );
       const quicClients = voiceClients.filter((client) => client.voiceTransport === 'quic').length;
       console.log(`voz QUIC: ${quicClients}/${voiceClients.length} conexões`);
       if (options.voiceTransport === 'quic' && quicClients !== voiceClients.length) {
@@ -585,6 +599,27 @@ async function main(): Promise<void> {
   if (!printSummary(clients, adminRuntime)) process.exitCode = 1;
 }
 
+/**
+ * Abre os links de voz em lotes pequenos. Abrir 150 transportes QUIC no mesmo
+ * instante mede a rajada do gerador e pode provocar timeout no próprio cliente
+ * de teste; uma entrada real acontece em uma rampa. O tamanho da rampa fica
+ * configurável para ainda permitir um cenário de reconexao em massa.
+ */
+async function openVoiceLinksInBatches(
+  clients: StressClient[],
+  open: (client: StressClient) => Promise<boolean>,
+  batchSize: number,
+  rampMs: number,
+): Promise<boolean[]> {
+  const results: boolean[] = [];
+  for (let offset = 0; offset < clients.length; offset += batchSize) {
+    const batch = clients.slice(offset, offset + batchSize);
+    results.push(...await Promise.all(batch.map((client) => open(client))));
+    if (rampMs > 0 && offset + batch.length < clients.length) await delay(rampMs);
+  }
+  return results;
+}
+
 function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null): boolean {
   const connected = clients.filter((client) => client.connected).length;
   const live = clients.filter((client) => client.live).length;
@@ -645,7 +680,7 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
 function parseOptions(): Options {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     console.log('Uso: npm run stress -- [--clients N] [--speakers N] [--channels N] [--duration SEC] [--url WS_URL] [--voice-profile continuous|realistic] [--voice-transport ws|ws-dedicated|quic|auto]');
-    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS');
+    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_BATCH, STRESS_VOICE_BATCH, STRESS_VOICE_RAMP_MS, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS');
     process.exit(0);
   }
   return {
@@ -657,7 +692,11 @@ function parseOptions(): Options {
     voiceProfile: (argument('--voice-profile') ?? process.env.STRESS_VOICE_PROFILE) === 'realistic' ? 'realistic' : 'continuous',
     voiceTransport: parseVoiceTransport(argument('--voice-transport') ?? process.env.STRESS_VOICE_TRANSPORT),
     voiceIntervalMs: boundedNumber(process.env.STRESS_VOICE_INTERVAL_MS, 20, 10, 1000),
-    batch: boundedNumber(process.env.STRESS_BATCH, 25, 1, 100),
+    // Oito handshakes por lote reproduzem melhor entradas reais e evitam que
+    // o gerador transforme um pico artificial em falha de capacidade.
+    batch: boundedNumber(process.env.STRESS_BATCH, 8, 1, 100),
+    voiceBatch: boundedNumber(process.env.STRESS_VOICE_BATCH, 8, 1, 100),
+    voiceRampMs: boundedNumber(process.env.STRESS_VOICE_RAMP_MS, 50, 0, 5000),
     channels: boundedNumber(argument('--channels') ?? process.env.STRESS_CHANNELS, 1, 1, 256),
     adminUrl: argument('--admin-url')
       ?? process.env.STRESS_ADMIN_URL
