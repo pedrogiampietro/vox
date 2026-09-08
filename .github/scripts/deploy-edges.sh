@@ -51,10 +51,14 @@ while IFS='|' read -r edge_id edge_host edge_user edge_port extra; do
   sort -u "$HOME/.ssh/known_hosts" -o "$HOME/.ssh/known_hosts"
 
   scp "${ssh_options[@]}" -P "$edge_port" \
-    "$artifact_dir/edge.mjs" "$artifact_dir/vox-edge.service" \
-    "$target:/tmp/" >/dev/null
+    "$artifact_dir/edge.mjs" "$target:/tmp/vox-edge.mjs" >/dev/null
+  scp "${ssh_options[@]}" -P "$edge_port" \
+    "$artifact_dir/vox-edge.service" "$target:/tmp/vox-edge.service" >/dev/null
   ssh "${ssh_options[@]}" -p "$edge_port" "$target" 'bash -s' <<'REMOTE'
 set -Eeuo pipefail
+
+test -s /tmp/vox-edge.mjs || { echo 'artefato edge.mjs nao chegou na VPS' >&2; exit 1; }
+test -s /tmp/vox-edge.service || { echo 'unit vox-edge.service nao chegou na VPS' >&2; exit 1; }
 
 install -d -m 0755 /opt/vox/dist
 timestamp="$(date +%Y%m%d%H%M%S)"
