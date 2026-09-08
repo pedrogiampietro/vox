@@ -70,6 +70,10 @@ VOX_WT_HOST=0.0.0.0
 VOX_WT_CERT_DIR=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory
 VOX_WT_CERT=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/server-1.v0x.online/server-1.v0x.online.crt
 VOX_WT_KEY=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/server-1.v0x.online/server-1.v0x.online.key
+
+# O serviço está atrás do Caddy local; sem isto todos os clientes parecem vir
+# do mesmo IP e o limite de conexões por IP bloqueia a instância inteira.
+VOX_TRUST_PROXY=1
 ```
 
 `VOX_WT_CERT` e `VOX_WT_KEY` são caminhos no disco, não o conteúdo do
@@ -298,6 +302,11 @@ repositório; ele é opcional e nunca deve ser colocado no workflow ou na URL.
 Sem ele, o painel master continua mostrando essas métricas em tempo real.
 Depois abra **Actions → Production voice stress → Run workflow**, informe a
 URL WSS, a duração, o transporte e digite `PRODUCAO` no campo de confirmação.
+
+Em uma instalação atrás de Caddy ou outro proxy confiável, valide primeiro
+`VOX_TRUST_PROXY=1`. Sem essa opção, o servidor enxerga o endereço do proxy em
+vez do cliente e `VOX_MAX_PER_IP=8` passa a valer para todos os usuários juntos;
+um teste distribuído termina em `429` sem medir a capacidade de voz.
 
 Os runners hospedados pelo GitHub normalmente têm IPs públicos diferentes, mas
 isso não é uma garantia de diversidade geográfica. Se aparecer `429` por limite
