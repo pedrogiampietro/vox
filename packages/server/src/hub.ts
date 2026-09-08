@@ -91,9 +91,16 @@ export class Hub {
    * novo para cada pacote e só é invalidado quando a composição do canal muda.
    */
   private readonly voiceMemberCache = new Map<number, Session[]>();
+  /**
+   * Atualizacoes de visibilidade para sessoes restritas sao agrupadas. Um
+   * burst de entradas nao deve gerar um Snapshot completo por evento.
+   */
+  private readonly visibilityRefreshTimers = new Map<Session, ReturnType<typeof setTimeout>>();
   private readonly sessions = new Map<number, Session>();
   /** Conexoes abertas que ainda nao terminaram o handshake. */
   private readonly pending = new Set<Session>();
+  /** Evita que uma rajada de assinaturas sature o pool criptografico. */
+  private readonly authGate = new AsyncGate(8);
   private readonly nicknames = new Set<string>();
   private readonly groups = new Map<string, Group>();
   private readonly claims = new Map<number, StoredRespClaim>();
@@ -373,8 +380,30 @@ export class Hub {
 
   private refreshVisibilitySnapshots(): void {
     for (const s of this.sessions.values()) {
-      if (!this.canViewChannels(s)) this.sendVisibilitySnapshot(s);
+      if (!this.canViewChannels(s)) this.scheduleVisibilitySnapshot(s);
     }
+  }
+
+  /**
+   * Um pequeno debounce transforma uma rajada de eventos em um unico retrato
+   * filtrado por sessao. Isso preserva a privacidade do Spy sem repetir o
+   * mesmo trabalho dezenas de vezes durante uma entrada em massa.
+   */
+  private scheduleVisibilitySnapshot(s: Session): void {
+    if (this.canViewChannels(s) || !this.isLive(s) || this.visibilityRefreshTimers.has(s)) return;
+    const timer = setTimeout(() => {
+      this.visibilityRefreshTimers.delete(s);
+      this.sendVisibilitySnapshot(s);
+    }, 75);
+    timer.unref?.();
+    this.visibilityRefreshTimers.set(s, timer);
+  }
+
+  private cancelVisibilitySnapshot(s: Session): void {
+    const timer = this.visibilityRefreshTimers.get(s);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.visibilityRefreshTimers.delete(s);
   }
 
   // ------------------------------------------------ player info (provider) --
@@ -560,8 +589,10 @@ export class Hub {
 
   drop(s: Session, reason: RemoveReason = RemoveReason.Disconnected): void {
     this.pending.delete(s);
+    this.cancelVisibilitySnapshot(s);
     if (!this.isLive(s)) return;
 
+    const previousChannelId = s.channelId;
     this.leaveChannel(s);
     this.sessions.delete(s.id);
     this.nicknames.delete(s.nickname.toLowerCase());
@@ -570,7 +601,7 @@ export class Hub {
     s.voice?.close();
     s.voice = null;
     s.stage = 'new';
-    this.broadcast({ t: Op.ClientRemove, clientId: s.id, reason });
+    this.broadcastClientRemove(s, previousChannelId, reason);
   }
 
   private isLive(s: Session): boolean {
@@ -1067,7 +1098,7 @@ export class Hub {
     const nonce = s.nonce;
     s.nonce = new Uint8Array(0);
 
-    const ok = await verifyChallenge(s.publicKey, signature, nonce);
+    const ok = await this.authGate.run(() => verifyChallenge(s.publicKey, signature, nonce));
     if (!ok) return this.kick(s, FailureCode.BadSignature, 'assinatura invalida');
     if (s.stage !== 'challenged') return; // caiu enquanto verificava
 
@@ -1189,13 +1220,19 @@ export class Hub {
   }
 
   private assignGroup(target: Session, group: Group): void {
+    const wasVisible = this.canViewChannels(target);
     if (group === Group.Guest) this.groups.delete(target.fingerprint);
     else this.groups.set(target.fingerprint, group);
     target.group = group;
+    const isVisible = this.canViewChannels(target);
     this.syncVoiceState(target);
     this.deps.onChanged();
     // ClientAdd tambem serve de atualizacao: o cliente indexa por id.
     this.broadcast({ t: Op.ClientAdd, client: this.describe(target) });
+    if (wasVisible !== isVisible) {
+      if (isVisible) this.sendVisibilitySnapshot(target);
+      else this.scheduleVisibilitySnapshot(target);
+    }
   }
 
   /** Define o grupo de uma identidade que pode nem estar online. */
@@ -1204,9 +1241,15 @@ export class Hub {
     else this.groups.set(fingerprint, group);
     for (const s of this.sessions.values()) {
       if (s.fingerprint !== fingerprint) continue;
+      const wasVisible = this.canViewChannels(s);
       s.group = group;
+      const isVisible = this.canViewChannels(s);
       this.syncVoiceState(s);
       this.broadcast({ t: Op.ClientAdd, client: this.describe(s) });
+      if (wasVisible !== isVisible) {
+        if (isVisible) this.sendVisibilitySnapshot(s);
+        else this.scheduleVisibilitySnapshot(s);
+      }
     }
     this.deps.onChanged();
   }
@@ -1304,12 +1347,13 @@ export class Hub {
   forceMove(target: Session, channelId: number): void {
     if (!this.channels.has(channelId)) return;
     if (channelId !== this.afkChannelId()) target.afkReturnChannelId = NO_CHANNEL;
+    const previousChannelId = target.channelId;
     this.leaveChannel(target);
     const ch = this.channels.get(channelId)!;
     this.addMember(ch, target);
     target.channelId = channelId;
     this.syncVoiceState(target);
-    this.broadcast({ t: Op.ClientMove, clientId: target.id, channelId });
+    this.broadcastClientMove(target, previousChannelId, channelId);
   }
 
   /** Estado minimo que um edge precisa para encaminhar voz localmente. */
@@ -1347,6 +1391,7 @@ export class Hub {
       return this.fail(s, FailureCode.ChannelFull, 'canal cheio');
     }
 
+    const previousChannelId = s.channelId;
     this.leaveChannel(s);
     if (target.info.id !== this.afkChannelId()) s.afkReturnChannelId = NO_CHANNEL;
     if (s.flags & ClientFlags.HasVoice) {
@@ -1356,7 +1401,7 @@ export class Hub {
     this.addMember(target, s);
     s.channelId = channelId;
     this.syncVoiceState(s);
-    this.broadcast({ t: Op.ClientMove, clientId: s.id, channelId });
+    this.broadcastClientMove(s, previousChannelId, channelId);
   }
 
   private afkChannelId(): number {
@@ -1424,7 +1469,7 @@ export class Hub {
         this.addMember(home, member);
         member.channelId = home.info.id;
         this.syncVoiceState(member);
-        this.broadcast({ t: Op.ClientMove, clientId: member.id, channelId: home.info.id });
+        this.broadcastClientMove(member, channelId, home.info.id);
       }
     }
     this.channels.delete(channelId);
@@ -2271,18 +2316,80 @@ export class Hub {
     this.deps.onChanged();
   }
 
+  /** Avisa uma mudanca de canal sem expor a arvore inteira a sessoes restritas. */
+  private broadcastClientMove(target: Session, previousChannelId: number, channelId: number): void {
+    const moveFrame = encodeServerMessage({ t: Op.ClientMove, clientId: target.id, channelId });
+    const removeFrame = encodeServerMessage({
+      t: Op.ClientRemove,
+      clientId: target.id,
+      // Para quem estava no canal anterior, sair da visao e semanticamente
+      // igual a uma remocao. O motivo nao e exibido ao usuario.
+      reason: RemoveReason.Disconnected,
+    });
+    const addFrame = encodeServerMessage({ t: Op.ClientAdd, client: this.describe(target) });
+
+    for (const observer of this.sessions.values()) {
+      if (observer === target || this.canViewChannels(observer)) {
+        observer.send(moveFrame);
+      } else if (previousChannelId !== NO_CHANNEL && observer.channelId === previousChannelId) {
+        observer.send(removeFrame);
+      } else if (channelId !== NO_CHANNEL && observer.channelId === channelId) {
+        observer.send(addFrame);
+      }
+    }
+  }
+
+  /** Remove apenas quem podia ver o cliente no canal em que ele estava. */
+  private broadcastClientRemove(target: Session, previousChannelId: number, reason: RemoveReason): void {
+    const frame = encodeServerMessage({ t: Op.ClientRemove, clientId: target.id, reason });
+    for (const observer of this.sessions.values()) {
+      if (this.canViewChannels(observer)
+        || (previousChannelId !== NO_CHANNEL && observer.channelId === previousChannelId)) {
+        observer.send(frame);
+      }
+    }
+  }
+
   private broadcast(m: ServerMessage, except?: Session): void {
     const frame = encodeServerMessage(m);
     for (const s of this.sessions.values()) {
       if (s === except) continue;
-      // Eventos incrementais de canais/clientes carregam ids e estados que
-      // podem revelar a árvore inteira. Para sessões restritas, reenvia uma
-      // visão filtrada completa, mantendo apenas o próprio contexto.
+      // Sessoes com visao completa recebem o evento original. Sessoes
+      // restritas recebem apenas eventos de clientes do proprio canal; mudanca
+      // estrutural continua usando Snapshot, mas com debounce.
       if (!this.canViewChannels(s) && this.isChannelVisibilityMessage(m)) {
-        this.sendVisibilitySnapshot(s);
+        this.broadcastRestrictedVisibility(s, m, frame);
       } else {
         s.send(frame);
       }
+    }
+  }
+
+  private broadcastRestrictedVisibility(s: Session, m: ServerMessage, frame: Uint8Array): void {
+    switch (m.t) {
+      case Op.ClientAdd:
+        if (m.client.id === s.id || (s.channelId !== NO_CHANNEL && m.client.channelId === s.channelId)) {
+          s.send(frame);
+        }
+        return;
+      case Op.ClientState: {
+        if (m.clientId === s.id) {
+          s.send(frame);
+          return;
+        }
+        const peer = this.sessions.get(m.clientId);
+        if (peer && s.channelId !== NO_CHANNEL && peer.channelId === s.channelId) s.send(frame);
+        return;
+      }
+      case Op.ClientMove:
+      case Op.ClientRemove:
+        // Os caminhos normais usam broadcastClientMove/Remove, que conhecem
+        // o canal anterior. Este fallback mantém consistencia para chamadas
+        // futuras que adicionem um evento direto.
+        this.scheduleVisibilitySnapshot(s);
+        return;
+      default:
+        this.scheduleVisibilitySnapshot(s);
     }
   }
 
@@ -2305,6 +2412,27 @@ export class Hub {
     this.fail(s, code, message);
     s.socket.close(message);
     this.drop(s);
+  }
+}
+
+/** Pequeno semaforo async, sem bloquear o event loop enquanto aguarda vaga. */
+class AsyncGate {
+  private active = 0;
+  private readonly waiters: (() => void)[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active >= this.limit) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+    this.active++;
+    try {
+      return await task();
+    } finally {
+      this.active--;
+      this.waiters.shift()?.();
+    }
   }
 }
 

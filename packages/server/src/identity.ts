@@ -28,7 +28,7 @@ const MAX_SIGNATURE_BYTES = 144;
  */
 export async function fingerprintOf(publicKey: Uint8Array): Promise<string> {
   const digest = await webcrypto.subtle.digest('SHA-256', publicKey);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return Buffer.from(digest).toString('hex');
 }
 
 /** Verifica a assinatura do desafio. Qualquer erro vira `false`, nunca excecao. */
