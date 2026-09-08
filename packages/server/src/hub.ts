@@ -99,8 +99,8 @@ export class Hub {
   private readonly sessions = new Map<number, Session>();
   /** Conexoes abertas que ainda nao terminaram o handshake. */
   private readonly pending = new Set<Session>();
-  /** Evita que uma rajada de assinaturas sature o pool criptografico. */
-  private readonly authGate = new AsyncGate(8);
+  /** Limita rajadas sem criar uma fila longa para entradas simultaneas. */
+  private readonly authGate = new AsyncGate(32);
   private readonly nicknames = new Set<string>();
   private readonly groups = new Map<string, Group>();
   private readonly claims = new Map<number, StoredRespClaim>();
