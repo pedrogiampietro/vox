@@ -19,6 +19,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { MAX_VOICE_PACKET, VOICE_PROBE_MAGIC, VOICE_TOKEN_BYTES } from '@vox/protocol';
 import { config } from './config.js';
+import { serverMetrics } from './metrics.js';
 import type { Registry } from './registry.js';
 import type { Session, VoiceSink } from './session.js';
 
@@ -499,7 +500,11 @@ function makeSink(session: WTSession): VoiceSink {
 
   return {
     send(frame) {
-      if (dead || inflight >= MAX_INFLIGHT) return;
+      if (dead) return;
+      if (inflight >= MAX_INFLIGHT) {
+        serverMetrics.recordVoiceDrop(frame.byteLength);
+        return;
+      }
       inflight++;
       writer.write(frame).then(
         () => {

@@ -222,6 +222,7 @@ abuso, então um teste com mais clientes precisa ser feito em ambiente de teste:
 ```powershell
 $env:VOX_MAX_PER_IP = '0'
 $env:VOX_MAX_CLIENTS = '512'
+$env:VOX_JUKEBOX_ENABLED = '0' # linha de base sem o processo de musica
 npm run dev:server
 ```
 
@@ -232,12 +233,21 @@ npm run stress -- --clients 100 --speakers 5 --duration 60
 ```
 
 O comando conclui o handshake real, mede RTT p50/p95/p99 e gera voz
-sintética. Para incluir no resumo as mesmas métricas do painel, informe um
-token master:
+sintética. O perfil `realistic` varia o tamanho e o intervalo dos quadros para
+se aproximar do comportamento de fala contínua. Para testar o caminho regional
+de voz, use `--voice-transport quic`; o controle continua no WebSocket da
+origem. Para incluir no resumo as mesmas métricas do painel, informe um token
+master:
 
 ```powershell
 $env:STRESS_ADMIN_TOKEN = 'token-do-painel'
-npm run stress -- --clients 100 --speakers 5 --duration 60
+npm run stress -- --clients 100 --speakers 5 --duration 60 --voice-profile realistic
+```
+
+Com o edge regional ativo, a rodada equivalente pelo QUIC é:
+
+```powershell
+npm run stress -- --url wss://server-1.v0x.online/vox --clients 30 --speakers 30 --duration 60 --voice-profile realistic --voice-transport quic
 ```
 
 O teste remoto exige a confirmação explícita `STRESS_CONFIRM=1`. Comece com
@@ -245,6 +255,45 @@ O teste remoto exige a confirmação explícita `STRESS_CONFIRM=1`. Comece com
 degraus. Não execute carga em produção sem combinar janela e limite com quem
 opera a VPS; o script não tenta contornar limites de IP, capacidade do plano
 ou banimentos.
+
+Para repetir a mesma matriz de capacidade em uma máquina local ou em cada VPS,
+use o orquestrador abaixo. Ele executa, em sequência, 20, 50, 80 e 120 clientes
+com voz sintética e grava um `report.json` comparável. O teste não inclui o
+consumo do Rubinot; o custo do Jukebox pode ser comparado ligando e desligando
+`VOX_JUKEBOX_ENABLED`:
+
+```powershell
+npm run stress:matrix -- --duration 30 --target hostinger=wss://server-1.v0x.online/vox
+npm run stress:matrix -- --duration 30 --target contabo=wss://outro-host.v0x.online/vox
+```
+
+É possível informar os dois alvos na mesma execução. Para a matriz remota,
+defina `STRESS_CONFIRM=1`; para CPU, RAM, banda e event loop, informe também
+`STRESS_ADMIN_TOKEN`. Em ambiente local, deixe `VOX_MAX_PER_IP=0` e um
+`VOX_MAX_CLIENTS` acima de 120. A primeira linha de planejamento deve usar o
+menor resultado entre as duas VPS, mantendo aproximadamente 30% de folga. Para
+separar o custo do processo de música, execute uma rodada com
+`VOX_JUKEBOX_ENABLED=0` e outra com `VOX_JUKEBOX_ENABLED=1`; o Rubinot deve ser
+medido em uma terceira rodada com o mundo real configurado.
+
+Para testar a capacidade comercial de servidores virtuais na mesma máquina,
+use `stress:capacity`. O comando cria temporariamente 1 servidor de 150, 200 e
+300 slots e 10 servidores de 50 slots, executa cenários de conexão e voz em
+paralelo e remove apenas os servidores que criou:
+
+```powershell
+$env:STRESS_ADMIN_PASSWORD = 'senha-do-painel-local'
+$env:VOX_MAX_PER_IP = '0'
+npm run stress:capacity -- --target local=ws://127.0.0.1:9990/vox --provision --duration 15
+```
+
+O relatório mostra clientes ativos, RTT, CPU, memória e saída de banda por
+cenário. Em uma VPS, informe `STRESS_ADMIN_TOKEN` e defina também
+`STRESS_CONFIRM=1`; faça isso em uma janela combinada, porque os servidores são
+criados e apagados durante a medição. Rode com `VOX_JUKEBOX_ENABLED=0` para a
+linha de base e com `1` para medir o processo de música. A capacidade segura é
+o maior cenário que mantém cerca de 30% de folga e `event loop p95` abaixo de
+50–100 ms.
 
 ## Checkout Pro do Mercado Pago
 

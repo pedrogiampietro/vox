@@ -16,6 +16,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { MAX_CONTROL_FRAME } from '@vox/protocol';
 import { config } from './config.js';
+import { serverMetrics } from './metrics.js';
 import type { Hub } from './hub.js';
 import type { Registry } from './registry.js';
 import type { PeerSocket } from './session.js';
@@ -81,6 +82,14 @@ function serve(ws: WebSocket, hub: Hub, ip: string, hostname: string, onClose: (
     hostname,
     send(data) {
       if (ws.readyState === ws.OPEN) ws.send(data);
+    },
+    sendVoice(data) {
+      if (ws.readyState !== ws.OPEN) return;
+      if (ws.bufferedAmount > 2 * 1024 * 1024) {
+        serverMetrics.recordVoiceDrop(data.byteLength);
+        return;
+      }
+      ws.send(data);
     },
     close(reason) {
       try {

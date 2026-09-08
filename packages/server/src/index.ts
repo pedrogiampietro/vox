@@ -303,9 +303,13 @@ server.listen(config.port, config.host, () => {
     }
   }
 
-  registry.onHubCreated = (hubId) => spawnJukebox(hubId);
-  registry.onHubRemoved = (hubId) => stopJukebox(hubId);
-  spawnAllJukeboxes(registry.list().map((h) => h.id));
+  if (config.jukeboxEnabled) {
+    registry.onHubCreated = (hubId) => spawnJukebox(hubId);
+    registry.onHubRemoved = (hubId) => stopJukebox(hubId);
+    spawnAllJukeboxes(registry.list().map((h) => h.id));
+  } else {
+    console.log('[jukebox] desativado por VOX_JUKEBOX_ENABLED=0');
+  }
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {

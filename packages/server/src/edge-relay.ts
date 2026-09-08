@@ -15,6 +15,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { FrameKind, MAX_VOICE_PACKET, VOICE_TOKEN_BYTES } from '@vox/protocol';
 import { config } from './config.js';
+import { serverMetrics } from './metrics.js';
 import type { Registry } from './registry.js';
 import type { Session, VoiceSink, VoiceState } from './session.js';
 
@@ -38,11 +39,11 @@ export function attachEdgeWebSocket(
     if (path !== PATH) return;
     if (!authorized(req)) return reject(socket, 401, 'edge nao autorizado');
 
-    wss.handleUpgrade(req, socket, head, (ws) => serve(ws, registry));
+    wss.handleUpgrade(req, socket, head, (ws) => serve(ws, registry, edgeIdFrom(req)));
   });
 }
 
-function serve(ws: WebSocket, registry: Registry): void {
+function serve(ws: WebSocket, registry: Registry, edgeId: string): void {
   ws.binaryType = 'nodebuffer';
   let owner: Session | null = null;
   let sink: EdgeVoiceSink | null = null;
@@ -59,7 +60,7 @@ function serve(ws: WebSocket, registry: Registry): void {
     const frame = toBytes(data);
     if (!owner) {
       if (frame.length !== VOICE_TOKEN_BYTES) return close(ws, 1008, 'token invalido');
-      sink = new EdgeVoiceSink(ws);
+      sink = new EdgeVoiceSink(ws, edgeId);
       owner = registry.bindEdgeVoice(frame, sink);
       const hub = owner ? registry.hubOf(owner) : undefined;
       if (!owner || !hub) {
@@ -82,10 +83,14 @@ function serve(ws: WebSocket, registry: Registry): void {
 }
 
 class EdgeVoiceSink implements VoiceSink {
-  constructor(private readonly ws: WebSocket) {}
+  constructor(private readonly ws: WebSocket, readonly edgeId: string) {}
 
   send(frame: Uint8Array): void {
     if (this.ws.readyState !== this.ws.OPEN) return;
+    if (this.ws.bufferedAmount > 2 * 1024 * 1024) {
+      serverMetrics.recordVoiceDrop(frame.byteLength);
+      return;
+    }
     this.ws.send(frame, { binary: true });
   }
 
@@ -129,6 +134,12 @@ function authorized(req: IncomingMessage): boolean {
   const actual = typeof value === 'string' ? Buffer.from(value) : Buffer.alloc(0);
   const expected = Buffer.from(config.voiceEdgeSecret);
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+/** O edge se identifica para a origem poder evitar eco entre clientes locais. */
+function edgeIdFrom(req: IncomingMessage): string {
+  const value = req.headers['x-vox-edge-id'];
+  return typeof value === 'string' ? value.trim().slice(0, 80) : '';
 }
 
 function sendControl(ws: WebSocket, frame: Uint8Array): void {

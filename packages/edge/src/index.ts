@@ -34,6 +34,8 @@ const certPath = string('VOX_EDGE_CERT', '');
 const keyPath = string('VOX_EDGE_KEY', '');
 const originUrl = string('VOX_EDGE_ORIGIN', 'wss://server-1.v0x.online/internal/edge');
 const secret = string('VOX_EDGE_SECRET', '');
+/** Nome estável deste edge, usado para a origem evitar eco regional. */
+const edgeId = string('VOX_EDGE_ID', '');
 
 if (!certPath || !keyPath || !existsSync(certPath) || !existsSync(keyPath)) {
   throw new Error('VOX_EDGE_CERT/VOX_EDGE_KEY ausentes ou inexistentes');
@@ -41,15 +43,34 @@ if (!certPath || !keyPath || !existsSync(certPath) || !existsSync(keyPath)) {
 if (!secret) throw new Error('VOX_EDGE_SECRET ausente');
 
 class EdgeRouter {
-  private readonly clients = new Set<EdgeClient>();
+  private readonly channelClients = new Map<number, Set<EdgeClient>>();
+  private readonly indexedChannel = new Map<EdgeClient, number>();
   private readonly localEchoes = new Map<string, number>();
 
   add(client: EdgeClient): void {
-    this.clients.add(client);
+    this.updateChannel(client, client.channelId);
   }
 
   remove(client: EdgeClient): void {
-    this.clients.delete(client);
+    const previous = this.indexedChannel.get(client);
+    if (previous !== undefined) this.channelClients.get(previous)?.delete(client);
+    this.indexedChannel.delete(client);
+  }
+
+  updateChannel(client: EdgeClient, channelId: number): void {
+    const previous = this.indexedChannel.get(client);
+    if (previous === channelId) return;
+    if (previous !== undefined) {
+      const oldMembers = this.channelClients.get(previous);
+      oldMembers?.delete(client);
+      if (oldMembers?.size === 0) this.channelClients.delete(previous);
+    }
+    this.indexedChannel.delete(client);
+    if (channelId === NO_CHANNEL) return;
+    const members = this.channelClients.get(channelId) ?? new Set<EdgeClient>();
+    members.add(client);
+    this.channelClients.set(channelId, members);
+    this.indexedChannel.set(client, channelId);
   }
 
   markLocalEcho(clientId: number, seq: number): void {
@@ -68,8 +89,10 @@ class EdgeRouter {
 
   broadcastLocal(sender: EdgeClient, frame: Uint8Array): void {
     if (sender.channelId === NO_CHANNEL) return;
-    for (const peer of this.clients) {
-      if (peer === sender || peer.channelId !== sender.channelId) continue;
+    const peers = this.channelClients.get(sender.channelId);
+    if (!peers) return;
+    for (const peer of peers) {
+      if (peer === sender) continue;
       if (peer.clientFlags & ClientFlags.MutedSpeakers) continue;
       peer.sendToBrowser(frame);
     }
@@ -135,6 +158,7 @@ class EdgeClient {
     this.channelFlags = state.channelFlags;
     this.clientFlags = state.clientFlags;
     this.group = state.group as Group;
+    this.router.updateChannel(this, this.channelId);
   }
 
   canSpeak(): boolean {
@@ -191,7 +215,10 @@ class OriginLink {
       this.rejectAccepted = reject;
     });
     this.ws = new WebSocket(originUrl, {
-      headers: { 'x-vox-edge-secret': secret },
+      headers: {
+        'x-vox-edge-secret': secret,
+        ...(edgeId ? { 'x-vox-edge-id': edgeId } : {}),
+      },
       handshakeTimeout: 5000,
     });
     const timeout = setTimeout(() => this.rejectAccepted(new Error('origem nao respondeu')), 6000);

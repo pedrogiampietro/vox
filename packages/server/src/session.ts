@@ -8,6 +8,8 @@ import { serverMetrics } from './metrics.js';
 export interface VoiceSink {
   send(frame: Uint8Array): void;
   close(): void;
+  /** Identifica clientes atendidos pelo mesmo edge regional. */
+  readonly edgeId?: string;
   /** Atualiza o estado necessario para o edge fazer o encaminhamento local. */
   updateState?(state: VoiceState): void;
 }
@@ -22,6 +24,8 @@ export interface VoiceState {
 /** O que o Hub precisa de um transporte, seja WebSocket, WebTransport ou UDP. */
 export interface PeerSocket {
   send(data: Uint8Array): void;
+  /** Caminho de voz, separado para aplicar backpressure sem afetar controle. */
+  sendVoice?(data: Uint8Array): void;
   close(reason: string): void;
   readonly remote: string;
   /** Hostname usado no WebSocket; determina o certificado/porta do QUIC. */
@@ -122,6 +126,7 @@ export class Session {
   sendVoice(frame: Uint8Array): void {
     serverMetrics.recordOutbound('voice', frame.byteLength);
     if (this.voice) this.voice.send(frame);
+    else if (this.socket.sendVoice) this.socket.sendVoice(frame);
     else this.socket.send(frame);
   }
 }

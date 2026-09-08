@@ -120,6 +120,9 @@ export const config = {
   /** Nome do canal AFK (criado automaticamente se nao existir). */
   afkChannelName: str('VOX_AFK_CHANNEL', 'AFK'),
 
+  /** Processo de musica ocioso por servidor virtual. Util para benchmark. */
+  jukeboxEnabled: bool('VOX_JUKEBOX_ENABLED', true),
+
   /** Onde os canais permanentes sao gravados. */
   dataDir: str('VOX_DATA_DIR', 'data'),
 

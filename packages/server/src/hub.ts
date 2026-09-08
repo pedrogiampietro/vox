@@ -671,8 +671,14 @@ export class Hub {
     }
 
     stampSender(frame, s.id);
+    // O edge ja entregou este frame aos clientes da mesma regiao. Reenviar
+    // para eles pela origem so cria trafego e trabalho que o edge descarta ao
+    // reconhecer o proprio eco. Clientes sem edgeId continuam no caminho
+    // normal, preservando a compatibilidade com edges antigos.
+    const sourceEdgeId = s.voice?.edgeId;
     for (const peer of channel.members) {
       if (peer === s) continue;
+      if (sourceEdgeId && peer.voice?.edgeId === sourceEdgeId) continue;
       if (peer.flags & ClientFlags.MutedSpeakers) continue;
       peer.sendVoice(frame);
     }

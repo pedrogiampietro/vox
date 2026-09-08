@@ -31,6 +31,8 @@ export interface RuntimeMetricsSnapshot {
     controlOutboundBytesTotal: number;
     voiceInboundBytesTotal: number;
     voiceOutboundBytesTotal: number;
+    voiceDroppedPacketsTotal: number;
+    voiceDroppedBytesTotal: number;
   };
 }
 
@@ -41,6 +43,8 @@ interface TrafficTotals {
   controlOutbound: number;
   voiceInbound: number;
   voiceOutbound: number;
+  voiceDroppedPackets: number;
+  voiceDroppedBytes: number;
 }
 
 /**
@@ -56,6 +60,8 @@ export class RuntimeMetricsCollector {
     controlOutbound: 0,
     voiceInbound: 0,
     voiceOutbound: 0,
+    voiceDroppedPackets: 0,
+    voiceDroppedBytes: 0,
   };
 
   private previousTotals = { ...this.totals };
@@ -82,6 +88,12 @@ export class RuntimeMetricsCollector {
     this.totals.outbound += bytes;
     if (kind === 'voice') this.totals.voiceOutbound += bytes;
     else this.totals.controlOutbound += bytes;
+  }
+
+  recordVoiceDrop(bytes: number): void {
+    if (!Number.isFinite(bytes) || bytes <= 0) return;
+    this.totals.voiceDroppedPackets++;
+    this.totals.voiceDroppedBytes += bytes;
   }
 
   snapshot(now = Date.now()): RuntimeMetricsSnapshot {
@@ -146,6 +158,8 @@ export class RuntimeMetricsCollector {
         controlOutboundBytesTotal: this.totals.controlOutbound,
         voiceInboundBytesTotal: this.totals.voiceInbound,
         voiceOutboundBytesTotal: this.totals.voiceOutbound,
+        voiceDroppedPacketsTotal: this.totals.voiceDroppedPackets,
+        voiceDroppedBytesTotal: this.totals.voiceDroppedBytes,
       },
     };
     return this.lastSnapshot;
