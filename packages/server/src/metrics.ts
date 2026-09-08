@@ -4,6 +4,8 @@ import { performance } from 'node:perf_hooks';
 export type TrafficKind = 'control' | 'voice';
 export type VoiceTransportKind = 'ws' | 'quic';
 
+const LEGACY_EDGE_TTL_MS = 2 * 60_000;
+
 export interface RuntimeHistoryPoint {
   at: number;
   processCpuPercent: number;
@@ -425,7 +427,16 @@ export class RuntimeMetricsCollector {
             averageRecipients: channel.frames > 0 ? round(channel.recipients / channel.frames) : 0,
           })),
       },
-      edges: [...this.edges.entries()].map(([id, edge]) => ({
+      // IDs edge-mux-N eram provisórios e podiam se acumular a cada
+      // reconexão. Mantemos uma janela curta para diagnóstico e depois
+      // removemos apenas os que estão desconectados; edges nomeados continuam
+      // visíveis mesmo quando offline.
+      edges: [...this.edges.entries()]
+        .filter(([id, edge]) => !isLegacyEdgeId(id)
+          || edge.connected
+          || edge.available
+          || now - edge.lastSeenAt < LEGACY_EDGE_TTL_MS)
+        .map(([id, edge]) => ({
         id,
         connected: edge.connected,
         available: edge.available,
@@ -450,7 +461,7 @@ export class RuntimeMetricsCollector {
           droppedPackets: edge.droppedPackets,
           droppedBytes: edge.droppedBytes,
         },
-      })),
+        })),
       history: this.history.map((item) => ({ ...item })),
     };
     return this.lastSnapshot;
@@ -513,4 +524,8 @@ function percentile(values: number[], rank: number): number {
 
 function finiteNonNegative(value: number): number {
   return Number.isFinite(value) ? Math.max(0, round(value)) : 0;
+}
+
+function isLegacyEdgeId(id: string): boolean {
+  return /^edge-mux-\d+$/i.test(id);
 }
