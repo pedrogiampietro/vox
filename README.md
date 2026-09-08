@@ -239,14 +239,19 @@ Para busca por nome e links do SoundCloud, instale `yt-dlp` alem do `ffmpeg`, ou
 defina `VOX_YTDLP=/caminho/para/yt-dlp`. O jukebox nao usa YouTube nem cookies;
 links diretos de audio continuam funcionando sem o extrator.
 
-Na VPS com systemd, depois do codigo estar em `/opt/vox`, instale o servico do
-jukebox:
+Na VPS com systemd, depois do codigo estar em `/opt/vox`, instale apenas as
+dependencias de audio:
 
 ```bash
 sudo apt-get install -y ffmpeg yt-dlp
-sudo cp docs/vox-music-jukebox.service /etc/systemd/system/vox-music-jukebox.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now vox-music-jukebox.service
+```
+
+O `vox.service` gerencia automaticamente um controlador por servidor virtual.
+Se a VPS veio de uma instalação antiga, desative o serviço separado para não
+criar um segundo cliente `music`:
+
+```bash
+sudo systemctl disable --now vox-music-jukebox.service
 ```
 
 Produção local:

@@ -143,48 +143,28 @@ garanta leitura do banco, dos ícones e dos certificados do WebTransport.
 
 ## Bot de música (jukebox)
 
-Roda como um processo separado, em `vox-music-jukebox.service`, que entra no
-servidor como um cliente comum. O unit versionado fica em
-[`docs/vox-music-jukebox.service`](vox-music-jukebox.service).
+O jukebox é gerenciado pelo próprio `vox.service`. Quando o servidor inicia,
+ele cria um controlador por servidor virtual e cada controlador entra no canal
+`bot`. Players temporários são criados somente no canal que pediu a música e
+encerrados quando a fila termina ou fica sem ouvintes.
 
-Instalação na máquina:
+Instalações antigas podem ainda ter a unidade separada
+`vox-music-jukebox.service`. Ela precisa ficar desativada, porque mantê-la
+ativa cria um segundo cliente com o mesmo nome no servidor primário:
 
 ```bash
-cp /opt/vox/docs/vox-music-jukebox.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now vox-music-jukebox.service
+systemctl disable --now vox-music-jukebox.service
+systemctl reset-failed vox-music-jukebox.service 2>/dev/null || true
 ```
 
-A partir daí o deploy cuida dele: se o unit do repositório mudar, o arquivo em
-`/etc/systemd/system` é atualizado (com `.bak` do anterior) e recarregado.
-
-### Por que ele sumia
-
-O bot chama `process.exit(1)` a cada queda de socket, delegando o restart ao
-systemd. Isso colidia com dois padrões:
-
-- **O limite de reinícios do systemd** (5 tentativas em 10s). Todo deploy
-  reinicia o `vox.service`; o jukebox caía junto e tentava reconectar enquanto
-  o servidor ainda subia. Com `RestartSec=3`, as 5 tentativas se esgotavam em
-  15 segundos e o unit ia para `failed` — estado do qual ele **não sai
-  sozinho**. Resolvido com `StartLimitIntervalSec=0`.
-- **A checagem `is-active` no deploy.** Um jukebox caído nunca era religado: o
-  passo apenas imprimia "inativo" e seguia. Ou seja, uma vez morto, morto para
-  sempre. Agora o deploy limpa o estado de falha e reinicia sempre que o unit
-  existir.
-
-O `Requires=vox.service` também virou `Wants=`: parar o servidor não deve
-derrubar o bot como dependência, já que ele reconecta sozinho — e um unit
-parado pelo systemd não é reiniciado por `Restart=always`.
+O deploy executa essa migração automaticamente quando encontra a unidade
+legada.
 
 ### Verificar
 
-O log do deploy passa a terminar com `Jukebox: active` ou `Jukebox: failed`.
-Na máquina:
-
 ```bash
-systemctl status vox-music-jukebox.service --no-pager
-journalctl -u vox-music-jukebox.service -n 80 --no-pager | grep jukebox
+systemctl status vox.service --no-pager
+journalctl -u vox.service -n 80 --no-pager | grep jukebox
 ```
 
 O controlador entra no canal `VOX_BOT_CHANNEL` (padrão `bot`) do servidor
