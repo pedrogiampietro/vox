@@ -8,6 +8,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { hostname as systemHostname } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { WebSocket } from 'ws';
 import {
@@ -45,7 +46,7 @@ const keyPath = string('VOX_EDGE_KEY', '');
 const originUrl = string('VOX_EDGE_ORIGIN', 'wss://server-1.v0x.online/internal/edge');
 const secret = string('VOX_EDGE_SECRET', '');
 /** Nome estável deste edge, usado para a origem evitar eco regional. */
-const edgeId = string('VOX_EDGE_ID', '');
+const edgeId = string('VOX_EDGE_ID', '').trim() || stableEdgeId();
 
 const handshakeStats = {
   attempts: 0,
@@ -232,6 +233,8 @@ class OriginMuxLink {
   private nextRequestId = 1;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectAttempt = 0;
+  private connectedAt = 0;
   private stopped = false;
 
   constructor() {
@@ -336,6 +339,7 @@ class OriginMuxLink {
     ws.once('open', () => {
       ready = true;
       clearTimeout(timeout);
+      this.connectedAt = Date.now();
       this.resolveReady();
       console.log('[vox-edge] upstream multiplexado conectado');
     });
@@ -352,7 +356,17 @@ class OriginMuxLink {
       for (const client of [...this.clients.values()]) client.close(false);
       this.clients.clear();
       if (!this.stopped) {
-        this.reconnectTimer = setTimeout(() => this.connect(), 2000);
+        // Se ficou estável, a próxima queda volta a ser uma tentativa rápida.
+        // Durante uma indisponibilidade real, o backoff evita martelar a origem
+        // e deixa o próprio serviço se recuperar sem intervenção manual.
+        const stableConnection = this.connectedAt > 0 && Date.now() - this.connectedAt >= 30_000;
+        this.connectedAt = 0;
+        if (stableConnection) {
+          this.reconnectAttempt = 0;
+        }
+        const delay = Math.min(30_000, 1000 * 2 ** Math.min(this.reconnectAttempt, 5));
+        this.reconnectAttempt++;
+        this.reconnectTimer = setTimeout(() => this.connect(), delay + Math.round(Math.random() * 500));
         this.reconnectTimer.unref?.();
       }
     });
@@ -422,9 +436,15 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 
 async function serve(session: WTSession, router: EdgeRouter, origin: OriginMuxLink): Promise<void> {
   const startedAt = performance.now();
-  handshakeStats.attempts++;
+  let attemptCounted = false;
   let handshakeComplete = false;
+  const countAttempt = (): void => {
+    if (attemptCounted) return;
+    attemptCounted = true;
+    handshakeStats.attempts++;
+  };
   const failure = (reason: string): void => {
+    countAttempt();
     handshakeStats.failures++;
     handshakeStats.lastFailure = reason.slice(0, 160);
     origin.reportStatus();
@@ -436,6 +456,10 @@ async function serve(session: WTSession, router: EdgeRouter, origin: OriginMuxLi
       failure('token ausente ou timeout');
       return closeSession(session);
     }
+    // O cliente abre vários candidatos em paralelo. Se outro edge vencer,
+    // este é fechado antes do token e não deve contar como falha real.
+    if ('closed' in token) return closeSession(session);
+    countAttempt();
 
     let accepted: AcceptedState;
     try {
@@ -557,6 +581,10 @@ interface TokenStream {
   reply(byte: number): Promise<void>;
 }
 
+interface ClosedTokenStream {
+  closed: true;
+}
+
 interface VoiceState {
   channelId: number;
   channelFlags: number;
@@ -568,18 +596,20 @@ interface AcceptedState extends VoiceState {
   clientId: number;
 }
 
-async function readToken(session: WTSession): Promise<TokenStream | null> {
+async function readToken(session: WTSession): Promise<TokenStream | ClosedTokenStream | null> {
   const streams = session.incomingBidirectionalStreams.getReader();
   try {
     const first = await withTimeout(streams.read(), 5000);
-    if (first?.done || !first?.value) return null;
+    if (first === null) return null;
+    if (first.done || !first.value) return { closed: true };
     const stream = first.value;
     const reader = stream.readable.getReader();
     const token = new Uint8Array(VOICE_TOKEN_BYTES);
     let filled = 0;
     while (filled < token.length) {
       const chunk = await withTimeout(reader.read(), 5000);
-      if (!chunk || chunk.done || !chunk.value) return null;
+      if (chunk === null) return null;
+      if (chunk.done || !chunk.value) return { closed: true };
       const take = Math.min(token.length - filled, chunk.value.length);
       token.set(chunk.value.subarray(0, take), filled);
       filled += take;
@@ -594,6 +624,10 @@ async function readToken(session: WTSession): Promise<TokenStream | null> {
         } catch { /* cliente sumiu */ }
       },
     };
+  } catch {
+    // Fechar um candidato perdido na corrida encerra a leitura com erro no
+    // addon QUIC; é cancelamento normal, não uma falha de autenticação.
+    return { closed: true };
   } finally {
     streams.releaseLock();
   }
@@ -690,6 +724,19 @@ function loadEnv(): void {
 
 function string(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
+}
+
+/**
+ * O ID configurado continua tendo prioridade. Sem ele, o hostname da VPS é
+ * estável entre reinícios e evita criar um novo `edge-mux-N` a cada queda do
+ * upstream.
+ */
+function stableEdgeId(): string {
+  const machine = systemHostname().trim().toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return `edge-${machine || 'default'}`;
 }
 
 function number(name: string, fallback: number): number {

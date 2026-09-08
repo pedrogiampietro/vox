@@ -63,6 +63,14 @@ Além dos edges configurados, a própria origem é anunciada automaticamente com
 mais um candidato quando o WebTransport local consegue iniciar. Isso permite
 comparar uma VPS regional com a origem sem criar outra máquina.
 
+O ID do edge é estável. `VOX_EDGE_ID` pode ser usado para dar um nome amigável;
+se ele não existir, o processo usa automaticamente o hostname da VPS. Assim,
+uma reconexão do upstream atualiza o mesmo edge no painel, em vez de criar
+entradas `edge-mux-1`, `edge-mux-2` e assim por diante. O cliente também fecha
+automaticamente candidatos especulativos que perderam a corrida sem registrá-los
+como falhas de autenticação, mantém a rota WebSocket como fallback e tenta o
+QUIC novamente com backoff quando a origem ou o edge voltarem.
+
 ## Atualização automática de todos os edges
 
 O workflow da `master` compila o edge uma vez e publica o mesmo artefato em

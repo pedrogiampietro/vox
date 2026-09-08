@@ -16,6 +16,8 @@ export interface RuntimeHistoryPoint {
 export interface EdgeMetricsSnapshot {
   id: string;
   connected: boolean;
+  /** O endpoint QUIC local da origem está pronto para receber clientes. */
+  available: boolean;
   upstreams: number;
   sessions: number;
   handshakes: {
@@ -109,6 +111,8 @@ interface TrafficTotals {
 
 interface EdgeTotals {
   connected: boolean;
+  available: boolean;
+  lastSeenAt: number;
   upstreams: number;
   sessions: number;
   handshakeAttempts: number;
@@ -209,6 +213,7 @@ export class RuntimeMetricsCollector {
 
   recordVoiceHandshake(edgeId: string, durationMs: number, success: boolean, reason = ''): void {
     const edge = this.edge(edgeId);
+    edge.lastSeenAt = Date.now();
     edge.handshakeAttempts++;
     if (success) {
       edge.handshakeSuccesses++;
@@ -228,7 +233,14 @@ export class RuntimeMetricsCollector {
     const edge = this.edge(edgeId);
     edge.upstreams = Math.max(0, edge.upstreams + Math.trunc(delta));
     edge.connected = edge.upstreams > 0;
+    edge.lastSeenAt = Date.now();
     this.recordConnection('edgeUpstreams', delta);
+  }
+
+  recordEdgeAvailability(edgeId: string, available: boolean): void {
+    const edge = this.edge(edgeId);
+    edge.available = available;
+    edge.lastSeenAt = Date.now();
   }
 
   recordEdgeSession(edgeId: string, delta: number): void {
@@ -259,6 +271,7 @@ export class RuntimeMetricsCollector {
     lastFailure: string;
   }): void {
     const edge = this.edge(edgeId);
+    edge.lastSeenAt = Date.now();
     const sessions = Math.max(0, Math.trunc(status.sessions));
     this.recordConnection('edgeSessions', sessions - edge.sessions);
     edge.sessions = sessions;
@@ -415,6 +428,7 @@ export class RuntimeMetricsCollector {
       edges: [...this.edges.entries()].map(([id, edge]) => ({
         id,
         connected: edge.connected,
+        available: edge.available,
         upstreams: edge.upstreams,
         sessions: edge.sessions,
         handshakes: {
@@ -448,6 +462,8 @@ export class RuntimeMetricsCollector {
     if (existing) return existing;
     const created: EdgeTotals = {
       connected: false,
+      available: false,
+      lastSeenAt: 0,
       upstreams: 0,
       sessions: 0,
       handshakeAttempts: 0,

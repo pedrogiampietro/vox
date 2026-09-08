@@ -217,7 +217,10 @@ class VoiceTransportManager {
     } satisfies ActiveEndpoint;
     this.endpoints.set(pair.host, endpoint);
     server.startServer();
-    void server.ready.catch((err) => {
+    void server.ready.then(() => {
+      serverMetrics.recordEdgeAvailability(pair.host, true);
+    }).catch((err) => {
+      serverMetrics.recordEdgeAvailability(pair.host, false);
       if (this.endpoints.get(pair.host) === endpoint) {
         this.endpoints.delete(pair.host);
         this.usedPorts.delete(port);
@@ -246,6 +249,7 @@ class VoiceTransportManager {
   async stop(): Promise<void> {
     for (const endpoint of this.endpoints.values()) {
       clearInterval(endpoint.watcher);
+      serverMetrics.recordEdgeAvailability(endpoint.host, false);
       try {
         endpoint.server.stopServer();
       } catch {
@@ -393,6 +397,9 @@ async function serve(session: WTSession, registry: Registry, edgeId: string): Pr
       recordHandshake(false, 'token ausente ou timeout');
       return closeQuietly(session);
     }
+    // O cliente abre candidatos em paralelo. Quando outro edge vence, este
+    // candidato é fechado antes do token; isso não é uma falha de autenticação.
+    if ('closed' in token) return closeQuietly(session);
 
     const sink = makeSink(session, edgeId);
     // O segredo identifica a sessao em qualquer servidor virtual; o caminho do
@@ -447,20 +454,24 @@ async function serve(session: WTSession, registry: Registry, edgeId: string): Pr
  * Stream e nao datagrama porque isto precisa chegar: um handshake perdido
  * deixaria o cliente esperando para sempre por um canal que nunca abriu.
  */
+interface ClosedTokenStream {
+  closed: true;
+}
+
 async function readToken(
   session: WTSession,
-): Promise<{ value: Uint8Array; reply: (byte: number) => Promise<void> } | null> {
+): Promise<{ value: Uint8Array; reply: (byte: number) => Promise<void> } | ClosedTokenStream | null> {
   const streams = session.incomingBidirectionalStreams.getReader();
   try {
     const { done, value: stream } = await streams.read();
-    if (done || !stream) return null;
+    if (done || !stream) return { closed: true };
 
     const reader = stream.readable.getReader();
     const buf = new Uint8Array(VOICE_TOKEN_BYTES);
     let filled = 0;
     while (filled < VOICE_TOKEN_BYTES) {
       const chunk = await reader.read();
-      if (chunk.done || !chunk.value) return null;
+      if (chunk.done || !chunk.value) return { closed: true };
       const take = Math.min(VOICE_TOKEN_BYTES - filled, chunk.value.length);
       buf.set(chunk.value.subarray(0, take), filled);
       filled += take;
@@ -478,6 +489,10 @@ async function readToken(
         }
       },
     };
+  } catch {
+    // Fechar um candidato perdido na corrida pode rejeitar a leitura no addon
+    // QUIC; isso é cancelamento normal, não uma falha de autenticação.
+    return { closed: true };
   } finally {
     streams.releaseLock();
   }
