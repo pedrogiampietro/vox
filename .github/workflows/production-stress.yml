@@ -60,8 +60,7 @@ jobs:
             exit 1
           fi
           if [[ -z "$ADMIN_TOKEN" ]]; then
-            echo 'Cadastre o Secret STRESS_ADMIN_TOKEN antes de iniciar a carga.' >&2
-            exit 1
+            echo 'Aviso: STRESS_ADMIN_TOKEN nao foi informado; o relatorio nao tera CPU/RAM/event loop.'
           fi
 
   stress:

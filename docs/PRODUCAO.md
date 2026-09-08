@@ -291,8 +291,10 @@ Action monta um resumo consolidado na própria página, permitindo comparar CPU,
 memória, banda, event loop, RTT, descartes e transportes sem somar as cargas.
 
 Antes de iniciar, confirme que a VPS aceita a quantidade de conexões por IP e
-combine a janela com quem opera a produção. Cadastre `STRESS_ADMIN_TOKEN` como
-Secret do repositório; ele nunca deve ser colocado no workflow ou na URL.
+combine a janela com quem opera a produção. Se quiser CPU, RAM e event loop no
+relatório, cadastre um `STRESS_ADMIN_TOKEN` de sessão vigente como Secret do
+repositório; ele é opcional e nunca deve ser colocado no workflow ou na URL.
+Sem ele, o painel master continua mostrando essas métricas em tempo real.
 Depois abra **Actions → Production voice stress → Run workflow**, informe a
 URL WSS, a duração, o transporte e digite `PRODUCAO` no campo de confirmação.
 
