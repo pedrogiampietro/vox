@@ -200,7 +200,9 @@ algo como `orochi - sereia`, ele procura a musica somente no SoundCloud usando
 um extrator local, entra com um player no canal de voz de quem pediu e comeca a
 tocar. Cada canal tem seu proprio player e sua propria fila: pedidos de outro
 canal nao movem nem interrompem a musica que ja esta tocando. Pedidos por DM
-tambem usam automaticamente o canal atual de quem enviou.
+tambem usam automaticamente o canal atual de quem enviou. O bot permanente do
+canal `bot` nao aceita pedidos de faixa: use uma DM ou faca o pedido a partir do
+canal de voz onde a musica deve tocar.
 
 Comandos no chat do canal `bot`:
 

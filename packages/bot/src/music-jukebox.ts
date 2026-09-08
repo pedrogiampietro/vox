@@ -56,6 +56,7 @@ interface ChannelSession {
 
 const sessions = new Map<number, ChannelSession>();
 let controller: VoxConnection;
+let controllerChannelId = 0;
 
 function getSession(channelId: number): ChannelSession {
   let session = sessions.get(channelId);
@@ -76,6 +77,10 @@ function getSession(channelId: number): ChannelSession {
 
 function requestedChannelId(senderId: number): number {
   return controller.clients.get(senderId)?.channelId ?? NO_CHANNEL;
+}
+
+function isControllerChannel(channelId: number): boolean {
+  return channelId > 0 && channelId === controllerChannelId;
 }
 
 function releaseEmptySession(session: ChannelSession): void {
@@ -155,6 +160,15 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
     return;
   }
 
+  // O canal de controle fica ocupado pelo bot permanente. Se aceitarmos uma
+  // faixa ali, o player temporario entra junto do controlador e a presenca do
+  // proprio bot pode manter a sessao viva indefinidamente. Pedidos devem vir
+  // por DM ou do canal de voz onde a musica sera ouvida.
+  if (isControllerChannel(channelId)) {
+    reply('pedidos de musica nao podem ser feitos no canal bot; use DM ou outro canal de voz');
+    return;
+  }
+
   const session = getSession(channelId);
   session.cancelled = false;
   session.queue.push({
@@ -170,6 +184,7 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
 
 function joinBotChannel(): void {
   const id = controller.findChannel(botChannelName);
+  controllerChannelId = id;
   console.log(`[jukebox] joinBotChannel: name="${botChannelName}" foundId=${id} currentCh=${controller.self?.channelId}`);
   if (id && controller.self?.channelId !== id) controller.send({ t: Op.JoinChannel, channelId: id, password: '' });
 }
@@ -183,6 +198,27 @@ async function pumpQueue(session: ChannelSession): Promise<void> {
   }
   const current = session.current;
   const cancelVersion = session.cancelVersion;
+
+  // Defesa em profundidade para filas criadas antes de o canal de controle
+  // ser identificado ou por uma mudança de configuração durante a execução.
+  if (isControllerChannel(current.channelId)) {
+    session.current = null;
+    session.queue.length = 0;
+    session.cancelled = true;
+    session.cancelVersion++;
+    if (current.viaDm) {
+      controller.send({
+        t: Op.ChatSend,
+        scope: ChatScope.Private,
+        targetId: current.requestedBy,
+        text: 'pedidos de musica nao podem ser feitos no canal bot; use DM ou outro canal de voz',
+      });
+    } else {
+      announce('pedidos de musica nao podem ser feitos no canal bot; use DM ou outro canal de voz');
+    }
+    releaseEmptySession(session);
+    return;
+  }
 
   let track: ResolvedTrack;
   try {
@@ -648,7 +684,7 @@ class MusicPlayer {
     if (!myCh) return;
     let listeners = 0;
     for (const c of this.conn.clients.values()) {
-      if (c.channelId === myCh && c.id !== this.conn.selfId) listeners++;
+      if (c.channelId === myCh && c.id !== this.conn.selfId && c.id !== controller.selfId) listeners++;
     }
     if (listeners > 0) {
       this.aloneSince = 0;
