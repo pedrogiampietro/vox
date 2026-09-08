@@ -3,7 +3,7 @@ import { $, text } from './ui/dom.js';
 import { createLocaleSelect, translateTree } from './i18n.js';
 import './checkout.css';
 
-type PlanKey = 'community' | '50-basic' | '50-bot' | '100-basic' | '100-bot' | '254-basic' | '254-bot';
+type PlanKey = 'community' | '50-basic' | '50-bot' | '100-basic' | '100-bot' | '200-basic' | '200-bot' | '300-basic' | '300-bot';
 type Plan = { key: PlanKey; label: string; title: string; price: string; slots: string; paid: boolean; detail: string };
 type Account = { id: number; email: string; createdAt: number };
 type Overview = { account: Account | null; servers: { id: number }[] };
@@ -22,12 +22,14 @@ type OrderResult = {
 
 const plans: Record<PlanKey, Plan> = {
   community: { key: 'community', label: 'comunidade', title: 'Para testar com o time', price: 'gratuito', slots: '10 slots', paid: false, detail: 'O essencial para colocar a primeira call no ar.' },
-  '50-basic': { key: '50-basic', label: '50 slots · sem bot', title: 'Vox 50', price: 'R$ 29,90', slots: '50 slots', paid: true, detail: 'Servidor dedicado, canais e painel para sua guilda.' },
-  '50-bot': { key: '50-bot', label: '50 slots · com Rubinot', title: 'Vox 50 Rubinot', price: 'R$ 69,90', slots: '50 slots', paid: true, detail: 'Servidor dedicado com Rubinot, Hunted List, UP Level e DeathList.' },
-  '100-basic': { key: '100-basic', label: '100 slots · sem bot', title: 'Vox 100', price: 'R$ 50,90', slots: '100 slots', paid: true, detail: 'Mais espaço para operações maiores, com painel e permissões.' },
-  '100-bot': { key: '100-bot', label: '100 slots · com Rubinot', title: 'Vox 100 Rubinot', price: 'R$ 99,90', slots: '100 slots', paid: true, detail: '100 slots com automações e relatórios do Rubinot.' },
-  '254-basic': { key: '254-basic', label: '254 slots · sem bot', title: 'Vox 254', price: 'R$ 100,00', slots: '254 slots', paid: true, detail: 'Capacidade máxima para comunidades e operações extensas.' },
-  '254-bot': { key: '254-bot', label: '254 slots · com Rubinot', title: 'Vox 254 Rubinot', price: 'R$ 150,00', slots: '254 slots', paid: true, detail: 'Capacidade máxima com a inteligência e os relatórios do Rubinot.' },
+  '50-basic': { key: '50-basic', label: '50 slots · sem bot', title: 'Vox 50', price: 'R$ 35,00', slots: '50 slots', paid: true, detail: 'Servidor dedicado, canais e painel para sua guilda.' },
+  '50-bot': { key: '50-bot', label: '50 slots · com Rubinot', title: 'Vox 50 Rubinot', price: 'R$ 115,00', slots: '50 slots', paid: true, detail: 'Servidor dedicado com Rubinot. O bot adiciona R$ 80,00/mês.' },
+  '100-basic': { key: '100-basic', label: '100 slots · sem bot', title: 'Vox 100', price: 'R$ 65,00', slots: '100 slots', paid: true, detail: 'Mais espaço para operações maiores, com painel e permissões.' },
+  '100-bot': { key: '100-bot', label: '100 slots · com Rubinot', title: 'Vox 100 Rubinot', price: 'R$ 145,00', slots: '100 slots', paid: true, detail: '100 slots com automações e relatórios do Rubinot. Bot adicional de R$ 80,00/mês.' },
+  '200-basic': { key: '200-basic', label: '200 slots · sem bot', title: 'Vox 200', price: 'R$ 130,00', slots: '200 slots', paid: true, detail: 'Capacidade para comunidades maiores, com painel e permissões.' },
+  '200-bot': { key: '200-bot', label: '200 slots · com Rubinot', title: 'Vox 200 Rubinot', price: 'R$ 210,00', slots: '200 slots', paid: true, detail: '200 slots com automações e relatórios do Rubinot. Bot adicional de R$ 80,00/mês.' },
+  '300-basic': { key: '300-basic', label: '300+ slots · sem bot', title: 'Vox 300+', price: 'R$ 180,00', slots: '300+ slots', paid: true, detail: 'Capacidade para operações extensas, com painel e permissões.' },
+  '300-bot': { key: '300-bot', label: '300+ slots · com Rubinot', title: 'Vox 300+ Rubinot', price: 'R$ 260,00', slots: '300+ slots', paid: true, detail: '300+ slots com automações e relatórios do Rubinot. Bot adicional de R$ 80,00/mês.' },
 };
 
 const TOKEN_KEY = 'vox.customer.token';
@@ -35,7 +37,11 @@ const root = document.getElementById('checkout');
 const params = new URLSearchParams(location.search);
 const planParam = params.get('plan');
 const orderId = params.get('order') ?? '';
-const normalizedPlanParam = planParam === 'private' ? '50-bot' : planParam === 'war' ? '100-bot' : planParam;
+const normalizedPlanParam = planParam === 'private' ? '50-bot'
+  : planParam === 'war' ? '100-bot'
+    : planParam === '254-basic' ? '300-basic'
+      : planParam === '254-bot' ? '300-bot'
+        : planParam;
 const selectedPlan = normalizedPlanParam && Object.prototype.hasOwnProperty.call(plans, normalizedPlanParam)
   ? plans[normalizedPlanParam as PlanKey]
   : plans.community;
@@ -184,7 +190,13 @@ function renderPlanSummary(): HTMLElement {
   const aside = $('aside', 'checkout-summary');
   aside.append(text('span', 'checkout-summary-label', 'PLANO SELECIONADO'), text('h2', '', selectedPlan.title), text('span', 'checkout-summary-plan', selectedPlan.label), text('strong', 'checkout-summary-price', selectedPlan.price), text('p', '', selectedPlan.detail));
   const list = $('ul', 'checkout-summary-list');
-  list.append(summaryRow('capacidade', selectedPlan.slots), summaryRow('bot', selectedPlan.paid ? 'Rubinot configurável' : 'Rubinot opcional'), summaryRow('voz', 'QUIC + fallback WS'), summaryRow('painel', 'incluído'));
+  const botSelected = selectedPlan.key.endsWith('-bot');
+  list.append(
+    summaryRow('capacidade', selectedPlan.slots),
+    summaryRow('bot', botSelected ? 'Rubinot incluído · +R$ 80,00' : selectedPlan.paid ? 'opcional · +R$ 80,00/mês' : 'opcional'),
+    summaryRow('voz', 'QUIC + fallback WS'),
+    summaryRow('painel', 'incluído'),
+  );
   aside.append(list);
   const change = $('a', 'checkout-change-plan'); change.href = '/#planos'; change.textContent = 'trocar plano'; aside.append(change);
   return aside;

@@ -290,10 +290,15 @@ type ConfigTier = {
 
 const configTiers: ConfigTier[] = [
   { slots: 10, label: 'comunidade', basicKey: 'community', botKey: null, basicPriceCents: 0, botPriceCents: 0 },
-  { slots: 50, label: 'guilda', basicKey: '50-basic', botKey: '50-bot', basicPriceCents: 2990, botPriceCents: 6990 },
-  { slots: 100, label: 'operação', basicKey: '100-basic', botKey: '100-bot', basicPriceCents: 5090, botPriceCents: 9990 },
-  { slots: 254, label: 'comunidade', basicKey: '254-basic', botKey: '254-bot', basicPriceCents: 10000, botPriceCents: 15000 },
+  { slots: 50, label: 'guilda', basicKey: '50-basic', botKey: '50-bot', basicPriceCents: 3500, botPriceCents: 11500 },
+  { slots: 100, label: 'operação', basicKey: '100-basic', botKey: '100-bot', basicPriceCents: 6500, botPriceCents: 14500 },
+  { slots: 200, label: 'comunidade', basicKey: '200-basic', botKey: '200-bot', basicPriceCents: 13000, botPriceCents: 21000 },
+  { slots: 300, label: 'operação', basicKey: '300-basic', botKey: '300-bot', basicPriceCents: 18000, botPriceCents: 26000 },
 ];
+
+function tierSlotsLabel(tier: ConfigTier): string {
+  return tier.slots === 300 ? '300+' : String(tier.slots);
+}
 
 const landingPrices = new Map<string, number>();
 for (const tier of configTiers) {
@@ -336,7 +341,7 @@ function renderPlans(): HTMLElement {
   sliderWrap.append(slider);
 
   const marks = $('div', 'landing-configurator-marks');
-  for (const tier of configTiers) marks.append(text('span', '', `${tier.slots}`));
+  for (const tier of configTiers) marks.append(text('span', '', tierSlotsLabel(tier)));
   sliderWrap.append(marks);
   controls.append(sliderWrap);
 
@@ -346,7 +351,10 @@ function renderPlans(): HTMLElement {
   botCheckbox.checked = includeBot;
   botCheckbox.setAttribute('aria-label', 'Adicionar Rubinot');
   const botCopy = $('span', 'landing-configurator-bot-copy');
-  botCopy.append(text('strong', '', 'Adicionar Rubinot'), text('small', '', 'Hunted List, UP Level e DeathList automáticos'));
+  botCopy.append(
+    text('strong', '', 'Adicionar Rubinot'),
+    text('small', '', 'Hunted List, UP Level e DeathList automáticos · +R$ 80,00/mês nos planos pagos'),
+  );
   const botSwitch = $('span', 'landing-configurator-switch');
   botSwitch.append($('i'));
   botOption.append(botCheckbox, botSwitch, botCopy);
@@ -400,10 +408,10 @@ function updateConfigurator(section: HTMLElement, slider: HTMLInputElement, botC
 
   slider.value = String(selectedTierIndex);
   slider.style.setProperty('--landing-slider-progress', `${progress}%`);
-  slider.setAttribute('aria-valuetext', `${tier.slots} slots`);
+  slider.setAttribute('aria-valuetext', `${tierSlotsLabel(tier)} slots`);
   botCheckbox.checked = includeBot;
-  if (slots) slots.textContent = `${tier.slots} slots`;
-  if (title) title.textContent = `${tier.label} · ${tier.slots} slots${includeBot ? ' · Rubinot' : ''}`;
+  if (slots) slots.textContent = `${tierSlotsLabel(tier)} slots`;
+  if (title) title.textContent = `${tier.label} · ${tierSlotsLabel(tier)} slots${includeBot ? ' · Rubinot' : ''}`;
   if (price) price.textContent = priceCents > 0 ? formatCents(priceCents) : 'gratuito';
   if (action) {
     action.href = `/contratar?plan=${encodeURIComponent(planKey)}`;
@@ -411,7 +419,7 @@ function updateConfigurator(section: HTMLElement, slider: HTMLInputElement, botC
   }
   if (list) {
     list.replaceChildren(
-      configBenefit(`${tier.slots} slots para o seu time`),
+      configBenefit(`${tierSlotsLabel(tier)} slots para o seu time`),
       configBenefit(includeBot ? 'Rubinot com Hunted List, UP Level e DeathList' : 'Channels e permissões sob seu controle'),
       configBenefit('Áudio QUIC com fallback WS'),
       configBenefit('Painel administrativo incluído'),

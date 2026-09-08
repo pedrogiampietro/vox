@@ -87,7 +87,7 @@ const CHANNEL_INFO_HEIGHT_KEY = 'vox.channel-info-height';
 const RESP_CLAIM_DURATION_MIN = 3 * 60;
 let channelInfoHeight = loadChannelInfoHeight();
 const collapsedChannels = new Set<number>();
-const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist']);
+const BOT_CHANNEL_NAMES = new Set(['bot', 'hunted list online', 'up level', 'deathlist', 'transfers']);
 
 // ---- drag-to-move state ----
 let dragClientId = 0;
@@ -647,6 +647,9 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
 
   const info = $('div', 'room-info');
   info.append(text('span', 'name', ch.name));
+  if (members.some((member) => isScreenSharedBy(member.id))) {
+    appendScreenIndicator(info, 'alguém está compartilhando a tela neste canal');
+  }
   const details: string[] = [];
   if (voiceDisabled) details.push('sem voz');
   else if (moderated) details.push('moderado');
@@ -683,8 +686,8 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
   if (client.canMoveChannel(ch)) {
     row.classList.add('movable');
     row.title = full
-      ? 'canal lotado · arraste sobre outro para criar subcanal; solte no espaço vazio para raiz'
-      : 'arraste sobre outro para criar subcanal; solte no espaço vazio para raiz';
+      ? 'canal lotado · arraste para antes/depois ou sobre outro para criar subcanal; solte no espaço vazio para raiz'
+      : 'arraste para antes/depois ou sobre outro para criar subcanal; solte no espaço vazio para raiz';
     row.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
@@ -708,6 +711,13 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
       dragGhost!.style.left = `${e.clientX + 12}px`;
       dragGhost!.style.top = `${e.clientY - 14}px`;
       updateChannelDropHighlight(e.clientX, e.clientY, ch.id);
+      const placement = getChannelDropPlacement(e.clientX, e.clientY, ch.id);
+      const modeLabel = placement
+        ? placement.mode === 'before' ? t('antes')
+          : placement.mode === 'inside' ? t('dentro')
+            : placement.mode === 'after' ? t('depois') : t('na raiz')
+        : '';
+      dragGhost!.textContent = modeLabel ? `# ${ch.name} · ${modeLabel}` : `# ${ch.name}`;
     });
     row.addEventListener('pointerup', (e) => {
       if (!dragChannelId || dragChannelId !== ch.id) return;
@@ -715,8 +725,8 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
       if (dragActive) {
         try { row.releasePointerCapture(e.pointerId); } catch {}
         if (dragGhost) dragGhost.style.display = 'none';
-        const target = getDropParentChannel(e.clientX, e.clientY, ch.id);
-        if (target !== null && target !== ch.id) client.moveChannel(ch.id, target);
+        const placement = getChannelDropPlacement(e.clientX, e.clientY, ch.id);
+        if (placement) client.moveChannel(ch.id, placement.parentId, placement.beforeChannelId);
         clearDropHighlight();
       }
       if (dragGhost) { dragGhost.remove(); dragGhost = null; }
@@ -841,6 +851,17 @@ function playerInfoFor(c: ClientInfo): PlayerInfo | undefined {
   return pi;
 }
 
+function isScreenSharedBy(clientId: number): boolean {
+  return (clientId === client.selfId && client.screen.sharing) || client.screen.remotes.has(clientId);
+}
+
+function appendScreenIndicator(parent: HTMLElement, title = 'compartilhando tela'): void {
+  const dot = text('span', 'screen-live-dot', '●');
+  dot.title = title;
+  dot.setAttribute('aria-label', title);
+  parent.append(dot);
+}
+
 function renderPeer(c: ClientInfo): HTMLElement {
   const row = $('div', 'peer');
   if (c.id === client.selfId) row.classList.add('me');
@@ -897,6 +918,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
   if (gdef.color) nick.style.color = gdef.color;
   else if (c.group >= Group.Owner) nick.style.color = 'var(--amber)';
   row.append(avatar, vu, nick);
+  if (isScreenSharedBy(c.id)) appendScreenIndicator(row);
 
   // rank badge — mostra se o grupo tem icone ou se nao e guest
   if (gdef.icon) {
@@ -907,11 +929,11 @@ function renderPeer(c: ClientInfo): HTMLElement {
     iconImg.style.cssText = 'width:14px;height:14px;object-fit:contain;flex-shrink:0;';
     row.append(iconImg);
   } else if (c.group > Group.Guest) {
-    const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛' };
+    const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '👑' };
     const badge = text('span', 'rank', icons[c.group] || gdef.name.charAt(0).toUpperCase());
     badge.title = gdef.name;
     if (gdef.color) badge.style.color = gdef.color;
-    else if (c.group === Group.Owner) badge.style.color = 'var(--amber)';
+    else if (c.group === Group.Owner || c.group === Group.Dono) badge.style.color = 'var(--amber)';
     else if (c.group === Group.Admin) badge.style.color = '#e0a040';
     else badge.style.color = 'var(--text-dim)';
     row.append(badge);
@@ -1101,6 +1123,10 @@ function renderTalk(): HTMLElement {
     if (client.activeDmTab === dmId) tab.classList.add('active');
     const label = text('span', '', dm.name);
     tab.append(label);
+    const dmOnline = client.clients.has(dmId);
+    const dmStatus = text('span', `dm-status-dot ${dmOnline ? 'online' : 'offline'}`, '●');
+    dmStatus.title = dmOnline ? 'online' : 'offline';
+    tab.append(dmStatus);
     if (dm.unread > 0 && client.activeDmTab !== dmId) {
       const badge = text('span', 'tab-badge', String(dm.unread));
       tab.append(badge);
@@ -1117,6 +1143,16 @@ function renderTalk(): HTMLElement {
     tabs.append(tab);
   }
   pane.append(tabs);
+
+  const activeDm = client.activeDmTab !== null ? client.dmTabs.get(client.activeDmTab) : null;
+  if (activeDm && !client.clients.has(activeDm.clientId)) {
+    const offline = $('div', 'dm-offline-banner');
+    offline.append(
+      text('span', 'dm-offline-dot', '●'),
+      text('span', '', `${activeDm.name} está offline no momento.`),
+    );
+    pane.append(offline);
+  }
 
   // chat log
   const isDmView = client.activeDmTab !== null;
@@ -1430,6 +1466,7 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
       if (mgdef.color) mNick.style.color = mgdef.color;
       else if (m.group >= Group.Owner) mNick.style.color = 'var(--amber)';
       item.append(statusDot, mNick);
+      if (isScreenSharedBy(m.id)) appendScreenIndicator(item);
 
       if (mgdef.icon) {
         const mIcon = $('img') as HTMLImageElement;
@@ -1438,7 +1475,7 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
         mIcon.style.cssText = 'width:12px;height:12px;object-fit:contain;';
         item.append(mIcon);
       } else if (m.group > Group.Guest) {
-        const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛' };
+        const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '👑' };
         const badge = text('span', 'rank', icons[m.group] || '');
         badge.style.fontSize = '8px';
         item.append(badge);
@@ -1457,7 +1494,7 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
   const gdef = client.groupDef(c.group);
   const isSelf = c.id === client.selfId;
   const ch = client.channels.get(c.channelId);
-  const isOwner = client.myGroup >= Group.Owner;
+  const isDono = client.myGroup >= Group.Dono;
 
   // header: icon + nickname + dismiss
   const top = $('div', 'channel-info-header');
@@ -1587,8 +1624,8 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     info.append(row);
   }
 
-  // fingerprint / ID (only visible to owners)
-  if (c.fingerprint && isOwner) {
+  // fingerprint / ID (only visible to Donos)
+  if (c.fingerprint && isDono) {
     addRow('ID:', c.fingerprint);
   }
 
@@ -2424,8 +2461,7 @@ function getDropChannel(x: number, y: number): number | null {
   const el = document.elementFromPoint(x, y);
   if (!el) return null;
   const room = (el as HTMLElement).closest('.room') as HTMLElement | null;
-  if (room?.dataset.channelId) return Number(room.dataset.channelId);
-  return null;
+  return room?.dataset.channelId ? Number(room.dataset.channelId) : null;
 }
 
 function updateDropHighlight(x: number, y: number): void {
@@ -2436,16 +2472,46 @@ function updateDropHighlight(x: number, y: number): void {
   if (room) room.classList.add('drop-target');
 }
 
-function getDropParentChannel(x: number, y: number, draggedChannelId: number): number | null {
+interface ChannelDropPlacement {
+  parentId: number;
+  beforeChannelId: number;
+  mode: 'before' | 'inside' | 'after' | 'root';
+}
+
+function getNextSiblingChannelId(channelId: number, excludedChannelId = 0): number {
+  const channel = client.channels.get(channelId);
+  if (!channel) return NO_CHANNEL;
+  const siblings = client.childrenOf(channel.parentId).filter((candidate) => candidate.id !== excludedChannelId);
+  const index = siblings.findIndex((candidate) => candidate.id === channelId);
+  return index >= 0 ? siblings[index + 1]?.id ?? NO_CHANNEL : NO_CHANNEL;
+}
+
+function getChannelDropPlacement(x: number, y: number, draggedChannelId: number): ChannelDropPlacement | null {
   const el = document.elementFromPoint(x, y);
   if (!el) return null;
   const channelRow = (el as HTMLElement).closest('.channel-row') as HTMLElement | null;
   if (channelRow?.dataset.channelId) {
     const targetId = Number(channelRow.dataset.channelId);
     if (targetId === draggedChannelId || isChannelDescendant(targetId, draggedChannelId)) return null;
-    return targetId;
+    const target = client.channels.get(targetId);
+    if (!target) return null;
+    const rect = channelRow.getBoundingClientRect();
+    const ratio = rect.height > 0 ? (y - rect.top) / rect.height : 0.5;
+    if (ratio < 0.3) {
+      return { parentId: target.parentId, beforeChannelId: target.id, mode: 'before' };
+    }
+    if (ratio > 0.7) {
+      return {
+        parentId: target.parentId,
+        beforeChannelId: getNextSiblingChannelId(target.id, draggedChannelId),
+        mode: 'after',
+      };
+    }
+    return { parentId: target.id, beforeChannelId: NO_CHANNEL, mode: 'inside' };
   }
-  return (el as HTMLElement).closest('.tree') ? NO_CHANNEL : null;
+  return (el as HTMLElement).closest('.tree')
+    ? { parentId: NO_CHANNEL, beforeChannelId: NO_CHANNEL, mode: 'root' }
+    : null;
 }
 
 function isChannelDescendant(channelId: number, ancestorId: number): boolean {
@@ -2461,14 +2527,13 @@ function isChannelDescendant(channelId: number, ancestorId: number): boolean {
 
 function updateChannelDropHighlight(x: number, y: number, draggedChannelId: number): void {
   clearDropHighlight();
+  const placement = getChannelDropPlacement(x, y, draggedChannelId);
+  if (!placement) return;
   const el = document.elementFromPoint(x, y);
   if (!el) return;
   const channelRow = (el as HTMLElement).closest('.channel-row') as HTMLElement | null;
   if (channelRow?.dataset.channelId) {
-    const targetId = Number(channelRow.dataset.channelId);
-    if (targetId !== draggedChannelId && !isChannelDescendant(targetId, draggedChannelId)) {
-      channelRow.classList.add('drop-target');
-    }
+    channelRow.classList.add('drop-target', `drop-${placement.mode}`);
     return;
   }
   const tree = (el as HTMLElement).closest('.tree');
@@ -2476,7 +2541,9 @@ function updateChannelDropHighlight(x: number, y: number, draggedChannelId: numb
 }
 
 function clearDropHighlight(): void {
-  document.querySelectorAll('.room.drop-target').forEach((el) => el.classList.remove('drop-target'));
+  document.querySelectorAll('.room.drop-target').forEach((el) => {
+    el.classList.remove('drop-target', 'drop-before', 'drop-inside', 'drop-after');
+  });
   document.querySelectorAll('.tree.drop-root-target').forEach((el) => el.classList.remove('drop-root-target'));
 }
 
@@ -2754,7 +2821,7 @@ function renderSettings(): HTMLElement {
     { id: 'capture', icon: '🎙', label: t('Capturar') },
     { id: 'playback', icon: '🔊', label: t('Reprodução') },
     { id: 'notifications', icon: '🔔', label: t('Notificações') },
-    ...(client.myGroup >= Group.Owner
+    ...(client.myGroup >= Group.Dono
       ? [
           { id: 'groups', icon: '👥', label: t('Grupos') },
           { id: 'permissions', icon: '🔐', label: t('Permissões') },
@@ -3291,6 +3358,10 @@ function buildPlaybackSection(body: HTMLElement): void {
 
   const eventList = $('div', 'sound-event-list');
   for (const [name, label] of Object.entries(SOUND_EVENT_LABELS) as [SoundName, string][]) {
+    // Entrada no servidor nao gera mais aviso: evita interromper o usuario
+    // quando o canal recebe varias pessoas ao mesmo tempo. Mantemos o campo
+    // antigo nas preferencias para nao invalidar configuracoes ja salvas.
+    if (name === 'join') continue;
     const eventRow = $('div', 'sound-event-row');
     const eventToggle = $('label', 'settings-toggle');
     const eventCheck = $('input') as HTMLInputElement;
@@ -3547,6 +3618,7 @@ function buildPermissionsSection(body: HTMLElement): void {
     { value: Group.Moderator, label: 'Moderador' },
     { value: Group.Admin, label: 'Admin' },
     { value: Group.Owner, label: 'Leader' },
+    { value: Group.Dono, label: 'Dono' },
   ];
 
   for (const g of groupings) {
@@ -3963,7 +4035,7 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
       iconImg.style.cssText = 'width:16px;height:16px;object-fit:contain;';
       nickRow.append(iconImg);
     } else {
-      const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛' };
+      const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '👑' };
       const badge = text('span', 'rank', icons[target.group] || tgdef.name.charAt(0).toUpperCase());
       badge.title = tgdef.name;
       nickRow.append(badge);
@@ -4164,20 +4236,19 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
       items.push(sub);
     }
 
-    // ---- group assignment ----
-    if (client.canModerate(target, Group.Admin)) {
+    // ---- group assignment: somente Dono -------------------------------
+    if (client.myGroup >= Group.Dono) {
       const { toggle, sub } = collapsible('grupo');
       items.push(toggle);
 
-      // Owner pode promover a Owner (co-donos). Demais so promovem abaixo do
-      // proprio nivel — evita cascata acidental de admins.
+      // Somente Dono pode administrar cargos e criar outro Dono.
       const groups = client.groupDefs.filter((g) =>
-        g.id < client.myGroup || (g.id === Group.Owner && client.myGroup >= Group.Owner),
+        g.id < client.myGroup || (g.id === Group.Dono && client.myGroup >= Group.Dono),
       );
       for (const g of groups) {
         const gBtn = $('button');
         const isCurrent = target.group === g.id;
-        const isPromoteToOwner = g.id === Group.Owner && target.group !== Group.Owner;
+        const isPromoteToDono = g.id === Group.Dono && target.group !== Group.Dono;
         if (g.icon) {
           const gIcon = $('img') as HTMLImageElement;
           gIcon.src = serverAssetUrl(g.icon);
@@ -4192,7 +4263,7 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
         }
         gBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (isPromoteToOwner) {
+          if (isPromoteToDono) {
             const ok = window.confirm(
               `promover ${target.nickname} a Dono? donos podem editar tudo, inclusive rebaixar voce.`,
             );
@@ -4208,6 +4279,69 @@ function showUserMenu(anchor: HTMLElement, target: ClientInfo): void {
   }
 
   openMenu(anchor, items);
+}
+
+function channelPath(ch: ChannelInfo): string {
+  const names = [ch.name];
+  const seen = new Set<number>([ch.id]);
+  let parent = ch.parentId === NO_CHANNEL ? undefined : client.channels.get(ch.parentId);
+  while (parent && !seen.has(parent.id)) {
+    names.unshift(parent.name);
+    seen.add(parent.id);
+    parent = parent.parentId === NO_CHANNEL ? undefined : client.channels.get(parent.parentId);
+  }
+  return names.join(' / ');
+}
+
+function movableChannelTargets(source: ChannelInfo): ChannelInfo[] {
+  return [...client.channels.values()]
+    .filter((candidate) => candidate.id !== source.id && !isChannelDescendant(candidate.id, source.id))
+    .sort((a, b) => channelPath(a).localeCompare(channelPath(b), undefined, { sensitivity: 'base' }));
+}
+
+function addChannelMoveMenu(items: HTMLElement[], ch: ChannelInfo): void {
+  if (!client.canMoveChannel(ch)) return;
+
+  items.push($('hr'));
+
+  const rootBtn = $('button');
+  rootBtn.textContent = t('mover para raiz (fim)');
+  rootBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    client.moveChannel(ch.id, NO_CHANNEL, NO_CHANNEL);
+    closeMenu();
+  });
+  items.push(rootBtn);
+
+  const targets = movableChannelTargets(ch);
+  if (targets.length === 0) return;
+
+  const after = collapsible(t('mover depois de'));
+  for (const target of targets) {
+    const targetBtn = $('button');
+    targetBtn.textContent = `# ${channelPath(target)}`;
+    targetBtn.title = `${t('mover depois de')} ${channelPath(target)}`;
+    targetBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      client.moveChannel(ch.id, target.parentId, getNextSiblingChannelId(target.id, ch.id));
+      closeMenu();
+    });
+    after.sub.firstElementChild!.append(targetBtn);
+  }
+  items.push(after.toggle, after.sub);
+
+  const inside = collapsible(t('mover para dentro de'));
+  for (const target of targets) {
+    const targetBtn = $('button');
+    targetBtn.textContent = `# ${channelPath(target)}`;
+    targetBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      client.moveChannel(ch.id, target.id, NO_CHANNEL);
+      closeMenu();
+    });
+    inside.sub.firstElementChild!.append(targetBtn);
+  }
+  items.push(inside.toggle, inside.sub);
 }
 
 function showChannelMenu(e: MouseEvent, ch: ChannelInfo): void {
@@ -4336,6 +4470,8 @@ function showChannelMenu(e: MouseEvent, ch: ChannelInfo): void {
       items.push(delBtn);
     }
   }
+
+  addChannelMoveMenu(items, ch);
 
   const anchor = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;
   if (anchor) openMenu(anchor, items);
@@ -4822,7 +4958,7 @@ function showTreeMenu(e: MouseEvent): void {
   items.push(createBtn);
 
   // edit server (owner)
-  if (client.myGroup >= Group.Owner) {
+  if (client.myGroup >= Group.Dono) {
     const editBtn = $('button');
     editBtn.textContent = 'editar servidor';
     editBtn.addEventListener('click', (ev) => {
@@ -4846,7 +4982,7 @@ function showTreeMenu(e: MouseEvent): void {
   }
 
   // group management (owner)
-  if (client.myGroup >= Group.Owner) {
+  if (client.myGroup >= Group.Dono) {
     const groupsBtn = $('button');
     groupsBtn.textContent = 'gerenciar grupos';
     groupsBtn.addEventListener('click', (ev) => {

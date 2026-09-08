@@ -3,7 +3,7 @@
 /**
  * 12: matriz de permissoes por acao configuravel pelo owner.
  * 11: PlayerInfo (voc/level/online) por fingerprint via bot Rubinot.
- * 10: 8 tiers de grupo (Visitante..Leader) e descricao por fingerprint.
+ * 10: 9 tiers de grupo (Visitante..Leader..Dono) e descricao por fingerprint.
  * 9: sinalizacao WebRTC para compartilhamento de tela/janela.
  * 8: read receipts para mensagens privadas.
  * 7: guilds amigas/inimigas configuraveis (varias por lado).
@@ -219,7 +219,7 @@ export enum FailureCode {
  *
  * Nomes internos (Guest/Moderator/Admin/Owner) foram mantidos para nao
  * quebrar todo o codigo que checa Group.Moderator etc. Os valores mudaram:
- * agora ha 8 tiers entre eles, com espacos para "Spy/Membro/Elite/Suporte"
+ * agora ha 9 tiers, com espacos para "Spy/Membro/Elite/Suporte" e um Dono
  * organizacionalmente entre Visitante e Moderador.
  */
 export enum Group {
@@ -230,7 +230,8 @@ export enum Group {
   Support = 4,     // Suporte
   Moderator = 5,   // Moderador
   Admin = 6,
-  Owner = 7,       // Leader / Dono
+  Owner = 7,       // Leader (mantido para compatibilidade)
+  Dono = 8,        // Dono: configuracao do servidor e administracao de cargos
 }
 
 /** Nome legivel do grupo, usado na interface e no painel. */
@@ -243,6 +244,7 @@ export const GROUP_NAMES: Record<Group, string> = {
   [Group.Moderator]: 'moderador',
   [Group.Admin]: 'admin',
   [Group.Owner]: 'leader',
+  [Group.Dono]: 'dono',
 };
 
 export enum RemoveReason {
@@ -333,6 +335,7 @@ export const DEFAULT_GROUP_DEFS: GroupDef[] = [
   { id: Group.Moderator, name: 'Moderador', icon: '', color: '#f0cd76' },
   { id: Group.Admin, name: 'Admin', icon: '', color: '#e0a040' },
   { id: Group.Owner, name: 'Leader', icon: '', color: '#e8a33d' },
+  { id: Group.Dono, name: 'Dono', icon: '', color: '#ffd166' },
 ];
 
 /**
@@ -350,7 +353,7 @@ export interface TemplateCategory {
 export const NO_CHANNEL = 0;
 
 /**
- * Todas as acoes que podem ser gate por grupo. Owner ajusta o grupo minimo
+ * Todas as acoes que podem ser gate por grupo. Dono ajusta o grupo minimo
  * pra cada uma via Op.SetPermission. Ordem numerica importa (serializacao).
  */
 export enum PermissionAction {
@@ -415,12 +418,12 @@ export const PERMISSION_LABELS: Record<PermissionAction, string> = {
   [PermissionAction.BotModerate]: 'Bot: moderate canal',
   [PermissionAction.BotVoice]: 'Bot: voice',
   [PermissionAction.BotDevoice]: 'Bot: devoice',
-  [PermissionAction.BotHunt]: 'Bot: hunt',
-  [PermissionAction.BotUnhunt]: 'Bot: unhunt',
+  [PermissionAction.BotHunt]: 'Bot: hunted add',
+  [PermissionAction.BotUnhunt]: 'Bot: hunted remove',
   [PermissionAction.BotHunted]: 'Bot: ver hunted list',
 };
 
-/** Padroes conservadores. Owner pode restringir/afrouxar via UI. */
+/** Padroes conservadores. Dono pode restringir/afrouxar via UI. */
 export const DEFAULT_PERMISSIONS: Record<PermissionAction, Group> = {
   [PermissionAction.CreateTempChannel]: Group.Elite,
   [PermissionAction.CreatePermanentChannel]: Group.Moderator,
@@ -449,8 +452,8 @@ export const DEFAULT_PERMISSIONS: Record<PermissionAction, Group> = {
   [PermissionAction.BotModerate]: Group.Moderator,
   [PermissionAction.BotVoice]: Group.Moderator,
   [PermissionAction.BotDevoice]: Group.Moderator,
-  [PermissionAction.BotHunt]: Group.Moderator,
-  [PermissionAction.BotUnhunt]: Group.Moderator,
+  [PermissionAction.BotHunt]: Group.Dono,
+  [PermissionAction.BotUnhunt]: Group.Dono,
   [PermissionAction.BotHunted]: Group.Guest,
 };
 

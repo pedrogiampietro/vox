@@ -7,13 +7,15 @@
  *   GET /api/worlds/:name               jogadores online de uma world
  *   GET /api/guilds?page=N&worldId=N    guilds paginadas (worldId numerico)
  *   GET /api/guilds/:name               detalhe da guild com membros
+ *   GET /api/transfers?toWorld=ID&page=N transfers recentes para uma world
+ *   GET /api/characters/search?name=...  ficha e antigos nomes do personagem
  *
  * Cloudflare bloqueia o `fetch` do Node pelo TLS fingerprint (JA3), entao usamos
  * cycletls, que impersona o handshake do Chrome.
  */
 
 import initCycleTLS, { type CycleTLSClient } from 'cycletls';
-import { epochToMs, normalizeVocation, normalizeVocationNumber, type GameProvider } from './provider.js';
+import { epochToMs, normalizeVocation, normalizeVocationNumber, type GameProvider, type ProviderTransfer } from './provider.js';
 
 const BASE = 'https://rubinot.com.br';
 const UA =
@@ -23,6 +25,7 @@ const JA3 =
   '771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-23-65281-10-11-35-16-5-13-18-51-45-43-27-17513-21,29-23-24,0';
 
 let clientPromise: Promise<CycleTLSClient> | null = null;
+let transferWorldIdsPromise: Promise<Map<string, number>> | null = null;
 function getClient(): Promise<CycleTLSClient> {
   clientPromise ??= initCycleTLS();
   return clientPromise;
@@ -33,6 +36,7 @@ export async function shutdownRubinotClient(): Promise<void> {
   const c = await clientPromise;
   await c.exit();
   clientPromise = null;
+  transferWorldIdsPromise = null;
 }
 
 // ----------------------------------------------------------------- tipos --
@@ -70,6 +74,14 @@ export interface RubinotWorldDetail {
   record: number;
   recordTime: number;
   players: RubinotOnlinePlayer[];
+}
+
+export interface RubinotTransfer {
+  player_name: string;
+  player_level: number;
+  from_world: string;
+  to_world: string;
+  transferred_at: number;
 }
 
 export interface RubinotGuildSummary {
@@ -205,28 +217,39 @@ export async function fetchGuild(
   return raw.guild;
 }
 
-export interface RubinotCharacter {
-  name: string;
-  level: number;
-  vocation: string;
-  world: string;
-  /** Best-effort: HTML da pagina de char nem sempre marca isso claramente. */
-  online: boolean;
+export async function fetchTransfers(
+  toWorldId: number,
+  page = 1,
+  signal?: AbortSignal,
+): Promise<Paginated<RubinotTransfer>> {
+  const raw = await api<{
+    transfers: RubinotTransfer[];
+    totalResults: number;
+    totalPages: number;
+    currentPage: number;
+  }>(`/api/transfers?toWorld=${toWorldId}&page=${page}`, signal);
+  return {
+    data: raw.transfers,
+    totalCount: raw.totalResults,
+    totalPages: raw.totalPages,
+    currentPage: raw.currentPage,
+  };
 }
 
-/**
- * Scrape da pagina publica de personagem (nao ha endpoint JSON pra char
- * individual). Retorna null se a pagina nao existe ou nao foi possivel
- * extrair dados minimos (level ou vocation).
- */
-export async function fetchCharacter(
-  name: string,
-  signal?: AbortSignal,
-): Promise<RubinotCharacter | null> {
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .trim();
+}
+
+async function fetchTransferWorldIds(signal?: AbortSignal): Promise<Map<string, number>> {
   const client = await getClient();
   if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-  const url = `${BASE}/characters?name=${encodeURIComponent(name)}`;
-  const res = await client.get(url, {
+  const res = await client.get(`${BASE}/transfers`, {
     ja3: JA3,
     userAgent: UA,
     headers: {
@@ -237,37 +260,83 @@ export async function fetchCharacter(
     timeout: 15,
   });
   if (res.status < 200 || res.status >= 300) {
-    console.error(`[rubinot] fetchCharacter "${name}": HTTP ${res.status}`);
-    return null;
+    throw new Error(`Rubinot ${res.status} ao carregar a lista de worlds de transfers`);
   }
   const html = typeof res.body === 'string' ? res.body : String(res.body);
-
-  // Tenta varios formatos comuns de tabela vertical: <td>Label:</td><td>value</td>.
-  // Aceita espacos, atributos no <td>, tags aninhadas simples.
-  const pick = (label: string): string => {
-    const re = new RegExp(
-      `${label}\\s*:?\\s*</td>\\s*<td[^>]*>\\s*(?:<[^>]+>\\s*)*([^<]+?)\\s*(?:<|$)`,
-      'i',
-    );
-    const m = re.exec(html);
-    return (m?.[1] || '').trim();
-  };
-
-  const parsedName = pick('Name') || name;
-  const level = Number(pick('Level')) || 0;
-  const vocation = pick('Vocation');
-  const world = pick('World');
-  const beforeLastLogin = html.split(/last\s*login/i)[0] ?? html;
-  const online = /\bonline\b/i.test(beforeLastLogin) && !/\boffline\b/i.test(beforeLastLogin);
-
-  if (!level && !vocation) {
-    // Diagnostico: mostra um trecho do HTML pra sabermos o formato real.
-    const snippet = html.length > 800 ? html.slice(0, 800) : html;
-    console.error(`[rubinot] fetchCharacter "${name}": sem level/voc. HTML (${html.length} bytes):\n${snippet}`);
-    return null;
+  const ids = new Map<string, number>();
+  const optionRe = /<option\b[^>]*\bvalue=["'](\d+)["'][^>]*>([^<]+)<\/option>/gi;
+  for (const match of html.matchAll(optionRe)) {
+    const id = Number(match[1]);
+    const world = decodeHtml(match[2] ?? '');
+    if (Number.isInteger(id) && world) ids.set(world.toLowerCase(), id);
   }
-  console.log(`[rubinot] fetchCharacter "${name}" -> lvl=${level} voc="${vocation}" world="${world}"`);
-  return { name: parsedName, level, vocation, world, online };
+  if (ids.size === 0) throw new Error('Rubinot não publicou os IDs dos worlds na página de transfers');
+  return ids;
+}
+
+async function transferWorldId(world: string, signal?: AbortSignal): Promise<number> {
+  transferWorldIdsPromise ??= fetchTransferWorldIds(signal);
+  let ids: Map<string, number>;
+  try {
+    ids = await transferWorldIdsPromise;
+  } catch (error) {
+    // Nao deixa uma falha transitoria de rede transformar o cache em uma
+    // Promise rejeitada permanente durante toda a vida do processo.
+    transferWorldIdsPromise = null;
+    throw error;
+  }
+  const id = ids.get(world.trim().toLowerCase());
+  if (id === undefined) throw new Error(`world "${world}" não encontrado na lista de transfers do Rubinot`);
+  return id;
+}
+
+export interface RubinotCharacter {
+  name: string;
+  level: number;
+  vocation: string;
+  world: string;
+  online: boolean;
+  formerNames?: string[];
+}
+
+/**
+ * Consulta a ficha publica pelo endpoint JSON usado pelo frontend do Rubinot.
+ * Retorna null se a ficha nao existe ou nao foi possivel extrair dados minimos.
+ */
+export async function fetchCharacter(
+  name: string,
+  signal?: AbortSignal,
+): Promise<RubinotCharacter | null> {
+  const raw = await api<{
+    player?: {
+      name?: string;
+      level?: number;
+      vocation?: string | number;
+      world?: string;
+      formerNames?: string[];
+    };
+    otherCharacters?: { name?: string; isOnline?: boolean }[];
+  }>(`/api/characters/search?name=${encodeURIComponent(name)}`, signal);
+  const player = raw.player;
+  if (!player) return null;
+  const level = Number(player.level) || 0;
+  const vocation = typeof player.vocation === 'number'
+    ? normalizeVocationNumber(player.vocation)
+    : String(player.vocation ?? '');
+  if (!level && !vocation) return null;
+  const formerNames = (player.formerNames ?? []).map((oldName) => oldName.trim()).filter(Boolean);
+  const online = (raw.otherCharacters ?? []).some(
+    (other) => other.name?.toLowerCase() === player.name?.toLowerCase() && other.isOnline === true,
+  );
+  console.log(`[rubinot] fetchCharacter "${name}" -> lvl=${level} voc="${vocation}" world="${player.world ?? ''}" formerNames=${formerNames.length}`);
+  return {
+    name: player.name?.trim() || name,
+    level,
+    vocation,
+    world: player.world?.trim() || '',
+    online,
+    formerNames,
+  };
 }
 
 // --------------------------------------------------------------- provider --
@@ -321,6 +390,22 @@ export const rubinotProvider: GameProvider = {
     const char = await fetchCharacter(name, signal);
     if (!char) return null;
     return { ...char, vocation: normalizeVocation(char.vocation) };
+  },
+
+  async fetchTransfers(world, signal): Promise<ProviderTransfer[]> {
+    const worldId = await transferWorldId(world, signal);
+    const page = await fetchTransfers(worldId, 1, signal);
+    const normalizedWorld = world.trim().toLowerCase();
+    return page.data
+      .filter((transfer) => transfer.to_world.trim().toLowerCase() === normalizedWorld)
+      .filter((transfer) => Number(transfer.player_level) >= 300)
+      .map((transfer) => ({
+        player: transfer.player_name,
+        level: Number(transfer.player_level) || 0,
+        fromWorld: transfer.from_world,
+        toWorld: transfer.to_world,
+        transferredAt: epochToMs(Number(transfer.transferred_at)),
+      }));
   },
 
   close: shutdownRubinotClient,

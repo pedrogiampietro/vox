@@ -118,7 +118,7 @@ export class VoxClient {
   notificationsEnabled = true;
   onPoke: ((from: string, text: string) => void) | null = null;
   onBotResult: ((message: string) => void) | null = null;
-  /** Chamado quando o painel ou outro owner altera a configuração do bot. */
+  /** Chamado quando o painel ou outro Dono altera a configuração do bot. */
   onBotStateChange: (() => void) | null = null;
 
   private audioPrefs: AudioPrefs | null = null;
@@ -698,8 +698,8 @@ export class VoxClient {
     this.connection.send({ t: Op.EditChannel, channelId, name, topic, maxClients });
   }
 
-  moveChannel(channelId: number, parentId: number): void {
-    this.connection.send({ t: Op.MoveChannel, channelId, parentId });
+  moveChannel(channelId: number, parentId: number, beforeChannelId = NO_CHANNEL): void {
+    this.connection.send({ t: Op.MoveChannel, channelId, parentId, beforeChannelId });
   }
 
   botCommand(command: string, ...args: string[]): void {
@@ -820,7 +820,7 @@ export class VoxClient {
   }
 
   /**
-   * Troca o preset do servidor (owner). `custom` vazio aplica um embutido;
+   * Troca o preset do servidor (Dono). `custom` vazio aplica um embutido;
    * preenchido, importa o JSON e o `presetId` e ignorado pelo servidor.
    */
   setPreset(presetId: string, custom = ''): void {
@@ -972,7 +972,6 @@ export class VoxClient {
           this.myGroup = m.client.group;
           this.syncMicMute();
         }
-        if (isNew && this.link === 'online') this.play('join');
         // Novo cliente no meu canal? Se estou compartilhando tela, oferecer.
         if (isNew && this.self && m.client.channelId === this.self.channelId) {
           this.screen.onPeerReachable(m.client.id);
@@ -980,12 +979,26 @@ export class VoxClient {
         break;
       }
 
-      case Op.ClientRemove:
+      case Op.ClientRemove: {
+        const departed = this.clients.get(m.clientId);
+        const dm = this.dmTabs.get(m.clientId);
+        if (departed && dm) {
+          this.chat.push({
+            scope: ChatScope.Private,
+            senderId: 0,
+            targetId: m.clientId,
+            senderName: 'system',
+            text: `${departed.nickname} está offline no momento.`,
+            stamp: Date.now(),
+          });
+          if (this.chat.length > MAX_CHAT_LINES) this.chat.shift();
+        }
         this.clients.delete(m.clientId);
         this.mixer?.remove(m.clientId);
         this.screen.handleSignal(m.clientId, 0, 'stop', '').catch(() => {});
         this.play('leave');
         break;
+      }
 
       case Op.ClientMove: {
         const c = this.clients.get(m.clientId);

@@ -8,11 +8,21 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
 import { config } from './config.js';
 
 const RESTART_DELAY_MS = 3_000;
-const JUKEBOX_SCRIPT = resolve(process.cwd(), 'packages/bot/src/music-jukebox.ts');
+
+function getJukeboxScript(): string {
+  const candidates = [
+    resolve(process.cwd(), 'packages/bot/src/music-jukebox.ts'),
+    resolve(process.cwd(), '../bot/src/music-jukebox.ts'),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
+const JUKEBOX_SCRIPT = getJukeboxScript();
+const WORKSPACE_ROOT = resolve(dirname(JUKEBOX_SCRIPT), '..', '..', '..');
 
 interface JukeboxEntry {
   child: ChildProcess;
@@ -20,23 +30,43 @@ interface JukeboxEntry {
   stopped: boolean;
 }
 
-const active = new Map<number, JukeboxEntry>();
-let tsxBin = '';
+interface TsxCommand {
+  command: string;
+  args: string[];
+  shell: boolean;
+}
 
-function getTsx(): string {
-  if (tsxBin) return tsxBin;
-  const local = join(process.cwd(), 'node_modules', '.bin', 'tsx');
-  tsxBin = existsSync(local) ? local : 'tsx';
-  return tsxBin;
+const active = new Map<number, JukeboxEntry>();
+let tsxCommand: TsxCommand | null = null;
+
+function getTsx(): TsxCommand {
+  if (tsxCommand) return tsxCommand;
+  // Executar o CLI do tsx via Node evita a dependência de shell e funciona
+  // tanto quando o cwd e a raiz quanto quando o npm entrou em packages/server.
+  const localCli = join(WORKSPACE_ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  if (existsSync(localCli)) {
+    tsxCommand = { command: process.execPath, args: [localCli], shell: false };
+    return tsxCommand;
+  }
+  const binName = process.platform === 'win32' ? 'tsx.cmd' : 'tsx';
+  const local = join(WORKSPACE_ROOT, 'node_modules', '.bin', binName);
+  tsxCommand = {
+    command: existsSync(local) ? local : binName,
+    args: [],
+    shell: process.platform === 'win32',
+  };
+  return tsxCommand;
 }
 
 export function spawnJukebox(serverId: number): void {
   if (active.has(serverId)) return;
 
   const address = `ws://127.0.0.1:${config.port}/vox/${serverId}`;
-  const child = spawn(getTsx(), [JUKEBOX_SCRIPT], {
+  const runner = getTsx();
+  const child = spawn(runner.command, [...runner.args, JUKEBOX_SCRIPT], {
     env: { ...process.env, VOX_BOT_ADDRESS: address },
     stdio: ['ignore', 'inherit', 'inherit'],
+    shell: runner.shell,
   });
 
   const entry: JukeboxEntry = { child, timer: null, stopped: false };

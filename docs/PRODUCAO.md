@@ -187,8 +187,10 @@ systemctl status vox-music-jukebox.service --no-pager
 journalctl -u vox-music-jukebox.service -n 80 --no-pager | grep jukebox
 ```
 
-O bot entra no canal `VOX_BOT_CHANNEL` (padrão `bot`) do servidor primário e
-responde a pedidos no chat. As variáveis (`VOX_BOT_PASSWORD`, `VOX_BOT_VOLUME`,
+O controlador entra no canal `VOX_BOT_CHANNEL` (padrão `bot`) do servidor
+primário e responde a pedidos no chat. O jukebox cria players sob demanda, um
+por canal de voz ativo, com fila independente; pedidos por DM usam o canal
+atual de quem enviou. As variáveis (`VOX_BOT_PASSWORD`, `VOX_BOT_VOLUME`,
 `VOX_FFMPEG`, `VOX_YTDLP`) estão descritas no README.
 
 ## Deploy de uma atualização
@@ -220,12 +222,12 @@ Adicione ao `/opt/vox/.env` (substitua os valores de exemplo):
 ```ini
 VOX_MP_ACCESS_TOKEN=APP_USR-...
 VOX_MP_WEBHOOK_SECRET=...
-VOX_MP_50_NO_BOT_PRICE=29.90
-VOX_MP_50_BOT_PRICE=69.90
-VOX_MP_100_NO_BOT_PRICE=50.90
-VOX_MP_100_BOT_PRICE=99.90
-VOX_MP_254_NO_BOT_PRICE=100.00
-VOX_MP_254_BOT_PRICE=150.00
+# Preços mensais base. O bot Rubinot é um adicional fixo de R$ 80,00.
+VOX_MP_50_PRICE=35.00
+VOX_MP_100_PRICE=65.00
+VOX_MP_200_PRICE=130.00
+VOX_MP_300_PRICE=180.00
+VOX_MP_BOT_ADDON_PRICE=80.00
 VOX_PUBLIC_ORIGIN=https://v0x.online
 VOX_MP_WEBHOOK_URL=https://v0x.online/api/payments/mercadopago/webhook
 ```

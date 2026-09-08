@@ -105,11 +105,11 @@ async function main(): Promise<void> {
   await until(() => alice.presetId.length > 0, 'preset anunciado no admit');
   console.log(`ok preset state: ${alice.presetId}`);
 
-  // Trocar o preset troca o catalogo de respawn do servidor inteiro — so o dono.
+  // Trocar o preset troca o catalogo de respawn do servidor inteiro — so o Dono.
   const presetFailures = alice.failures.length;
   alice.send({ t: Op.SetPreset, presetId: 'blank', custom: '' });
   await until(
-    () => alice.failures.slice(presetFailures).some((m) => m.includes('so o owner')),
+    () => alice.failures.slice(presetFailures).some((m) => m.includes('so o dono')),
     'troca de preset por nao-dono recusada',
   );
   if (alice.presetId === 'blank') throw new Error('preset foi trocado por nao-dono');

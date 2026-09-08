@@ -46,11 +46,11 @@ function bool(name: string, fallback: boolean): boolean {
   return raw === '1' || raw.toLowerCase() === 'true';
 }
 
-function cents(name: string): number {
+function cents(name: string, fallbackReais = 0): number {
   const raw = process.env[name];
-  if (!raw) return 0;
+  if (!raw) return Math.round(fallbackReais * 100);
   const value = Number(raw.replace(',', '.'));
-  return Number.isFinite(value) && value > 0 ? Math.round(value * 100) : 0;
+  return Number.isFinite(value) && value >= 0 ? Math.round(value * 100) : Math.round(fallbackReais * 100);
 }
 
 /**
@@ -197,12 +197,13 @@ export const config = {
   /** Checkout Pro do Mercado Pago. Segredos ficam somente no .env da VPS. */
   mpAccessToken: str('VOX_MP_ACCESS_TOKEN', ''),
   mpWebhookSecret: str('VOX_MP_WEBHOOK_SECRET', ''),
-  mp50NoBotPriceCents: cents('VOX_MP_50_NO_BOT_PRICE'),
-  mp50BotPriceCents: cents('VOX_MP_50_BOT_PRICE'),
-  mp100NoBotPriceCents: cents('VOX_MP_100_NO_BOT_PRICE'),
-  mp100BotPriceCents: cents('VOX_MP_100_BOT_PRICE'),
-  mp254NoBotPriceCents: cents('VOX_MP_254_NO_BOT_PRICE'),
-  mp254BotPriceCents: cents('VOX_MP_254_BOT_PRICE'),
+  /** Preco mensal base por capacidade. O Rubinot e somado em separado. */
+  mp50PriceCents: cents('VOX_MP_50_PRICE', 35),
+  mp100PriceCents: cents('VOX_MP_100_PRICE', 65),
+  mp200PriceCents: cents('VOX_MP_200_PRICE', 130),
+  mp300PriceCents: cents('VOX_MP_300_PRICE', 180),
+  /** Adicional fixo para habilitar o bot Rubinot em qualquer plano pago. */
+  mpBotAddonPriceCents: cents('VOX_MP_BOT_ADDON_PRICE', 80),
   publicOrigin: str('VOX_PUBLIC_ORIGIN', `https://${str('VOX_BASE_DOMAIN', 'v0x.online')}`).replace(/\/$/, ''),
   mpWebhookUrl: str(
     'VOX_MP_WEBHOOK_URL',

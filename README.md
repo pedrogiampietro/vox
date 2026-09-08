@@ -197,8 +197,10 @@ npm run music-jukebox
 
 Nesse modo, o bot `music` fica no canal `bot` lendo o chat. Quando alguem digita
 algo como `orochi - sereia`, ele procura a musica somente no SoundCloud usando
-um extrator local, entra com um usuario `music player` no canal de voz de quem
-pediu e comeca a tocar. Se ja tiver algo tocando, o pedido entra na fila.
+um extrator local, entra com um player no canal de voz de quem pediu e comeca a
+tocar. Cada canal tem seu proprio player e sua propria fila: pedidos de outro
+canal nao movem nem interrompem a musica que ja esta tocando. Pedidos por DM
+tambem usam automaticamente o canal atual de quem enviou.
 
 Comandos no chat do canal `bot`:
 
@@ -206,7 +208,13 @@ Comandos no chat do canal `bot`:
 fila
 skip
 stop
+hunted                 # lista
+hunted add <nome>
+hunted remove <nome>
 ```
+
+`hunt <nome>` e `unhunt <nome>` continuam aceitos apenas como aliases de
+compatibilidade. A forma oficial para alterar a lista e `hunted add/remove`.
 
 ### Providers do bot
 
@@ -219,7 +227,10 @@ correto na aba `Bot` e ligue-o novamente para evitar alertas de outro OT.
 
 O provider também é usado para online, mortes, guilds e fichas de personagens;
 os eventos publicados no Vox permanecem no mesmo formato, independentemente da
-fonte.
+fonte. No preset Rubinot, o bot também cria o canal `Transfers` e consulta a
+lista de transferências recentes do world configurado, exibindo somente players
+com level 300 ou maior. A ficha de personagem usa a API JSON pública e preserva
+os `Former Names` quando a fonte os publica.
 
 Para busca por nome e links do SoundCloud, instale `yt-dlp` alem do `ffmpeg`, ou
 defina `VOX_YTDLP=/caminho/para/yt-dlp`. O jukebox nao usa YouTube nem cookies;
@@ -350,6 +361,10 @@ ainda é construída com os primeiros downloads.
 O checkout já preserva o plano escolhido; o plano gratuito cria o servidor e
 vincula o dono à conta. Pix e cartão aguardam a configuração do Mercado Pago.
 
+Planos mensais atuais: 10 slots gratuitos; 50 slots por R$35; 100 por R$65;
+200 por R$130; e 300+ por R$180. O Rubinot é opcional e acrescenta R$80 ao
+plano escolhido — portanto, os totais com bot são R$115, R$145, R$210 e R$260.
+
 Antes do primeiro `tauri build`, gere os ícones a partir de um PNG 1024×1024:
 
 ```bash
@@ -438,7 +453,8 @@ quer de um protocolo binário.
 
 - Handshake com versão, senha e apelido único
 - Identidade por chave pública com desafio assinado
-- Grupos de servidor: convidado, moderador, administrador e dono
+- Grupos de servidor: Visitante, Spy, Membro, Elite, Suporte, Moderador, Admin,
+  Leader e Dono; somente Dono configura bot, grupos e permissões
 - Árvore de canais, entrar/criar/editar/remover, canais temporários e permanentes
 - Chat de canal, de servidor e privado
 - Mudo de microfone e de som, com estado replicado para todos

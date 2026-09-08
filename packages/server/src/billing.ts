@@ -4,7 +4,13 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { database } from './sqlite.js';
 
-export type PaidPlan = '50-basic' | '50-bot' | '100-basic' | '100-bot' | '254-basic' | '254-bot';
+export type PaidPlan =
+  | '50-basic' | '50-bot'
+  | '100-basic' | '100-bot'
+  | '200-basic' | '200-bot'
+  | '300-basic' | '300-bot'
+  /** Chaves antigas mantidas apenas para ler pedidos já salvos. */
+  | '254-basic' | '254-bot';
 export type BillingOrderStatus = 'pending' | 'approved' | 'failed';
 export type BillingOrderKind = 'initial' | 'renewal';
 
@@ -56,18 +62,22 @@ export interface MercadoPagoPayment {
   status_detail?: string;
 }
 
-const plans: Record<PaidPlan, Omit<BillingPlan, 'priceCents' | 'enabled'> & { priceCents: number }> = {
-  '50-basic': { key: '50-basic', label: '50 slots · sem bot', title: 'Vox 50', slots: 50, botEnabled: false, priceCents: config.mp50NoBotPriceCents },
-  '50-bot': { key: '50-bot', label: '50 slots · com Rubinot', title: 'Vox 50 Rubinot', slots: 50, botEnabled: true, priceCents: config.mp50BotPriceCents },
-  '100-basic': { key: '100-basic', label: '100 slots · sem bot', title: 'Vox 100', slots: 100, botEnabled: false, priceCents: config.mp100NoBotPriceCents },
-  '100-bot': { key: '100-bot', label: '100 slots · com Rubinot', title: 'Vox 100 Rubinot', slots: 100, botEnabled: true, priceCents: config.mp100BotPriceCents },
-  '254-basic': { key: '254-basic', label: '254 slots · sem bot', title: 'Vox 254', slots: 254, botEnabled: false, priceCents: config.mp254NoBotPriceCents },
-  '254-bot': { key: '254-bot', label: '254 slots · com Rubinot', title: 'Vox 254 Rubinot', slots: 254, botEnabled: true, priceCents: config.mp254BotPriceCents },
+const plans: Record<Exclude<PaidPlan, '254-basic' | '254-bot'>, Omit<BillingPlan, 'priceCents' | 'enabled'> & { priceCents: number }> = {
+  '50-basic': { key: '50-basic', label: '50 slots · sem bot', title: 'Vox 50', slots: 50, botEnabled: false, priceCents: config.mp50PriceCents },
+  '50-bot': { key: '50-bot', label: '50 slots · com Rubinot (+R$ 80)', title: 'Vox 50 Rubinot', slots: 50, botEnabled: true, priceCents: config.mp50PriceCents + config.mpBotAddonPriceCents },
+  '100-basic': { key: '100-basic', label: '100 slots · sem bot', title: 'Vox 100', slots: 100, botEnabled: false, priceCents: config.mp100PriceCents },
+  '100-bot': { key: '100-bot', label: '100 slots · com Rubinot (+R$ 80)', title: 'Vox 100 Rubinot', slots: 100, botEnabled: true, priceCents: config.mp100PriceCents + config.mpBotAddonPriceCents },
+  '200-basic': { key: '200-basic', label: '200 slots · sem bot', title: 'Vox 200', slots: 200, botEnabled: false, priceCents: config.mp200PriceCents },
+  '200-bot': { key: '200-bot', label: '200 slots · com Rubinot (+R$ 80)', title: 'Vox 200 Rubinot', slots: 200, botEnabled: true, priceCents: config.mp200PriceCents + config.mpBotAddonPriceCents },
+  '300-basic': { key: '300-basic', label: '300+ slots · sem bot', title: 'Vox 300+', slots: 300, botEnabled: false, priceCents: config.mp300PriceCents },
+  '300-bot': { key: '300-bot', label: '300+ slots · com Rubinot (+R$ 80)', title: 'Vox 300+ Rubinot', slots: 300, botEnabled: true, priceCents: config.mp300PriceCents + config.mpBotAddonPriceCents },
 };
 
-const legacyAliases: Record<string, PaidPlan> = {
+const legacyAliases: Record<string, Exclude<PaidPlan, '254-basic' | '254-bot'>> = {
   private: '50-bot',
   war: '100-bot',
+  '254-basic': '300-basic',
+  '254-bot': '300-bot',
 };
 
 export function billingPlans(): BillingPlan[] {
@@ -78,7 +88,7 @@ export function billingPlans(): BillingPlan[] {
 }
 
 export function getBillingPlan(value: string): BillingPlan | undefined {
-  const plan = plans[legacyAliases[value] ?? value as PaidPlan];
+  const plan = plans[legacyAliases[value] ?? value as Exclude<PaidPlan, '254-basic' | '254-bot'>];
   if (!plan) return undefined;
   return {
     ...plan,

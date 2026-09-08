@@ -80,7 +80,7 @@ interface Channel {
   members: Set<Session>;
 }
 
-// Permissoes agora vem de hub.permissionFor(action). Owner ajusta via UI.
+// Permissoes agora vem de hub.permissionFor(action). Dono ajusta via UI.
 
 export class Hub {
   private readonly channels = new Map<number, Channel>();
@@ -183,7 +183,7 @@ export class Hub {
   }
 
   private setPreset(s: Session, presetId: string, custom: string): void {
-    if (s.group < Group.Owner) return this.fail(s, FailureCode.NotPermitted, 'so o owner troca o preset');
+    if (s.group < Group.Dono) return this.fail(s, FailureCode.NotPermitted, 'so o dono troca o preset');
 
     if (custom) {
       let parsed: ServerPreset | null = null;
@@ -740,24 +740,23 @@ export class Hub {
       }
 
       case Op.SetClientGroup: {
-        const target = this.targetFor(s, m.clientId, this.permissionFor(PermissionAction.SetGroup));
+        // Atribuir cargos e uma operacao de administracao do servidor: nem
+        // Admin nem Leader podem criar, rebaixar ou promover grupos.
+        const target = this.targetFor(s, m.clientId, Group.Dono);
         if (!target) break;
-        // Nunca promove acima do proprio nivel.
-        if (m.group > s.group) {
-          return this.fail(s, FailureCode.NotPermitted, 'grupo acima do seu');
-        }
-        // Promover para o proprio nivel so e permitido para Owner (co-donos).
-        // Admin nao pode criar outro Admin — evita cascata acidental.
-        if (m.group === s.group && s.group !== Group.Owner) {
-          return this.fail(s, FailureCode.NotPermitted, 'nao pode promover ao seu proprio nivel');
+        if (!Number.isInteger(m.group) || m.group < Group.Guest || m.group > Group.Dono) {
+          return this.fail(s, FailureCode.Malformed, 'grupo invalido');
         }
         this.assignGroup(target, m.group);
         break;
       }
 
       case Op.SetGroupDef: {
-        if (s.group < Group.Owner) {
-          return this.fail(s, FailureCode.NotPermitted, 'apenas donos podem editar grupos');
+        if (s.group < Group.Dono) {
+          return this.fail(s, FailureCode.NotPermitted, 'apenas o dono pode editar grupos');
+        }
+        if (!Number.isInteger(m.group) || m.group < Group.Guest || m.group > Group.Dono) {
+          return this.fail(s, FailureCode.Malformed, 'grupo invalido');
         }
         const def: GroupDef = { id: m.group, name: clean(m.name, 32) || 'Grupo', icon: m.icon, color: clean(m.color, 9) };
         const idx = this.groupDefs.findIndex((g) => g.id === m.group);
@@ -769,7 +768,7 @@ export class Hub {
       }
 
       case Op.EditServer: {
-        if (!this.allow(s, Group.Owner)) break;
+        if (!this.allow(s, Group.Dono)) break;
         this.settings.name = clean(m.name, 64) || this.settings.name;
         this.settings.motd = clean(m.motd, 256);
         // A capacidade pertence ao plano e só pode ser alterada pelo painel
@@ -806,12 +805,12 @@ export class Hub {
         break;
 
       case Op.GetBotState:
-        if (!this.allow(s, Group.Owner)) break;
+        if (!this.allow(s, Group.Dono)) break;
         s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
         break;
 
       case Op.UpdateBotConfig: {
-        if (!this.allow(s, Group.Owner)) break;
+        if (!this.allow(s, Group.Dono)) break;
         const bc = this.botConfig;
         bc.world = clean(m.world, 32);
         bc.guildName = clean(m.guildName, 64);
@@ -836,7 +835,7 @@ export class Hub {
       }
 
       case Op.BotControl: {
-        if (!this.allow(s, Group.Owner)) break;
+        if (!this.allow(s, Group.Dono)) break;
         this.applyBotControl(s, m.action, m.name);
         break;
       }
@@ -860,8 +859,14 @@ export class Hub {
         break;
 
       case Op.SetPermission: {
-        if (s.group < Group.Owner) {
-          return this.fail(s, FailureCode.NotPermitted, 'apenas donos configuram permissoes');
+        if (s.group < Group.Dono) {
+          return this.fail(s, FailureCode.NotPermitted, 'apenas o dono configura permissoes');
+        }
+        if (!(m.action in DEFAULT_PERMISSIONS)
+          || !Number.isInteger(m.minGroup)
+          || m.minGroup < Group.Guest
+          || m.minGroup > Group.Dono) {
+          return this.fail(s, FailureCode.Malformed, 'permissao ou grupo invalido');
         }
         this.setPermission(m.action, m.minGroup);
         break;
@@ -1030,7 +1035,7 @@ export class Hub {
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
     s.send(encodeServerMessage({ t: Op.Permissions, entries: this.permissionList() }));
     s.send(encodeServerMessage(this.presetStateMessage()));
-    if (s.group >= Group.Owner) {
+    if (s.group >= Group.Dono) {
       s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
     }
     const playerInfos = this.playerInfoList();
@@ -1069,22 +1074,22 @@ export class Hub {
   private groupFor(fingerprint: string, adminLogin = false): Group {
     if (adminLogin) {
       const known = this.groups.get(fingerprint);
-      if (known !== undefined && known >= Group.Owner) return known;
-      this.groups.set(fingerprint, Group.Owner);
+      if (known !== undefined && known >= Group.Dono) return known;
+      this.groups.set(fingerprint, Group.Dono);
       this.deps.onChanged();
       console.log(`[vox] servidor ${this.settings.id}: ${fingerprint.slice(0, 12)} virou dono (admin login)`);
-      return Group.Owner;
+      return Group.Dono;
     }
 
     const known = this.groups.get(fingerprint);
     if (known !== undefined) return known;
 
-    for (const g of this.groups.values()) if (g === Group.Owner) return Group.Guest;
+    for (const g of this.groups.values()) if (g === Group.Dono) return Group.Guest;
 
-    this.groups.set(fingerprint, Group.Owner);
+    this.groups.set(fingerprint, Group.Dono);
     this.deps.onChanged();
     console.log(`[vox] servidor ${this.settings.id}: ${fingerprint.slice(0, 12)} virou dono`);
-    return Group.Owner;
+    return Group.Dono;
   }
 
   private assignGroup(target: Session, group: Group): void {
@@ -1135,7 +1140,7 @@ export class Hub {
     return target;
   }
 
-  /** Move permite mesmo nivel: Owner move Owner, Admin move Admin. */
+  /** Move permite mesmo nivel: Dono move Dono, Admin move Admin. */
   private targetForMove(actor: Session, clientId: number): Session | null {
     if (!this.allow(actor, this.permissionFor(PermissionAction.Move))) return null;
     const target = this.sessions.get(clientId);
@@ -1331,7 +1336,7 @@ export class Hub {
     this.deps.onChanged();
   }
 
-  private moveChannel(s: Session, channelId: number, parentId: number): void {
+  private moveChannel(s: Session, channelId: number, parentId: number, beforeChannelId = NO_CHANNEL): void {
     const channel = this.channels.get(channelId);
     if (!channel) return this.fail(s, FailureCode.ChannelNotFound, 'canal inexistente');
     if (channel.info.flags & ChannelFlags.Default) {
@@ -1344,13 +1349,40 @@ export class Hub {
       return this.fail(s, FailureCode.NotPermitted, 'um canal nao pode ficar dentro dele mesmo');
     }
 
-    const siblings = [...this.channels.values()].filter(
-      (candidate) => candidate.info.parentId === parentId && candidate.info.id !== channelId,
-    );
-    const nextOrder = siblings.reduce((max, candidate) => Math.max(max, candidate.info.order), -1) + 1;
-    channel.info.parentId = parentId;
-    channel.info.order = nextOrder;
-    this.broadcast({ t: Op.ChannelUpdate, channel: channel.info });
+    const before = beforeChannelId === NO_CHANNEL ? undefined : this.channels.get(beforeChannelId);
+    if (beforeChannelId !== NO_CHANNEL && (!before || before.info.parentId !== parentId || before.info.id === channelId)) {
+      return this.fail(s, FailureCode.NotPermitted, 'posicao do canal invalida');
+    }
+
+    const oldParentId = channel.info.parentId;
+    const oldSiblings = [...this.channels.values()]
+      .filter((candidate) => candidate.info.parentId === oldParentId && candidate.info.id !== channelId)
+      .sort((a, b) => a.info.order - b.info.order || a.info.id - b.info.id);
+    const newSiblings = oldParentId === parentId
+      ? oldSiblings
+      : [...this.channels.values()]
+        .filter((candidate) => candidate.info.parentId === parentId && candidate.info.id !== channelId)
+        .sort((a, b) => a.info.order - b.info.order || a.info.id - b.info.id);
+
+    const insertionIndex = before
+      ? newSiblings.findIndex((candidate) => candidate.info.id === before.info.id)
+      : newSiblings.length;
+    if (insertionIndex < 0) return this.fail(s, FailureCode.NotPermitted, 'posicao do canal invalida');
+
+    const reordered = [...newSiblings];
+    reordered.splice(insertionIndex, 0, channel);
+
+    const broadcastIfChanged = (candidate: Channel, nextParentId: number, nextOrder: number): void => {
+      if (candidate.info.parentId === nextParentId && candidate.info.order === nextOrder) return;
+      candidate.info.parentId = nextParentId;
+      candidate.info.order = nextOrder;
+      this.broadcast({ t: Op.ChannelUpdate, channel: candidate.info });
+    };
+
+    if (oldParentId !== parentId) {
+      oldSiblings.forEach((candidate, index) => broadcastIfChanged(candidate, oldParentId, index));
+    }
+    reordered.forEach((candidate, index) => broadcastIfChanged(candidate, parentId, index));
     this.deps.onChanged();
   }
 
@@ -1525,7 +1557,7 @@ export class Hub {
   broadcastBotState(): void {
     const frame = encodeServerMessage({ t: Op.BotState, state: this.botState() });
     for (const s of this.sessions.values()) {
-      if (s.group >= Group.Owner) s.send(frame);
+      if (s.group >= Group.Dono) s.send(frame);
     }
   }
 
@@ -1685,7 +1717,7 @@ export class Hub {
 
   private handleBotCommand(s: Session, command: string, args: string[]): void {
     const cmd = command.toLowerCase();
-    const minGroup = this.getRequiredGroupForBotCommand(cmd);
+    const minGroup = this.getRequiredGroupForBotCommand(cmd, args);
 
     if (s.group < minGroup) {
       this.sendBotResult(s, false, `permite: ${GROUP_NAMES[minGroup]}+`);
@@ -1926,32 +1958,34 @@ export class Hub {
         if (args[0] !== this.settings.adminPassword) {
           return this.sendBotResult(s, false, 'senha incorreta.');
         }
-        if (s.group >= Group.Owner) {
+        if (s.group >= Group.Dono) {
           return this.sendBotResult(s, false, 'voce ja e dono.');
         }
-        this.assignGroup(s, Group.Owner);
+        this.assignGroup(s, Group.Dono);
         this.sendBotResult(s, true, 'voce agora e dono do servidor.');
         console.log(`[vox] servidor ${this.settings.id}: ${s.fingerprint.slice(0, 12)} virou dono via /owner`);
         break;
       }
-      case 'hunt': {
-        if (!this.rubinot) return this.sendBotResult(s, false, 'bot nao esta ativo');
-        if (args.length < 1) return this.sendBotResult(s, false, 'uso: hunt <nome>');
-        const name = args.join(' ');
-        this.rubinot.addHunted(name);
-        this.sendBotResult(s, true, `${name} adicionado a hunted list`);
-        break;
-      }
-      case 'unhunt': {
-        if (!this.rubinot) return this.sendBotResult(s, false, 'bot nao esta ativo');
-        if (args.length < 1) return this.sendBotResult(s, false, 'uso: unhunt <nome>');
-        const name = args.join(' ');
-        this.rubinot.removeHunted(name);
-        this.sendBotResult(s, true, `${name} removido da hunted list`);
-        break;
-      }
+      case 'hunt':
+      case 'unhunt':
       case 'hunted': {
         if (!this.rubinot) return this.sendBotResult(s, false, 'bot nao esta ativo');
+        const requestedSubcommand = cmd === 'hunt' ? 'add' : cmd === 'unhunt' ? 'remove' : (args[0]?.toLowerCase() ?? 'list');
+        const subcommand = requestedSubcommand === 'del' || requestedSubcommand === 'delete'
+          ? 'remove'
+          : requestedSubcommand;
+        if (subcommand === 'add' || subcommand === 'remove') {
+          const nameArgs = cmd === 'hunted' ? args.slice(1) : args;
+          if (nameArgs.length < 1) return this.sendBotResult(s, false, 'uso: hunted add <nome> ou hunted remove <nome>');
+          const name = nameArgs.join(' ');
+          if (subcommand === 'add') this.rubinot.addHunted(name);
+          else this.rubinot.removeHunted(name);
+          this.sendBotResult(s, true, `${name} ${subcommand === 'add' ? 'adicionado a' : 'removido da'} hunted list`);
+          break;
+        }
+        if (cmd === 'hunted' && subcommand !== 'list') {
+          return this.sendBotResult(s, false, 'uso: hunted [list] ou hunted add/remove <nome>');
+        }
         const list = this.rubinot.huntedList;
         if (list.length === 0) return this.sendBotResult(s, true, 'hunted list vazia');
         this.sendBotResult(s, true, `hunted list (${list.length}):\n${list.join('\n')}`);
@@ -1962,7 +1996,7 @@ export class Hub {
     }
   }
 
-  private getRequiredGroupForBotCommand(cmd: string): Group {
+  private getRequiredGroupForBotCommand(cmd: string, args: string[] = []): Group {
     const map: Record<string, PermissionAction> = {
       poke: PermissionAction.BotPoke,
       masspoke: PermissionAction.BotMassPoke,
@@ -1985,8 +2019,14 @@ export class Hub {
     };
     // /owner e caso especial: qualquer um pode digitar (a senha e que autoriza).
     if (cmd === 'owner') return Group.Guest;
+    // Estes comandos alteram o estado/configuracao do bot; nao sao comandos
+    // de moderacao e, portanto, nao seguem a matriz operacional abaixo.
+    if (cmd === 'afk' || cmd === 'hunt' || cmd === 'unhunt') return Group.Dono;
+    if (cmd === 'hunted' && ['add', 'remove', 'del', 'delete'].includes((args[0] ?? '').toLowerCase())) {
+      return Group.Dono;
+    }
     const action = map[cmd];
-    return action !== undefined ? this.permissionFor(action) : Group.Owner;
+    return action !== undefined ? this.permissionFor(action) : Group.Dono;
   }
 
   private findClientByNick(nick: string): Session | undefined {

@@ -319,7 +319,7 @@ async function main(): Promise<void> {
   await Promise.all([alice.ready(), bob.ready()]);
 
   // Alice entra primeiro de proposito: num servidor novo, o primeiro a provar
-  // identidade vira dono, e e isso que torna o teste de moderacao previsivel.
+  // identidade vira Dono, e e isso que torna o teste de moderacao previsivel.
   await alice.hello();
   await until('alice completa o handshake', () => alice.id > 0);
   await bob.hello();
@@ -463,7 +463,7 @@ async function main(): Promise<void> {
   const restoredFromAfk = await until('desmute retorna ao canal anterior', () => alice.channelId === channelBeforeAfk);
   check('desmutar retorna ao canal anterior', restoredFromAfk);
 
-  if (alice.group >= Group.Owner) {
+  if (alice.group >= Group.Dono) {
     alice.send({ t: Op.SetClientGroup, clientId: bob.id, group: Group.Spy });
     const spyAssigned = await until('bob recebe grupo Spy', () => bob.clients.get(bob.id)?.group === Group.Spy);
     check('grupo Spy foi aplicado', spyAssigned);
@@ -488,7 +488,7 @@ async function main(): Promise<void> {
       check('Spy pode ser puxado por moderador', spyPulled);
     }
   } else {
-    console.log('   --    alice nao e owner; testes de Spy/pull foram pulados');
+    console.log('   --    alice nao e Dono; testes de Spy/pull foram pulados');
   }
 
   // --- servidores virtuais e permissoes ------------------------------------
@@ -505,7 +505,7 @@ async function main(): Promise<void> {
   check('servidor virtual inexistente e recusado no upgrade', ghost);
 
   // Carol e sempre convidada: alice chegou antes e, num servidor novo, levou o
-  // grupo de dono. A recusa abaixo e o teste que vale em qualquer estado.
+  // grupo de Dono. A recusa abaixo e o teste que vale em qualquer estado.
   const failuresBefore = carol.failures.length;
   carol.send({ t: Op.KickClient, clientId: bob.id, reason: 'teste' });
   await until('convidado recebe recusa', () => carol.failures.length > failuresBefore);

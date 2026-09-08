@@ -14,7 +14,7 @@ import { DeathTracker, type DeathEvent } from './trackers/deaths.js';
 import { OnlineTracker, type OnlineEvent } from './trackers/online.js';
 import { rubinotProvider } from './scrapers/rubinot.js';
 import { normalizeVocation } from './scrapers/provider.js';
-import type { GameProvider, ProviderCharacter } from './scrapers/provider.js';
+import type { GameProvider, ProviderCharacter, ProviderTransfer } from './scrapers/provider.js';
 
 // ---------------------------------------------------------------- config --
 
@@ -111,6 +111,7 @@ const INFO_CHANNEL_NAMES = {
   hunted: 'Hunted List Online',
   levelUp: 'UP Level',
   deathList: 'DeathList',
+  transfers: 'Transfers',
 } as const;
 
 const VOCATION_ORDER = ['ED', 'EK', 'MS', 'RP', 'MK', ''] as const;
@@ -144,9 +145,10 @@ export class RubinotBot {
   private readonly pendingLogins: OnlineEvent[] = [];
   private readonly pendingLogouts: OnlineEvent[] = [];
   private nextPresenceSummaryAt = 0;
-  private infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0 };
+  private infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0, transfers: 0 };
   private readonly levelUpLog: LevelUpRecord[] = [];
   private readonly deathLog: DeathRecord[] = [];
+  private transferLog: ProviderTransfer[] = [];
   private reportDay = '';
 
   /**
@@ -236,12 +238,16 @@ export class RubinotBot {
       hunted: this.hub.ensureChannel(INFO_CHANNEL_NAMES.hunted, botChannelId),
       levelUp: this.hub.ensureChannel(INFO_CHANNEL_NAMES.levelUp, botChannelId),
       deathList: this.hub.ensureChannel(INFO_CHANNEL_NAMES.deathList, botChannelId),
+      transfers: this.hub.ensureChannel(INFO_CHANNEL_NAMES.transfers, botChannelId),
     };
 
     await this.syncAllGuilds(signal);
 
-    await this.deaths.poll(signal);
-    await this.online.poll(signal);
+    await Promise.all([
+      this.deaths.poll(signal),
+      this.online.poll(signal),
+      this.refreshTransfers(signal),
+    ]);
     if (signal.aborted) return;
     this.refreshPlayerInfos();
     this.refreshInfoChannels();
@@ -288,9 +294,10 @@ export class RubinotBot {
     this.pendingLogins.length = 0;
     this.pendingLogouts.length = 0;
     this.nextPresenceSummaryAt = 0;
-    this.infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0 };
+    this.infoChannelIds = { hunted: 0, levelUp: 0, deathList: 0, transfers: 0 };
     this.levelUpLog.length = 0;
     this.deathLog.length = 0;
+    this.transferLog = [];
     this.reportDay = '';
     this.startError = '';
     if (newCfg.enabled && newCfg.world) {
@@ -340,6 +347,7 @@ export class RubinotBot {
       const [deathEvents, onlineEvents] = await Promise.all([
         this.deaths.poll(this.ac.signal),
         this.online.poll(this.ac.signal),
+        this.refreshTransfers(this.ac.signal),
       ]);
 
       for (const ev of deathEvents) this.onDeath(ev);
@@ -549,6 +557,24 @@ export class RubinotBot {
     this.hub.setChannelTopic(this.infoChannelIds.hunted, this.renderHuntedOnline(now));
     this.hub.setChannelTopic(this.infoChannelIds.levelUp, this.renderLevelUps(now));
     this.hub.setChannelTopic(this.infoChannelIds.deathList, this.renderDeathList(now));
+    this.hub.setChannelTopic(this.infoChannelIds.transfers, this.renderTransfers(now));
+  }
+
+  private async refreshTransfers(signal: AbortSignal): Promise<void> {
+    if (!this.provider.fetchTransfers) {
+      this.transferLog = [];
+      return;
+    }
+    try {
+      const transfers = await this.provider.fetchTransfers(this.cfg.world, signal);
+      this.transferLog = transfers
+        .filter((transfer) => transfer.level >= 300)
+        .sort((a, b) => b.transferredAt - a.transferredAt)
+        .slice(0, MAX_REPORT_ROWS);
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw err;
+      console.error('[bot] falha ao atualizar transfers:', (err as Error).message);
+    }
   }
 
   private renderHuntedOnline(now: number): string {
@@ -626,6 +652,25 @@ export class RubinotBot {
       } else {
         lines.push(`[${formatTime(entry.at)}] ${side} ${entry.killer} matou ${entry.victim} (lvl ${entry.level})`);
       }
+    }
+    return lines.join('\n');
+  }
+
+  private renderTransfers(now: number): string {
+    const lines = [
+      'TRANSFERS RECENTES',
+      `Destino: ${this.cfg.world} · level mínimo 300`,
+      `Atualizado ${formatDateTime(now)} (BR)`,
+      '',
+    ];
+    if (this.transferLog.length === 0) {
+      lines.push('Nenhum transfer recente encontrado.');
+      return lines.join('\n');
+    }
+    for (const transfer of this.transferLog) {
+      lines.push(
+        `[${formatDateTime(transfer.transferredAt)}] ${transfer.player} (lvl ${transfer.level}) · ${transfer.fromWorld} → ${transfer.toWorld}`,
+      );
     }
     return lines.join('\n');
   }

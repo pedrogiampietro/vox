@@ -26,7 +26,12 @@ export type ClientMessage =
   | { t: Op.CreateChannel; name: string; parentId: number; maxClients: number; password: string }
   | { t: Op.DeleteChannel; channelId: number }
   | { t: Op.EditChannel; channelId: number; name: string; topic: string; maxClients: number }
-  | { t: Op.MoveChannel; channelId: number; parentId: number }
+  /**
+   * Move um canal para uma nova arvore. `beforeChannelId` e opcional para
+   * manter compatibilidade com clientes antigos: ausente/0 significa fim da
+   * lista de irmaos.
+   */
+  | { t: Op.MoveChannel; channelId: number; parentId: number; beforeChannelId?: number }
   | { t: Op.ChatSend; scope: ChatScope; targetId: number; text: string }
   | { t: Op.SetSelfState; flags: number; nickname?: string }
   | { t: Op.KickClient; clientId: number; reason: string }
@@ -335,6 +340,7 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
       break;
     case Op.MoveChannel:
       w.u16(m.channelId).u16(m.parentId);
+      if (m.beforeChannelId !== undefined) w.u16(m.beforeChannelId);
       break;
     case Op.ChatSend:
       w.u8(m.scope).u16(m.targetId).str(m.text);
@@ -447,7 +453,12 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
     case Op.EditChannel:
       return { t, channelId: r.u16(), name: r.str(), topic: r.str(), maxClients: r.u16() };
     case Op.MoveChannel:
-      return { t, channelId: r.u16(), parentId: r.u16() };
+      return {
+        t,
+        channelId: r.u16(),
+        parentId: r.u16(),
+        beforeChannelId: r.remaining >= 2 ? r.u16() : 0,
+      };
     case Op.ChatSend:
       return { t, scope: r.u8() as ChatScope, targetId: r.u16(), text: r.str() };
     case Op.SetSelfState: {

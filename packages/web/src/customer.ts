@@ -466,8 +466,12 @@ function planLabel(plan: string): string {
     '50-bot': 'Vox 50 · Rubinot',
     '100-basic': 'Vox 100 · sem bot',
     '100-bot': 'Vox 100 · Rubinot',
-    '254-basic': 'Vox 254 · sem bot',
-    '254-bot': 'Vox 254 · Rubinot',
+    '200-basic': 'Vox 200 · sem bot',
+    '200-bot': 'Vox 200 · Rubinot',
+    '300-basic': 'Vox 300+ · sem bot',
+    '300-bot': 'Vox 300+ · Rubinot',
+    '254-basic': 'Vox 300+ · sem bot (plano antigo)',
+    '254-bot': 'Vox 300+ · Rubinot (plano antigo)',
     community: 'Vox Comunidade',
   };
   return labels[plan] ?? plan;

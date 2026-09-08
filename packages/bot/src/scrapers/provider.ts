@@ -45,6 +45,17 @@ export interface ProviderCharacter {
   vocation: string;
   world: string;
   online: boolean;
+  /** Nomes anteriores publicados pela fonte, quando disponíveis. */
+  formerNames?: string[];
+}
+
+export interface ProviderTransfer {
+  player: string;
+  level: number;
+  fromWorld: string;
+  toWorld: string;
+  /** Epoch em milissegundos. */
+  transferredAt: number;
 }
 
 export interface GameProvider {
@@ -73,6 +84,9 @@ export interface GameProvider {
 
   /** null quando o char nao existe ou a pagina nao deu os dados minimos. */
   fetchCharacter(name: string, signal?: AbortSignal): Promise<ProviderCharacter | null>;
+
+  /** Transfers recentes para o mundo configurado, quando a fonte publica isso. */
+  fetchTransfers?(world: string, signal?: AbortSignal): Promise<ProviderTransfer[]>;
 
   /** Libera conexoes de longa duracao. Chamado no stop do bot. */
   close(): Promise<void>;

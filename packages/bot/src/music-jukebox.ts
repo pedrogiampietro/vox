@@ -6,6 +6,7 @@ import {
   ChannelFlags,
   ChatScope,
   FrameKind,
+  NO_CHANNEL,
   Op,
   PROTOCOL_VERSION,
   VoiceFlags,
@@ -43,11 +44,45 @@ interface ResolvedTrack {
   title: string;
 }
 
-const queue: TrackRequest[] = [];
-let current: TrackRequest | null = null;
+interface ChannelSession {
+  channelId: number;
+  queue: TrackRequest[];
+  current: TrackRequest | null;
+  player: VoxConnection | null;
+  activePlayer: MusicPlayer | null;
+  cancelled: boolean;
+  cancelVersion: number;
+}
+
+const sessions = new Map<number, ChannelSession>();
 let controller: VoxConnection;
-let player: VoxConnection | null = null;
-let activePlayer: MusicPlayer | null = null;
+
+function getSession(channelId: number): ChannelSession {
+  let session = sessions.get(channelId);
+  if (!session) {
+    session = {
+      channelId,
+      queue: [],
+      current: null,
+      player: null,
+      activePlayer: null,
+      cancelled: false,
+      cancelVersion: 0,
+    };
+    sessions.set(channelId, session);
+  }
+  return session;
+}
+
+function requestedChannelId(senderId: number): number {
+  return controller.clients.get(senderId)?.channelId ?? NO_CHANNEL;
+}
+
+function releaseEmptySession(session: ChannelSession): void {
+  if (!session.current && !session.activePlayer && session.queue.length === 0) {
+    sessions.delete(session.channelId);
+  }
+}
 
 async function onControllerMessage(msg: ServerMessage): Promise<void> {
   if (msg.t === Op.Snapshot) {
@@ -74,6 +109,7 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
     return;
   }
   const isDm = msg.scope === ChatScope.Private;
+  const channelId = requestedChannelId(msg.senderId);
 
   const body = msg.text.trim();
   if (!body) return;
@@ -89,38 +125,47 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
   };
 
   const lower = body.toLowerCase();
+  const existingSession = channelId ? sessions.get(channelId) : undefined;
   if (lower === 'fila' || lower === 'queue') {
-    reply(queue.length ? queue.map((t, i) => `${i + 1}. ${t.query} - ${t.requestedByName}`).join('\n') : 'fila vazia');
+    reply(existingSession?.queue.length
+      ? existingSession.queue.map((t, i) => `${i + 1}. ${t.query} - ${t.requestedByName}`).join('\n')
+      : 'fila vazia');
     return;
   }
   if (lower === 'skip' || lower === 'pular') {
-    if (!activePlayer) reply('nada tocando agora');
-    else activePlayer.stop(true);
+    if (!existingSession?.activePlayer) reply('nada tocando agora');
+    else existingSession.activePlayer.stop(true);
     return;
   }
   if (lower === 'stop' || lower === 'parar') {
-    queue.length = 0;
-    if (activePlayer) activePlayer.stop(true);
+    if (existingSession) {
+      existingSession.cancelled = true;
+      existingSession.cancelVersion++;
+      existingSession.queue.length = 0;
+      if (existingSession.activePlayer) existingSession.activePlayer.stop(true);
+      else if (existingSession.player) existingSession.player.close('parar');
+      releaseEmptySession(existingSession);
+    }
     reply('fila limpa');
     return;
   }
 
-  const requester = controller.clients.get(msg.senderId);
-  const channelId = requester?.channelId ?? 0;
   if (!channelId) {
     reply(`nao achei o canal de ${msg.senderName}`);
     return;
   }
 
-  queue.push({
+  const session = getSession(channelId);
+  session.cancelled = false;
+  session.queue.push({
     query: body,
     requestedBy: msg.senderId,
     requestedByName: msg.senderName,
     channelId,
     viaDm: isDm,
   });
-  reply(activePlayer ? `adicionado na fila: ${body}` : `tocando agora: ${body}`);
-  void pumpQueue();
+  reply(session.activePlayer || session.current ? `adicionado na fila: ${body}` : `tocando agora: ${body}`);
+  void pumpQueue(session);
 }
 
 function joinBotChannel(): void {
@@ -129,10 +174,15 @@ function joinBotChannel(): void {
   if (id && controller.self?.channelId !== id) controller.send({ t: Op.JoinChannel, channelId: id, password: '' });
 }
 
-async function pumpQueue(): Promise<void> {
-  if (activePlayer || current) return;
-  current = queue.shift() ?? null;
-  if (!current) return;
+async function pumpQueue(session: ChannelSession): Promise<void> {
+  if (session.activePlayer || session.current) return;
+  session.current = session.queue.shift() ?? null;
+  if (!session.current) {
+    releaseEmptySession(session);
+    return;
+  }
+  const current = session.current;
+  const cancelVersion = session.cancelVersion;
 
   let track: ResolvedTrack;
   try {
@@ -140,18 +190,56 @@ async function pumpQueue(): Promise<void> {
   } catch (err) {
     const raw = trimError(err);
     const friendly = friendlyResolveError(current.query, raw);
-    if (current.viaDm) {
+    if (session.cancelVersion === cancelVersion && !session.cancelled && current.viaDm) {
       controller.send({ t: Op.ChatSend, scope: ChatScope.Private, targetId: current.requestedBy, text: friendly });
-    } else {
+    } else if (session.cancelVersion === cancelVersion && !session.cancelled) {
       announce(friendly);
     }
-    current = null;
-    void pumpQueue();
+    session.current = null;
+    if (!session.cancelled) void pumpQueue(session);
+    else releaseEmptySession(session);
     return;
   }
 
-  player = new VoxConnection('music player', () => {});
-  await player.connect();
+  if (session.cancelVersion !== cancelVersion || session.cancelled || session.current !== current) {
+    session.current = null;
+    if (!session.cancelled) void pumpQueue(session);
+    else releaseEmptySession(session);
+    return;
+  }
+
+  let player: VoxConnection;
+  player = new VoxConnection(`music-${session.channelId}`, () => {}, () => {
+    if (session.player !== player) return;
+    console.error(`[jukebox] player do canal ${session.channelId} perdeu a conexão`);
+    session.player = null;
+    session.activePlayer?.stop(false);
+    if (!session.activePlayer) {
+      session.current = null;
+      void pumpQueue(session);
+    }
+  });
+  session.player = player;
+  try {
+    await player.connect();
+  } catch (err) {
+    session.player = null;
+    session.current = null;
+    if (session.cancelVersion === cancelVersion && !session.cancelled) {
+      announce(`nao consegui conectar o player do canal: ${trimError(err)}`);
+    }
+    if (!session.cancelled) void pumpQueue(session);
+    else releaseEmptySession(session);
+    return;
+  }
+  if (session.cancelVersion !== cancelVersion || session.cancelled || session.current !== current) {
+    player.close('cancelado');
+    session.player = null;
+    session.current = null;
+    if (!session.cancelled) void pumpQueue(session);
+    else releaseEmptySession(session);
+    return;
+  }
   player.send({ t: Op.JoinChannel, channelId: current.channelId, password: '' });
 
   // Anuncia o que esta tocando: DM para quem pediu por DM, senao no canal `bot`.
@@ -163,14 +251,15 @@ async function pumpQueue(): Promise<void> {
     announce(announceMsg);
   }
 
-  activePlayer = new MusicPlayer(track, player, () => {
-    activePlayer = null;
+  session.activePlayer = new MusicPlayer(track, player, session, () => {
+    session.activePlayer = null;
     player?.close('fim');
-    player = null;
-    current = null;
-    void pumpQueue();
+    if (session.player === player) session.player = null;
+    session.current = null;
+    if (!session.cancelled && session.queue.length > 0) void pumpQueue(session);
+    else releaseEmptySession(session);
   });
-  activePlayer.start();
+  session.activePlayer.start();
 }
 
 function announce(text: string): void {
@@ -311,6 +400,7 @@ class VoxConnection {
   private seq = 0;
   private readonly ready: Promise<void>;
   private resolveReady: (() => void) | null = null;
+  private rejectReady: ((reason?: unknown) => void) | null = null;
   private identity: Awaited<ReturnType<typeof createIdentity>> | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private closed = false;
@@ -318,9 +408,11 @@ class VoxConnection {
   constructor(
     private readonly nickname: string,
     private readonly onMessage: (msg: ServerMessage) => void,
+    private readonly onUnexpectedClose?: () => void,
   ) {
-    this.ready = new Promise((resolve) => {
+    this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
+      this.rejectReady = reject;
     });
   }
 
@@ -359,8 +451,14 @@ class VoxConnection {
       if (this.heartbeat) clearInterval(this.heartbeat);
       this.heartbeat = null;
       if (!this.closed) {
-        console.error(`[jukebox] ${this.nickname}: encerrando processo para systemd reiniciar limpo`);
-        process.exit(1);
+        const error = new Error(`${this.nickname}: conexão encerrada inesperadamente`);
+        this.rejectReady?.(error);
+        this.rejectReady = null;
+        if (this.onUnexpectedClose) this.onUnexpectedClose();
+        else {
+          console.error(`[jukebox] ${this.nickname}: encerrando processo para systemd reiniciar limpo`);
+          process.exit(1);
+        }
       }
     });
     // Heartbeat: server drops us after ~30s idle. 10s garante margem antes do
@@ -431,6 +529,8 @@ class VoxConnection {
 
   close(reason: string): void {
     this.closed = true;
+    this.rejectReady?.(new Error(`${this.nickname}: ${reason}`));
+    this.rejectReady = null;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.ws?.close(1000, reason);
@@ -461,6 +561,7 @@ class MusicPlayer {
   constructor(
     private readonly track: ResolvedTrack,
     private readonly conn: VoxConnection,
+    private readonly session: ChannelSession,
     private readonly onDone: () => void,
   ) {}
 
@@ -560,7 +661,9 @@ class MusicPlayer {
     }
     if (now - this.aloneSince >= 10_000) {
       console.log('[jukebox] canal vazio ha 10s, encerrando faixa');
-      queue.length = 0; // limpa fila tambem — nao adianta tocar pra ninguem
+      this.session.queue.length = 0; // limpa somente a fila deste canal
+      this.session.cancelled = true;
+      this.session.cancelVersion++;
       this.stop(false);
     }
   }

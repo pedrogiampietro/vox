@@ -381,7 +381,7 @@ export class AdminApi {
     if (action === '/group' && method === 'POST') {
       const body = await readJson(req);
       const group = int(body.group, Group.Guest);
-      if (group < Group.Guest || group > Group.Owner) {
+      if (group < Group.Guest || group > Group.Dono) {
         return send(res, 400, { error: 'grupo invalido' });
       }
       const fingerprint = str(body.fingerprint);

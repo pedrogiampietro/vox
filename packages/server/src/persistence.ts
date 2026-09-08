@@ -240,9 +240,13 @@ function normalizeBotConfig(raw: unknown): StoredBotConfig {
 function normalize(s: Partial<StoredServer>): StoredServer {
   const base = defaultServer(s.id ?? 1);
   const rawGroups = s.groups ?? {};
-  const migratedGroups = migrateGroupValues(rawGroups);
-  const migratedGroupDefs = migrateGroupDefIds(s.groupDefs);
-  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: migratedGroups, bans: s.bans ?? [], groupDefs: migratedGroupDefs.length ? migratedGroupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig), descriptions: normalizeDescriptions(s.descriptions), permissions: normalizePermissions(s.permissions), ...normalizePreset(s.presetId, s.customPreset) };
+  // Antes do grupo Dono, o id 7 era o antigo dono/Leader. Como agora 7 e
+  // Leader e 8 e Dono, a presenca do id 8 nos defs funciona como marcador de
+  // que o arquivo ja passou por esta migracao.
+  const preDono = !Array.isArray(s.groupDefs) || !s.groupDefs.some((g) => g?.id === Group.Dono);
+  const migratedGroups = migrateGroupValues(rawGroups, preDono);
+  const migratedGroupDefs = migrateGroupDefIds(s.groupDefs, preDono);
+  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: migratedGroups, bans: s.bans ?? [], groupDefs: migratedGroupDefs.length ? migratedGroupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig), descriptions: normalizeDescriptions(s.descriptions), permissions: normalizePermissions(s.permissions, preDono), ...normalizePreset(s.presetId, s.customPreset) };
 }
 
 function fromRow(row: Record<string, unknown>): StoredServer {
@@ -279,47 +283,61 @@ function normalizePreset(
   return custom ? { presetId: custom.id, customPreset: custom } : { presetId: DEFAULT_PRESET_ID, customPreset: null };
 }
 
-function normalizePermissions(raw: unknown): Partial<Record<PermissionAction, Group>> {
+function normalizePermissions(raw: unknown, migrateLegacyOwner = false): Partial<Record<PermissionAction, Group>> {
   if (!raw || typeof raw !== 'object') return {};
   const out: Partial<Record<PermissionAction, Group>> = {};
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     const action = Number(k) as PermissionAction;
     if (!(action in DEFAULT_PERMISSIONS)) continue;
-    if (typeof v !== 'number' || v < 0 || v > 7) continue;
-    out[action] = v as Group;
+    if (typeof v !== 'number' || v < Group.Guest || v > Group.Dono) continue;
+    out[action] = (migrateLegacyOwner && v === Group.Owner ? Group.Dono : v) as Group;
   }
   return out;
 }
 
 /**
- * Antes o enum Group tinha 4 valores (0..3). Agora tem 8, com Moderator=5,
- * Admin=6, Owner=7. Servidores existentes tem no db grupos velhos —
+ * Antes o enum Group tinha 4 valores (0..3). Agora tem 9, com Moderator=5,
+ * Admin=6, Leader=7 e Dono=8. Servidores existentes tem no db grupos velhos —
  * remapeamos ao carregar para nao rebaixar todo mundo silenciosamente.
  *
  * Precisa ser IDEMPOTENTE: se qualquer valor ja esta no range novo (>=4),
  * o dado ja foi migrado; nao mexemos mais. Caso contrario, valor <= 3 e
  * tratado como antigo enum e mapeado.
  */
-function migrateGroupValues(raw: Record<string, unknown>): Record<string, Group> {
+function migrateGroupValues(raw: Record<string, unknown>, migrateLegacyOwner = false): Record<string, Group> {
   const values = Object.values(raw).filter((v): v is number => typeof v === 'number');
   const alreadyNew = values.some((v) => v >= 4);
   const out: Record<string, Group> = {};
   for (const [fp, val] of Object.entries(raw)) {
     if (typeof val !== 'number') continue;
-    out[fp] = alreadyNew ? (val as Group) : mapLegacyGroupId(val);
+    const mapped = alreadyNew ? val as Group : mapLegacyGroupId(val);
+    out[fp] = migrateLegacyOwner && mapped === Group.Owner ? Group.Dono : mapped;
   }
   return out;
 }
 
-function migrateGroupDefIds(raw: GroupDef[] | undefined): GroupDef[] {
+function migrateGroupDefIds(raw: GroupDef[] | undefined, migrateLegacyOwner = false): GroupDef[] {
   if (!raw?.length) return [];
   const alreadyNew = raw.some((g) => g.id >= 4);
-  const remapped = alreadyNew ? raw : raw.map((g) => ({ ...g, id: mapLegacyGroupId(g.id) }));
+  let remapped = alreadyNew ? raw : raw.map((g) => ({ ...g, id: mapLegacyGroupId(g.id) }));
+  if (migrateLegacyOwner) {
+    remapped = remapped.map((g) => g.id === Group.Owner
+      ? { ...g, id: Group.Dono, name: g.name === 'Leader' ? 'Dono' : g.name }
+      : g);
+    // O antigo id 7 foi convertido para Dono; reintroduzimos Leader no mesmo
+    // id para que ele continue disponivel como cargo separado.
+    if (!remapped.some((g) => g.id === Group.Owner)) {
+      remapped.push(DEFAULT_GROUP_DEFS.find((g) => g.id === Group.Owner)!);
+    }
+  }
+  for (const def of DEFAULT_GROUP_DEFS) {
+    if (!remapped.some((g) => g.id === def.id)) remapped.push({ ...def });
+  }
   // Dedupe defensivo: se um migrator anterior duplicou (ex: 0,5,6,7,4,5,6,7),
   // mantem so uma entrada por id — a ultima vence.
   const byId = new Map<Group, GroupDef>();
   for (const g of remapped) byId.set(g.id as Group, g);
-  return [...byId.values()];
+  return [...byId.values()].sort((a, b) => a.id - b.id);
 }
 
 function mapLegacyGroupId(v: number): Group {

@@ -141,6 +141,7 @@ function rubinotIconName(group: Group): string {
     case Group.Moderator: return 'moderador';
     case Group.Admin: return 'admin';
     case Group.Owner: return 'leader';
+    case Group.Dono: return 'dono';
   }
 }
 
