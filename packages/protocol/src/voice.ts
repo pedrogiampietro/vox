@@ -20,6 +20,11 @@ import { FrameKind } from './types.js';
 
 export const VOICE_HEADER_SIZE = 6;
 
+/** Limite de frames agrupados em uma mensagem WebSocket. */
+export const MAX_VOICE_BATCH_FRAMES = 16;
+/** Mantem o lote pequeno para nao acumular latencia nem ocupar a fila. */
+export const MAX_VOICE_BATCH_BYTES = 8192;
+
 /** Opus a 48kHz mono, 20ms, ate ~64kbps, com folga. Descarta acima disso. */
 export const MAX_VOICE_PAYLOAD = 512;
 export const MAX_VOICE_PACKET = VOICE_HEADER_SIZE + MAX_VOICE_PAYLOAD;
@@ -67,9 +72,56 @@ export function decodeVoice(frame: Uint8Array): VoicePacket | null {
   };
 }
 
+/** Agrupa frames ja codificados, reduzindo chamadas de envio no WebSocket. */
+export function encodeVoiceBatch(frames: readonly Uint8Array[]): Uint8Array {
+  if (frames.length === 0 || frames.length > MAX_VOICE_BATCH_FRAMES) {
+    throw new Error('quantidade invalida de frames de voz');
+  }
+  let total = 2;
+  for (const frame of frames) {
+    if (!decodeVoice(frame)) throw new Error('frame de voz invalido');
+    total += 2 + frame.byteLength;
+  }
+  if (total > MAX_VOICE_BATCH_BYTES) throw new Error('lote de voz grande demais');
+
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  out[0] = FrameKind.VoiceBatch;
+  out[1] = frames.length;
+  let offset = 2;
+  for (const frame of frames) {
+    view.setUint16(offset, frame.byteLength, true);
+    offset += 2;
+    out.set(frame, offset);
+    offset += frame.byteLength;
+  }
+  return out;
+}
+
+/** Le um lote WebSocket e devolve vistas dos frames sem novas copias. */
+export function decodeVoiceBatch(frame: Uint8Array): Uint8Array[] | null {
+  if (frame.length < 2 || frame.length > MAX_VOICE_BATCH_BYTES || frame[0] !== FrameKind.VoiceBatch) return null;
+  const count = frame[1]!;
+  if (count === 0 || count > MAX_VOICE_BATCH_FRAMES) return null;
+
+  const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+  const frames: Uint8Array[] = [];
+  let offset = 2;
+  for (let index = 0; index < count; index++) {
+    if (offset + 2 > frame.length) return null;
+    const length = view.getUint16(offset, true);
+    offset += 2;
+    if (length < VOICE_HEADER_SIZE || length > MAX_VOICE_PACKET || offset + length > frame.length) return null;
+    const voice = frame.subarray(offset, offset + length);
+    if (!decodeVoice(voice)) return null;
+    frames.push(voice);
+    offset += length;
+  }
+  return offset === frame.length ? frames : null;
+}
+
 /** Distancia entre dois seq u16 respeitando o wrap (positivo = a e mais novo). */
 export function seqDelta(a: number, b: number): number {
   return ((a - b + 0x8000) & 0xffff) - 0x8000;
 }
-
 

@@ -14,7 +14,7 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { MAX_CONTROL_FRAME } from '@vox/protocol';
+import { encodeVoiceBatch, MAX_CONTROL_FRAME, MAX_VOICE_BATCH_FRAMES } from '@vox/protocol';
 import { config } from './config.js';
 import { serverMetrics } from './metrics.js';
 import type { Hub } from './hub.js';
@@ -77,19 +77,57 @@ export function attachWebSocket(
 function serve(ws: WebSocket, hub: Hub, ip: string, hostname: string, onClose: () => void): void {
   ws.binaryType = 'nodebuffer';
 
+  const voiceQueue: Uint8Array[] = [];
+  let voiceQueueBytes = 0;
+  let voiceFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushVoice = (): void => {
+    if (voiceFlushTimer) {
+      clearTimeout(voiceFlushTimer);
+      voiceFlushTimer = null;
+    }
+    if (voiceQueue.length === 0 || ws.readyState !== ws.OPEN) {
+      voiceQueue.length = 0;
+      voiceQueueBytes = 0;
+      return;
+    }
+    const frames = voiceQueue.splice(0, voiceQueue.length);
+    voiceQueueBytes = 0;
+    try {
+      ws.send(frames.length === 1 ? frames[0]! : encodeVoiceBatch(frames), { binary: true });
+    } catch {
+      ws.terminate();
+    }
+  };
+
+  const scheduleVoiceFlush = (): void => {
+    if (voiceFlushTimer) return;
+    voiceFlushTimer = setTimeout(flushVoice, 4);
+    voiceFlushTimer.unref?.();
+  };
+
+  const queueVoice = (data: Uint8Array): void => {
+    if (ws.readyState !== ws.OPEN) return;
+    if (ws.bufferedAmount > 2 * 1024 * 1024 || voiceQueueBytes + data.byteLength > 64 * 1024) {
+      serverMetrics.recordVoiceDrop(data.byteLength);
+      return;
+    }
+    voiceQueue.push(data);
+    voiceQueueBytes += data.byteLength;
+    if (voiceQueue.length >= MAX_VOICE_BATCH_FRAMES) flushVoice();
+    else scheduleVoiceFlush();
+  };
+
   const peer: PeerSocket = {
     remote: ip,
     hostname,
     send(data) {
+      // Controle e voz mantem a ordem observada pelo cliente.
+      flushVoice();
       if (ws.readyState === ws.OPEN) ws.send(data);
     },
     sendVoice(data) {
-      if (ws.readyState !== ws.OPEN) return;
-      if (ws.bufferedAmount > 2 * 1024 * 1024) {
-        serverMetrics.recordVoiceDrop(data.byteLength);
-        return;
-      }
-      ws.send(data);
+      queueVoice(data);
     },
     close(reason) {
       try {

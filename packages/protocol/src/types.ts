@@ -47,6 +47,8 @@ export interface VoiceEdge {
 export enum FrameKind {
   Voice = 0x00,
   Control = 0x01,
+  /** Varios frames de voz em uma mensagem WebSocket de saida. */
+  VoiceBatch = 0x02,
 }
 
 /** Opcode do segundo byte de um frame de controle. */

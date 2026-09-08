@@ -23,6 +23,7 @@ import {
   PROTOCOL_VERSION,
   decodeServerMessage,
   decodeVoice,
+  decodeVoiceBatch,
   encodeClientMessage,
   encodeVoice,
 } from '@vox/protocol';
@@ -201,6 +202,13 @@ class StressClient {
       if (decodeVoice(frame)) this.receivedVoice++;
       return;
     }
+    if (frame[0] === FrameKind.VoiceBatch) {
+      const batch = decodeVoiceBatch(frame);
+      if (batch) {
+        for (const voice of batch) if (decodeVoice(voice)) this.receivedVoice++;
+      }
+      return;
+    }
     try {
       this.apply(decodeServerMessage(frame));
     } catch (error) {
@@ -333,9 +341,10 @@ async function main(): Promise<void> {
     console.log('aviso: confirme que a instancia permite essa quantidade por IP (VOX_MAX_PER_IP); o padrao e 8');
   }
 
-  const clients = Array.from({ length: options.clients }, (_, index) => (
-    new StressClient(`stress-${runId}-${index + 1}`, options.url, options.voiceTransport)
-  ));
+  // Abre cada lote no momento em que ele sera autenticado. Criar todos os
+  // sockets antes faria os ultimos ficarem pendentes por tempo suficiente para
+  // expirar no servidor, medindo o gerador e nao a capacidade do Vox.
+  const clients: StressClient[] = [];
   let adminRuntime: AdminRuntime | null = null;
   const pollAdmin = async (): Promise<void> => {
     if (!options.adminToken) return;
@@ -358,8 +367,12 @@ async function main(): Promise<void> {
     : null;
   adminTimer?.unref?.();
   try {
-    for (let offset = 0; offset < clients.length; offset += options.batch) {
-      const batch = clients.slice(offset, offset + options.batch);
+    for (let offset = 0; offset < options.clients; offset += options.batch) {
+      const batch = Array.from(
+        { length: Math.min(options.batch, options.clients - offset) },
+        (_, index) => new StressClient(`stress-${runId}-${offset + index + 1}`, options.url, options.voiceTransport),
+      );
+      clients.push(...batch);
       await Promise.all(batch.map(async (client) => {
         try {
           await client.start();
@@ -367,7 +380,7 @@ async function main(): Promise<void> {
           failures.push(`${client.nickname}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }));
-      console.log(`conexao ${Math.min(offset + options.batch, clients.length)}/${clients.length} · ativos=${clients.filter((client) => client.live).length}`);
+      console.log(`conexao ${clients.length}/${options.clients} · ativos=${clients.filter((client) => client.live).length}`);
     }
 
     await pollAdmin();

@@ -14,6 +14,7 @@ import {
   VOICE_PROBE_MAGIC,
   decodeServerMessage,
   decodeVoice,
+  decodeVoiceBatch,
   encodeClientMessage,
 } from '@vox/protocol';
 import type { ClientMessage, ServerMessage, VoiceEdge, VoicePacket } from '@vox/protocol';
@@ -279,6 +280,16 @@ export class Connection {
     if (frame[0] === FrameKind.Voice) {
       const packet = decodeVoice(frame);
       if (packet) this.handlers.onVoice(packet);
+      return;
+    }
+    if (frame[0] === FrameKind.VoiceBatch) {
+      const batch = decodeVoiceBatch(frame);
+      if (batch) {
+        for (const voice of batch) {
+          const packet = decodeVoice(voice);
+          if (packet) this.handlers.onVoice(packet);
+        }
+      }
       return;
     }
 
