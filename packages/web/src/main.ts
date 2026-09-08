@@ -50,6 +50,7 @@ import { keyLabel, loadPttKey, savePttKey } from './ui/ptt.js';
 import { isDesktopShell } from './net/connection.js';
 import { createPwaInstallCard, registerPwaServiceWorker } from './pwa.js';
 import { SOUND_EVENT_LABELS, SOUND_PACK_LABELS, type SoundName, type SoundPackId } from './audio/sounds.js';
+import { createLocaleSelect, t, translateTree } from './i18n.js';
 
 registerPwaServiceWorker();
 
@@ -184,6 +185,7 @@ function render(): void {
   } else {
     app.replaceChildren(renderShell());
   }
+  translateTree(app);
 
   if (treeScrollTop !== null) {
     const newTree = app.querySelector('.tree');
@@ -215,6 +217,7 @@ function openSettings(): void {
   closeSettings();
   const overlay = renderSettings();
   document.body.append(overlay);
+  translateTree(overlay);
 }
 
 function closeSettings(): void {
@@ -2747,15 +2750,15 @@ function renderSettings(): HTMLElement {
   // --- nav ---
   const nav = $('div', 'settings-nav');
   const sections = [
-    { id: 'identity', icon: '◈', label: 'Identidade' },
-    { id: 'capture', icon: '🎙', label: 'Capturar' },
-    { id: 'playback', icon: '🔊', label: 'Reprodução' },
-    { id: 'notifications', icon: '🔔', label: 'Notificações' },
+    { id: 'identity', icon: '◈', label: t('Identidade') },
+    { id: 'capture', icon: '🎙', label: t('Capturar') },
+    { id: 'playback', icon: '🔊', label: t('Reprodução') },
+    { id: 'notifications', icon: '🔔', label: t('Notificações') },
     ...(client.myGroup >= Group.Owner
       ? [
-          { id: 'groups', icon: '👥', label: 'Grupos' },
-          { id: 'permissions', icon: '🔐', label: 'Permissões' },
-          { id: 'bot', icon: '🤖', label: 'Bot' },
+          { id: 'groups', icon: '👥', label: t('Grupos') },
+          { id: 'permissions', icon: '🔐', label: t('Permissões') },
+          { id: 'bot', icon: '🤖', label: t('Bot') },
         ]
       : []),
   ];
@@ -2774,6 +2777,7 @@ function renderSettings(): HTMLElement {
       });
       nav.append(btn);
     }
+    translateTree(nav);
   }
 
   // --- body ---
@@ -2788,6 +2792,7 @@ function renderSettings(): HTMLElement {
     else if (activeSection === 'groups') buildGroupsSection(body, buildBody);
     else if (activeSection === 'permissions') buildPermissionsSection(body);
     else if (activeSection === 'bot') buildBotSection(body, buildBody);
+    translateTree(body);
   }
 
   // O painel administrativo pode alterar o bot enquanto este modal está
@@ -2800,7 +2805,7 @@ function renderSettings(): HTMLElement {
   // --- footer ---
   const footer = $('div', 'settings-footer');
   const closeBtn = $('button', 'primary');
-  closeBtn.textContent = 'fechar';
+  closeBtn.textContent = t('fechar');
   closeBtn.addEventListener('click', () => {
     settingsOpen = false;
     closeSettings();
@@ -2815,27 +2820,42 @@ function renderSettings(): HTMLElement {
 }
 
 function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {
-  body.append(text('h3', '', 'IDENTIDADE'));
-  body.append(text('span', '', 'Esta chave define quem você é para os servidores.'));
+  body.append(text('h3', '', t('IDENTIDADE')));
+  body.append(text('span', '', t('Esta chave define quem você é para os servidores.')));
+
+  const localeRow = $('div', 'settings-row');
+  const localeLabel = $('label');
+  localeLabel.append(text('span', '', t('Idioma')));
+  const localeSelect = createLocaleSelect(() => {
+    // O cliente monta a tela inteira de forma imperativa; remontar após a
+    // troca garante que também tooltips, placeholders e textos dinâmicos
+    // acompanhem o idioma escolhido.
+    renderAll();
+  });
+  localeLabel.append(localeSelect);
+  localeRow.append(localeLabel);
+  body.append(localeRow);
+
+  body.append($('hr'));
 
   const current = client.identity;
   const fpRow = $('div', 'settings-row');
   const fpLabel = $('label');
-  fpLabel.append(text('span', '', 'Fingerprint'));
+  fpLabel.append(text('span', '', t('Fingerprint')));
   const fp = $('input') as HTMLInputElement;
   fp.readOnly = true;
-  fp.value = current?.fingerprint ?? 'identidade ainda não carregada';
+  fp.value = current?.fingerprint ?? t('identidade ainda não carregada');
   fpLabel.append(fp);
   fpRow.append(fpLabel);
   body.append(fpRow);
 
   const copyRow = $('div', 'settings-test');
   const copyBtn = $('button', 'ghost');
-  copyBtn.textContent = 'copiar fingerprint';
+  copyBtn.textContent = t('copiar fingerprint');
   copyBtn.addEventListener('click', () => {
     if (!current?.fingerprint) return;
     navigator.clipboard?.writeText(current.fingerprint).catch(() => {});
-    copyBtn.textContent = 'copiado';
+    copyBtn.textContent = t('copiado');
   });
   copyRow.append(copyBtn);
   body.append(copyRow);
@@ -2844,7 +2864,7 @@ function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {
 
   const exportRow = $('div', 'settings-row');
   const exportLabel = $('label');
-  exportLabel.append(text('span', '', 'Backup da identidade'));
+  exportLabel.append(text('span', '', t('Backup da identidade')));
   const backup = $('textarea') as HTMLTextAreaElement;
   backup.rows = 5;
   backup.readOnly = true;
@@ -2855,11 +2875,11 @@ function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {
 
   const backupActions = $('div', 'settings-test');
   const copyBackup = $('button', 'ghost');
-  copyBackup.textContent = 'copiar backup';
+  copyBackup.textContent = t('copiar backup');
   copyBackup.addEventListener('click', () => {
     if (!backup.value) return;
     navigator.clipboard?.writeText(backup.value).catch(() => {});
-    copyBackup.textContent = 'backup copiado';
+    copyBackup.textContent = t('backup copiado');
   });
   backupActions.append(copyBackup);
   body.append(backupActions);
@@ -2868,21 +2888,21 @@ function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {
 
   const importRow = $('div', 'settings-row');
   const importLabel = $('label');
-  importLabel.append(text('span', '', 'Importar identidade'));
+  importLabel.append(text('span', '', t('Importar identidade')));
   const raw = $('textarea') as HTMLTextAreaElement;
   raw.rows = 5;
-  raw.placeholder = 'cole aqui um backup de identidade';
+  raw.placeholder = t('cole aqui um backup de identidade');
   importLabel.append(raw);
   importRow.append(importLabel);
   body.append(importRow);
 
   const actions = $('div', 'settings-test');
   const importBtn = $('button', 'ghost');
-  importBtn.textContent = 'importar';
+  importBtn.textContent = t('importar');
   importBtn.addEventListener('click', async () => {
     const ok = await importIdentity(raw.value.trim());
     if (!ok) {
-      importBtn.textContent = 'backup inválido';
+      importBtn.textContent = t('backup inválido');
       return;
     }
     client.identity = await loadIdentity();
@@ -2890,7 +2910,7 @@ function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {
   });
 
   const resetBtn = $('button', 'danger');
-  resetBtn.textContent = 'gerar nova identidade';
+  resetBtn.textContent = t('gerar nova identidade');
   resetBtn.addEventListener('click', async () => {
     if (!confirm('Gerar outra identidade? Grupos e posse de servidores ficam ligados à identidade antiga.')) return;
     client.identity = await resetIdentity();

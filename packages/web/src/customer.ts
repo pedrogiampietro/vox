@@ -1,5 +1,6 @@
 import { iconBrandMark } from './ui/icons.js';
 import { $, text } from './ui/dom.js';
+import { createLocaleSelect, translateTree } from './i18n.js';
 import './customer.css';
 
 type Account = { id: number; email: string; createdAt: number };
@@ -53,6 +54,7 @@ if (root) {
 function render(): void {
   if (!root) return;
   root.replaceChildren(token && overview ? renderDashboard() : renderAuth());
+  translateTree(root);
 }
 
 function renderAuth(): HTMLElement {
@@ -331,7 +333,7 @@ function renderNav(current: string): HTMLElement {
   const links = $('div', 'customer-nav-links');
   links.append(navLink('landing', '/'), navLink('abrir Vox', '/app'));
   if (current === 'painel') links.append(text('span', 'customer-nav-current', 'área do cliente'));
-  nav.append(brand, links);
+  nav.append(brand, links, createLocaleSelect(() => render()));
   return nav;
 }
 

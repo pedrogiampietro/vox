@@ -1,5 +1,6 @@
 import { iconBrandMark } from './ui/icons.js';
 import { $, text } from './ui/dom.js';
+import { createLocaleSelect, translateTree } from './i18n.js';
 import './checkout.css';
 
 type PlanKey = 'community' | '50-basic' | '50-bot' | '100-basic' | '100-bot' | '254-basic' | '254-bot';
@@ -57,6 +58,7 @@ if (root) {
 function render(): void {
   if (!root) return;
   root.replaceChildren(renderPage());
+  translateTree(root);
 }
 
 function renderPage(): HTMLElement {
@@ -78,7 +80,7 @@ function renderNav(): HTMLElement {
   const back = $('a', 'checkout-back') as HTMLAnchorElement;
   back.href = '/#planos';
   back.textContent = 'voltar para planos';
-  nav.append(brand, back);
+  nav.append(brand, back, createLocaleSelect(() => render()));
   return nav;
 }
 

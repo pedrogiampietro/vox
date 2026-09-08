@@ -1,6 +1,7 @@
 import { iconBrandMark } from './ui/icons.js';
 import { $, text } from './ui/dom.js';
 import { createPwaInstallCard, registerPwaServiceWorker, setupPwaInstall } from './pwa.js';
+import { createLocaleSelect, translateTree } from './i18n.js';
 import './landing.css';
 
 const root = document.getElementById('landing');
@@ -12,6 +13,7 @@ function renderLandingPage(): HTMLElement {
   const plans = renderPlans();
   shell.append(renderHero(), renderTrustBar(), renderDownload(), renderFeatures(), renderFlow(), plans, renderCta(), renderFooter());
   page.append(shell);
+  translateTree(page);
   void refreshLandingPlans(plans);
   void refreshLandingStatus(page);
   return page;
@@ -35,6 +37,9 @@ function renderNav(): HTMLElement {
   actions.append(
     landingLink('Entrar no Vox', '/app', 'landing-button landing-button-small landing-button-app'),
     landingLink('Abrir Painel', '/painel', 'landing-button landing-button-small landing-button-panel'),
+    createLocaleSelect(() => {
+      if (root) root.replaceChildren(renderLandingPage());
+    }),
   );
   nav.append(brand, links, actions);
   return nav;
@@ -412,6 +417,7 @@ function updateConfigurator(section: HTMLElement, slider: HTMLInputElement, botC
       configBenefit('Painel administrativo incluído'),
     );
   }
+  translateTree(section);
 }
 
 function configBenefit(value: string): HTMLElement {

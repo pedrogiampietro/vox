@@ -1,5 +1,6 @@
 import { $, text } from './ui/dom.js';
 import './pwa.css';
+import { t } from './i18n.js';
 
 interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -73,10 +74,10 @@ export function getPwaInstallState(): PwaInstallState {
 }
 
 function installButtonLabel(state: PwaInstallState): string {
-  if (state.promptAvailable) return 'Instalar agora';
-  if (state.platform === 'ios') return 'Como instalar no iPhone';
-  if (state.platform === 'android') return 'Como instalar no Android';
-  return 'Como instalar';
+  if (state.promptAvailable) return t('Instalar agora');
+  if (state.platform === 'ios') return t('Como instalar no iPhone');
+  if (state.platform === 'android') return t('Como instalar no Android');
+  return t('Como instalar');
 }
 
 function refreshPwaInstallUi(): void {
@@ -149,13 +150,13 @@ export function createPwaInstallCard(options: PwaInstallCardOptions = {}): HTMLE
     options.mobileOnly ? 'pwa-install-mobile-only' : '',
   ].filter(Boolean).join(' ');
   const card = $('aside', classes);
-  card.setAttribute('aria-label', 'Instalar o v0x como aplicativo');
+  card.setAttribute('aria-label', t('Instalar o v0x como aplicativo'));
 
   const icon = text('span', 'pwa-install-icon', 'v0x');
   const copy = $('div', 'pwa-install-copy');
   copy.append(
-    text('strong', '', options.compact ? 'Instale o v0x no celular' : 'Leve o v0x para o celular'),
-    text('span', 'pwa-install-description', 'Acesso rápido, tela cheia e sem procurar o site toda vez.'),
+    text('strong', '', options.compact ? t('Instale o v0x no celular') : t('Leve o v0x para o celular')),
+    text('span', 'pwa-install-description', t('Acesso rápido, tela cheia e sem procurar o site toda vez.')),
   );
 
   const actions = $('div', 'pwa-install-actions');
@@ -173,8 +174,8 @@ export function createPwaInstallCard(options: PwaInstallCardOptions = {}): HTMLE
   if (options.dismissible) {
     const dismiss = text('button', 'pwa-install-dismiss', '×') as HTMLButtonElement;
     dismiss.type = 'button';
-    dismiss.title = 'fechar aviso';
-    dismiss.setAttribute('aria-label', 'Fechar aviso de instalação');
+    dismiss.title = t('fechar aviso');
+    dismiss.setAttribute('aria-label', t('Fechar aviso de instalação'));
     dismiss.addEventListener('click', () => {
       installCardDismissed = true;
       card.remove();
@@ -196,34 +197,34 @@ export function openPwaInstallGuide(): void {
   modal.setAttribute('aria-modal', 'true');
   modal.setAttribute('aria-labelledby', 'pwa-install-title');
 
-  const title = text('h2', '', state.platform === 'ios' ? 'Instale o v0x no iPhone' : 'Instale o v0x no celular');
+  const title = text('h2', '', state.platform === 'ios' ? t('Instale o v0x no iPhone') : t('Instale o v0x no celular'));
   title.id = 'pwa-install-title';
   const intro = text('p', 'pwa-install-intro', state.platform === 'ios'
-    ? 'No Safari, o v0x pode virar um aplicativo na sua tela de início.'
-    : 'Adicione o v0x à tela inicial para abrir a call como um aplicativo.');
+    ? t('No Safari, o v0x pode virar um aplicativo na sua tela de início.')
+    : t('Adicione o v0x à tela inicial para abrir a call como um aplicativo.'));
 
   const steps = $('ol', 'pwa-install-steps');
   if (state.platform === 'ios') {
     steps.append(
-      text('li', '', 'Abra esta página no Safari.'),
-      text('li', '', 'Toque no botão Compartilhar.'),
-      text('li', '', 'Escolha Adicionar à Tela de Início e confirme.'),
+      text('li', '', t('Abra esta página no Safari.')),
+      text('li', '', t('Toque no botão Compartilhar.')),
+      text('li', '', t('Escolha Adicionar à Tela de Início e confirme.')),
     );
   } else if (state.platform === 'android') {
     steps.append(
-      text('li', '', 'Abra o menu ⋮ do Chrome.'),
-      text('li', '', 'Toque em Instalar aplicativo ou Adicionar à tela inicial.'),
-      text('li', '', 'Confirme a instalação do v0x.'),
+      text('li', '', t('Abra o menu ⋮ do Chrome.')),
+      text('li', '', t('Toque em Instalar aplicativo ou Adicionar à tela inicial.')),
+      text('li', '', t('Confirme a instalação do v0x.')),
     );
   } else {
     steps.append(
-      text('li', '', 'Abra o menu do seu navegador.'),
-      text('li', '', 'Escolha Instalar aplicativo ou Adicionar à tela inicial.'),
+      text('li', '', t('Abra o menu do seu navegador.')),
+      text('li', '', t('Escolha Instalar aplicativo ou Adicionar à tela inicial.')),
     );
   }
 
   const footer = $('div', 'pwa-install-modal-footer');
-  const close = text('button', 'pwa-install-close', 'entendi') as HTMLButtonElement;
+  const close = text('button', 'pwa-install-close', t('entendi')) as HTMLButtonElement;
   close.type = 'button';
   close.addEventListener('click', () => overlay.remove());
   footer.append(close);

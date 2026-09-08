@@ -1,6 +1,24 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&display=swap');
 @import '@vox/ui/tokens.css';
 
+.locale-select {
+  min-height: 30px;
+  max-width: 170px;
+  padding: 0 26px 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--ink-800);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.locale-select:focus {
+  border-color: var(--amber);
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(232, 163, 61, 0.12);
+}
+
 /* ---------------------------------------------------------- landing page -- */
 
 #landing {

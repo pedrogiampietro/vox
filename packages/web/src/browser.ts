@@ -10,6 +10,7 @@ import {
 import { $, text } from './ui/dom.js';
 import { closeMenu, openCustomMenu } from './ui/menu.js';
 import { createPwaInstallCard } from './pwa.js';
+import { createLocaleSelect } from './i18n.js';
 
 const SERVER_ADDRESS_PLACEHOLDER = 'ex.: v0x.online ou servidor.v0x.online';
 
@@ -28,7 +29,8 @@ export function renderBrowserView(options: BrowserViewOptions): HTMLElement {
   mark.setAttribute('viewBox', '0 0 100 100');
   mark.classList.add('brand-mark');
   mark.innerHTML = `<defs><linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f2b354"/><stop offset="100%" stop-color="#e8a33d"/></linearGradient><filter id="gl"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><path d="M15 18L50 82L85 18" fill="none" stroke="url(#vg)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><circle cx="84" cy="18" r="9" fill="#5ee08a" filter="url(#gl)"/>`;
-  brand.append(mark, text('h1', '', 'v0x'), text('span', 'rule', ''), text('span', 'label', 'servidores'));
+  const locale = createLocaleSelect(options.rerender);
+  brand.append(mark, text('h1', '', 'v0x'), text('span', 'rule', ''), text('span', 'label', 'servidores'), locale);
   root.append(brand);
 
   const body = $('div', 'browser-body');
