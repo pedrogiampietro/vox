@@ -42,7 +42,7 @@ import {
   parsePreset,
   serializePreset,
 } from '@vox/protocol';
-import type { BotProvider, BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, PresetBotConfig, ServerMessage, ServerPreset, VoiceEdge } from '@vox/protocol';
+import type { BotProvider, BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, ProfileBorder, RespClaimInfo, PresetBotConfig, ServerMessage, ServerPreset, UserProfile, VoiceEdge } from '@vox/protocol';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
 import { randomBytes } from 'node:crypto';
 import { config } from './config.js';
@@ -93,6 +93,7 @@ export class Hub {
   private groupDefs: GroupDef[];
   private bans: StoredBan[] = [];
   private readonly descriptions = new Map<string, string>();
+  private readonly profiles = new Map<string, UserProfile>();
   /** Cache do bot: nome do char (lower) -> info recente. */
   private readonly playerInfoByName = new Map<string, PlayerInfo>();
   /** Overrides sobre DEFAULT_PERMISSIONS. Ausencia = usar default. */
@@ -127,7 +128,7 @@ export class Hub {
 
   constructor(
     public settings: ServerSettings,
-    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig' | 'descriptions' | 'permissions' | 'presetId' | 'customPreset'>,
+    stored: Pick<StoredServer, 'channels' | 'groups' | 'bans' | 'groupDefs' | 'claims' | 'botConfig' | 'descriptions' | 'profiles' | 'permissions' | 'presetId' | 'customPreset'>,
     private readonly deps: HubDeps,
   ) {
     for (const c of stored.channels) {
@@ -144,6 +145,9 @@ export class Hub {
     this.botConfig = stored.botConfig ? { ...stored.botConfig } : { ...DEFAULT_BOT_CONFIG };
     for (const [fp, desc] of Object.entries(stored.descriptions ?? {})) {
       if (typeof desc === 'string' && desc) this.descriptions.set(fp, desc);
+    }
+    for (const [fp, profile] of Object.entries(stored.profiles ?? {})) {
+      if (profile?.fingerprint === fp) this.profiles.set(fp, profile);
     }
     for (const [k, v] of Object.entries(stored.permissions ?? {})) {
       const action = Number(k) as PermissionAction;
@@ -330,12 +334,34 @@ export class Hub {
 
   private sendVisibilitySnapshot(s: Session): void {
     if (!this.isLive(s)) return;
+    const clients = this.clientListFor(s);
     s.send(encodeServerMessage({
       t: Op.Snapshot,
       channels: this.channelListFor(s),
-      clients: this.clientListFor(s),
+      clients,
       claims: this.claimList(),
     }));
+    this.sendProfilesForClients(s, clients);
+  }
+
+  /** Perfis viajam em frames individuais para não transformar Snapshot em MBs. */
+  private sendProfilesForClients(target: Session, clients: ClientInfo[]): void {
+    const sent = new Set<string>();
+    for (const client of clients) {
+      if (!client.fingerprint || sent.has(client.fingerprint)) continue;
+      sent.add(client.fingerprint);
+      const profile = this.profiles.get(client.fingerprint);
+      if (profile) target.send(encodeServerMessage({ t: Op.ProfileUpdate, profile }));
+    }
+  }
+
+  private broadcastProfile(profile: UserProfile): void {
+    const frame = encodeServerMessage({ t: Op.ProfileUpdate, profile });
+    for (const target of this.sessions.values()) {
+      const visible = this.canViewChannels(target)
+        || this.clientListFor(target).some((client) => client.fingerprint === profile.fingerprint);
+      if (visible) target.send(frame);
+    }
   }
 
   private refreshVisibilitySnapshots(): void {
@@ -464,6 +490,7 @@ export class Hub {
       claims: [...this.claims.values()],
       botConfig: { ...this.botConfig, huntedNames: botHunted },
       descriptions: Object.fromEntries(this.descriptions),
+      profiles: Object.fromEntries(this.profiles),
       permissions: Object.fromEntries(this.permissions),
       presetId: this.presetId,
       customPreset: this.customPreset,
@@ -916,6 +943,24 @@ export class Hub {
         }
         break;
       }
+
+      case Op.SetProfile: {
+        if (!s.fingerprint) return this.fail(s, FailureCode.NotPermitted, 'identidade obrigatoria para editar o perfil');
+        const avatar = validProfileAvatar(m.avatar) ? m.avatar : '';
+        if (m.avatar && !avatar) return this.fail(s, FailureCode.Malformed, 'avatar invalido ou muito grande');
+        const profile: UserProfile = {
+          fingerprint: s.fingerprint,
+          avatar,
+          border: validProfileBorder(m.border),
+          accent: /^#[0-9a-f]{6}$/i.test(m.accent) ? m.accent.toLowerCase() : '#e8a33d',
+          statusText: clean(m.statusText, 64),
+          updatedAt: Date.now(),
+        };
+        this.profiles.set(s.fingerprint, profile);
+        this.deps.forceSave();
+        this.broadcastProfile(profile);
+        break;
+      }
     }
   }
 
@@ -1024,14 +1069,16 @@ export class Hub {
       }),
     );
 
+    const visibleClients = this.clientListFor(s);
     s.send(
       encodeServerMessage({
-      t: Op.Snapshot,
+        t: Op.Snapshot,
         channels: this.channelListFor(s),
-        clients: this.clientListFor(s),
+        clients: visibleClients,
         claims: this.claimList(),
       }),
     );
+    this.sendProfilesForClients(s, visibleClients);
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
     s.send(encodeServerMessage({ t: Op.Permissions, entries: this.permissionList() }));
     s.send(encodeServerMessage(this.presetStateMessage()));
@@ -2215,6 +2262,18 @@ export class Hub {
 function extractMain(desc: string): string {
   const m = /main\s*:\s*(.+)/i.exec(desc);
   return (m?.[1] || '').trim().toLowerCase();
+}
+
+const PROFILE_BORDERS = new Set<ProfileBorder>(['none', 'ember', 'royal', 'signal', 'frost']);
+
+function validProfileBorder(value: string): ProfileBorder {
+  return PROFILE_BORDERS.has(value as ProfileBorder) ? value as ProfileBorder : 'none';
+}
+
+function validProfileAvatar(value: string): boolean {
+  if (!value) return true;
+  if (value.length > 40 * 1024) return false;
+  return /^data:image\/(?:webp|jpeg|png);base64,[a-z0-9+/=]+$/i.test(value);
 }
 
 /** Limpa descrição de relatório sem destruir as quebras de linha do bot. */

@@ -32,7 +32,7 @@ import {
   canonicalRespawnIn,
   parsePreset,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, RespawnCatalogItem, TemplateCategory } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, ProfileBorder, RespClaimInfo, RespawnCatalogItem, TemplateCategory, UserProfile } from '@vox/protocol';
 import {
   listFavorites,
   probe,
@@ -51,6 +51,7 @@ import { isDesktopShell } from './net/connection.js';
 import { createPwaInstallCard, registerPwaServiceWorker } from './pwa.js';
 import { SOUND_EVENT_LABELS, SOUND_PACK_LABELS, type SoundName, type SoundPackId } from './audio/sounds.js';
 import { createLocaleSelect, t, translateTree } from './i18n.js';
+import { DEFAULT_PROFILE_ACCENT, PROFILE_FRAMES, encodeProfileAvatar } from './profile.js';
 
 registerPwaServiceWorker();
 
@@ -218,6 +219,9 @@ function openSettings(): void {
   const overlay = renderSettings();
   document.body.append(overlay);
   translateTree(overlay);
+  queueMicrotask(() => {
+    (overlay.querySelector('.settings-nav button.active') as HTMLButtonElement | null)?.focus();
+  });
 }
 
 function closeSettings(): void {
@@ -475,8 +479,13 @@ function renderRail(): HTMLElement {
   const me = client.self;
   if (me) {
     const nick = $('button', 'rail-avatar');
-    nick.textContent = me.nickname.charAt(0).toUpperCase();
-    nick.title = me.nickname;
+    nick.append(renderProfileAvatar(me, 'profile-avatar-rail', true));
+    nick.title = `${me.nickname} · abrir perfil`;
+    nick.setAttribute('aria-label', `${me.nickname}, abrir configurações do perfil`);
+    nick.addEventListener('click', () => {
+      settingsOpen = true;
+      openSettings();
+    });
     rail.append(nick);
   }
 
@@ -862,6 +871,141 @@ function appendScreenIndicator(parent: HTMLElement, title = 'compartilhando tela
   parent.append(dot);
 }
 
+function renderProfileAvatar(
+  c: ClientInfo,
+  className: string,
+  showStatus = false,
+  override?: UserProfile,
+): HTMLElement {
+  const profile = override ?? client.profileFor(c);
+  const avatar = $('span', `user-avatar ${className} profile-border-${profile.border}`);
+  avatar.style.setProperty('--profile-accent', profile.accent || DEFAULT_PROFILE_ACCENT);
+  avatar.setAttribute('aria-label', `${t('Avatar de')} ${c.nickname}`);
+  const media = $('span', 'profile-avatar-media');
+
+  if (profile.avatar) {
+    const image = $('img') as HTMLImageElement;
+    image.src = profile.avatar;
+    image.alt = '';
+    image.draggable = false;
+    image.addEventListener('error', () => {
+      avatar.classList.add('profile-avatar-empty');
+      media.replaceChildren(text('span', 'profile-avatar-initial', c.nickname.charAt(0).toUpperCase() || '?'));
+    }, { once: true });
+    media.append(image);
+  } else {
+    avatar.classList.add('profile-avatar-empty');
+    media.append(text('span', 'profile-avatar-initial', c.nickname.charAt(0).toUpperCase() || '?'));
+  }
+  avatar.append(media);
+
+  if (showStatus) {
+    const away = (c.flags & ClientFlags.Away) !== 0;
+    const state = away ? 'away' : 'online';
+    const dot = $('span', `profile-presence-dot ${state}`);
+    dot.title = t(away ? 'ausente' : 'online');
+    dot.setAttribute('aria-label', dot.title);
+    avatar.append(dot);
+  }
+  return avatar;
+}
+
+function renderUserProfileCard(
+  c: ClientInfo,
+  profile = client.profileFor(c),
+  description = c.description,
+  preview = false,
+): HTMLElement {
+  const card = $('article', `user-profile-card${preview ? ' preview' : ''}`);
+  card.style.setProperty('--profile-accent', profile.accent || DEFAULT_PROFILE_ACCENT);
+  card.setAttribute('aria-label', `${t('Perfil de')} ${c.nickname}`);
+
+  const cover = $('div', 'user-profile-cover');
+  cover.append(text('span', 'user-profile-monogram', 'v0x'));
+
+  const content = $('div', 'user-profile-content');
+  const hero = $('div', 'user-profile-hero');
+  hero.append(renderProfileAvatar(c, 'profile-avatar-large', true, profile));
+
+  const identity = $('div', 'user-profile-identity');
+  const name = text('strong', 'user-profile-name', c.nickname || t('Novo usuário'));
+  name.dataset.i18nSkip = '';
+  const away = (c.flags & ClientFlags.Away) !== 0;
+  const presence = $('div', 'user-profile-presence');
+  presence.append(
+    text('span', `profile-presence-inline ${away ? 'away' : 'online'}`, '●'),
+    text('span', '', t(away ? 'Ausente' : 'Online agora')),
+  );
+  if (profile.statusText) {
+    const statusCopy = text('span', 'profile-status-copy', `· ${profile.statusText}`);
+    statusCopy.dataset.i18nSkip = '';
+    presence.append(statusCopy);
+  } else if (preview) presence.append(text('span', 'profile-status-empty', t('· seu recado aparece aqui')));
+  identity.append(name, presence);
+  hero.append(identity);
+
+  const badges = $('div', 'user-profile-badges');
+  const gdef = client.groupDef(c.group);
+  const groupBadge = $('span', 'profile-badge group');
+  if (gdef.icon) {
+    const icon = $('img') as HTMLImageElement;
+    icon.src = serverAssetUrl(gdef.icon);
+    icon.alt = '';
+    icon.onerror = () => icon.remove();
+    groupBadge.append(icon);
+  }
+  groupBadge.append(document.createTextNode(gdef.name));
+  groupBadge.dataset.i18nSkip = '';
+  if (gdef.color) groupBadge.style.color = gdef.color;
+  badges.append(groupBadge);
+
+  if (c.fingerprint) {
+    const verified = text('span', 'profile-badge verified', t('✓ identidade verificada'));
+    verified.title = t('Identidade protegida pela chave local do v0x');
+    badges.append(verified);
+  }
+  if (c.platform) {
+    const platformBadge = text('span', 'profile-badge', c.platform);
+    platformBadge.dataset.i18nSkip = '';
+    badges.append(platformBadge);
+  }
+
+  const player = playerInfoFor(c);
+  if (player?.name) {
+    const label = [player.vocation, player.level > 0 ? `Lv. ${player.level}` : ''].filter(Boolean).join(' · ');
+    const playerBadge = text('span', 'profile-badge game', `${player.name}${label ? ` · ${label}` : ''}`);
+    playerBadge.dataset.i18nSkip = '';
+    badges.append(playerBadge);
+  }
+
+  const about = $('div', 'user-profile-about');
+  about.append(text('span', 'user-profile-kicker', t('SOBRE')));
+  if (description) {
+    const descriptionCopy = text('p', '', description);
+    descriptionCopy.dataset.i18nSkip = '';
+    about.append(descriptionCopy);
+  } else {
+    about.append(text('p', 'user-profile-empty', t(preview ? 'Conte um pouco sobre você ou informe seu Main.' : 'Este usuário ainda não adicionou uma apresentação.')));
+  }
+
+  const facts = $('div', 'user-profile-facts');
+  const channel = client.channels.get(c.channelId);
+  const channelFact = $('div');
+  const channelName = text('strong', '', channel?.name ?? t('Sem canal'));
+  channelName.dataset.i18nSkip = '';
+  channelFact.append(text('span', '', t('CANAL')), channelName);
+  const timeFact = $('div');
+  timeFact.append(
+    text('span', '', t('NA SESSÃO')),
+    text('strong', '', c.connectedAt > 0 ? formatDuration(Date.now() - c.connectedAt) : t('agora')),
+  );
+  facts.append(channelFact, timeFact);
+
+  content.append(hero, badges, about, facts);
+  card.append(cover, content);
+  return card;
+}
+
 function renderPeer(c: ClientInfo): HTMLElement {
   const row = $('div', 'peer');
   if (c.id === client.selfId) row.classList.add('me');
@@ -874,8 +1018,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
   if (!talking && (muted || away || noInput)) row.classList.add('quiet');
 
   // avatar
-  const avatar = $('div', 'peer-avatar');
-  avatar.textContent = c.nickname.charAt(0).toUpperCase();
+  const avatar = renderProfileAvatar(c, 'peer-avatar');
   if (talking) avatar.classList.add('talking');
   if (muted || noInput) avatar.classList.add('muted');
 
@@ -1490,42 +1633,33 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
 }
 
 function renderClientInfoPanel(c: ClientInfo): HTMLElement {
-  const panel = $('div', 'channel-info');
-  const gdef = client.groupDef(c.group);
+  const panel = $('div', 'channel-info profile-panel');
   const isSelf = c.id === client.selfId;
   const ch = client.channels.get(c.channelId);
   const isDono = client.myGroup >= Group.Dono;
 
-  // header: icon + nickname + dismiss
-  const top = $('div', 'channel-info-header');
-
-  if (gdef.icon) {
-    const icon = $('img') as HTMLImageElement;
-    icon.src = serverAssetUrl(gdef.icon);
-    icon.onerror = () => icon.remove();
-    icon.style.cssText = 'width:18px;height:18px;object-fit:contain;';
-    top.append(icon);
-  }
-
-  const nm = text('span', 'channel-name', c.nickname);
-  if (gdef.color) nm.style.color = gdef.color;
-  top.append(nm);
-
+  const top = $('div', 'profile-panel-toolbar');
   if (isSelf) {
-    const badge = text('span', 'label', 'voce');
-    badge.style.color = 'var(--signal)';
-    top.append(badge);
+    const edit = $('button', 'ghost');
+    edit.textContent = 'editar meu perfil';
+    edit.addEventListener('click', () => {
+      settingsOpen = true;
+      openSettings();
+    });
+    top.append(edit);
   }
 
   const dismiss = $('button', 'ghost');
   dismiss.textContent = '✕';
-  dismiss.style.cssText = 'padding:2px 6px;font-size:12px;min-width:unset;margin-left:auto;';
+  dismiss.title = 'fechar perfil';
+  dismiss.setAttribute('aria-label', 'Fechar perfil');
   dismiss.addEventListener('click', () => { selectedClientId = 0; render(); });
   top.append(dismiss);
-  panel.append(top);
+  panel.append(top, renderUserProfileCard(c));
 
-  // info rows (TS3 style)
+  // Detalhes técnicos da sessão ficam separados do cartão público.
   const info = $('div', 'client-info-rows');
+  info.append(text('span', 'user-profile-kicker', 'DETALHES DA SESSÃO'));
 
   const addRow = (label: string, value: string, color?: string) => {
     const row = $('div', 'client-info-row');
@@ -1536,36 +1670,11 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     info.append(row);
   };
 
-  // platform
-  if (c.platform) {
-    addRow('Plataforma:', c.platform);
-  }
-
   // online since
   if (c.connectedAt > 0) {
     const elapsed = Date.now() - c.connectedAt;
     addRow('On-line desde:', formatDuration(elapsed));
   }
-
-  // server group
-  const groupRow = $('div', 'client-info-row');
-  groupRow.append(text('span', 'client-info-label', 'Grupo do servidor:'));
-  const groupVal = $('span', 'client-info-value');
-  groupVal.style.display = 'inline-flex';
-  groupVal.style.alignItems = 'center';
-  groupVal.style.gap = '4px';
-  if (gdef.icon) {
-    const gi = $('img') as HTMLImageElement;
-    gi.src = serverAssetUrl(gdef.icon);
-    gi.onerror = () => gi.remove();
-    gi.style.cssText = 'width:14px;height:14px;object-fit:contain;';
-    groupVal.append(gi);
-  }
-  const gname = document.createTextNode(gdef.name);
-  groupVal.append(gname);
-  if (gdef.color) groupVal.style.color = gdef.color;
-  groupRow.append(groupVal);
-  info.append(groupRow);
 
   // channel
   if (ch) {
@@ -1589,41 +1698,6 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     }
   }
 
-  // description (Main: X, notas...)
-  if (c.description) {
-    addRow('Descrição:', c.description);
-  }
-
-  // Info do Main via o provider do bot. So mostra se o nome bate com o Main atual
-  // da descricao — evita mostrar dados velhos quando o usuario troca o Main.
-  const pi = playerInfoFor(c);
-  if (pi && pi.name) {
-    const label = document.createElement('span');
-    label.className = 'client-info-value';
-    label.style.display = 'inline-flex';
-    label.style.alignItems = 'center';
-    label.style.gap = '6px';
-    if (pi.vocation) {
-      const vi = document.createElement('img');
-      vi.src = serverAssetUrl(`/icons/${pi.vocation.toLowerCase()}.png`);
-      vi.alt = pi.vocation;
-      vi.title = pi.vocation;
-      vi.style.cssText = 'width:16px;height:16px;object-fit:contain;';
-      vi.onerror = () => { vi.replaceWith(text('span', 'player-voc-fallback', pi.vocation)); };
-      label.append(vi);
-    }
-    if (pi.level > 0) {
-      label.append(text('span', 'player-level-badge', String(pi.level)));
-    }
-    const dot = document.createElement('span');
-    dot.className = `player-online-dot ${pi.online ? 'on' : 'off'}`;
-    dot.title = pi.online ? 'online' : 'offline';
-    label.append(dot, document.createTextNode(pi.name));
-    const row = $('div', 'client-info-row');
-    row.append(text('span', 'client-info-label', 'Char:'), label);
-    info.append(row);
-  }
-
   // fingerprint / ID (only visible to Donos)
   if (c.fingerprint && isDono) {
     addRow('ID:', c.fingerprint);
@@ -1631,8 +1705,9 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
 
   panel.append(info);
 
-  // Editor de descricao — voce edita a sua sempre; Mod+ edita a de outros.
-  const canEditDesc = c.fingerprint !== '' && (isSelf || client.myGroup >= Group.Moderator);
+  // Moderadores ainda podem corrigir a descrição de terceiros. O próprio
+  // usuário edita tudo pela experiência completa de Perfil.
+  const canEditDesc = c.fingerprint !== '' && !isSelf && client.myGroup >= Group.Moderator;
   if (canEditDesc) {
     const descRow = $('div', 'client-desc-edit');
     const descInput = $('input') as HTMLInputElement;
@@ -2229,8 +2304,10 @@ function renderDmBubble(line: ChatLine, mine: boolean, peerReadStamp: number): H
   const row = $('div', `dm-row ${mine ? 'dm-out' : 'dm-in'}`);
 
   if (!mine) {
-    const avatar = $('div', 'dm-avatar');
-    avatar.textContent = (line.senderName || '?').charAt(0).toUpperCase();
+    const sender = client.clients.get(line.senderId);
+    const avatar = sender
+      ? renderProfileAvatar(sender, 'dm-avatar')
+      : text('span', 'dm-avatar profile-avatar-initial', (line.senderName || '?').charAt(0).toUpperCase());
     row.append(avatar);
   }
 
@@ -2249,8 +2326,10 @@ function renderDmBubble(line: ChatLine, mine: boolean, peerReadStamp: number): H
   row.append(bubble);
 
   if (mine) {
-    const avatar = $('div', 'dm-avatar dm-avatar-mine');
-    avatar.textContent = (client.self?.nickname || '?').charAt(0).toUpperCase();
+    const self = client.self;
+    const avatar = self
+      ? renderProfileAvatar(self, 'dm-avatar dm-avatar-mine')
+      : text('span', 'dm-avatar dm-avatar-mine profile-avatar-initial', '?');
     row.append(avatar);
   }
   return row;
@@ -2435,7 +2514,7 @@ function formatRemaining(expiresAt: number): string {
 
 function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s} segundos`;
+  if (s < 60) return `${s} segundo${s === 1 ? '' : 's'}`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m} minuto${m > 1 ? 's' : ''}`;
   const h = Math.floor(m / 60);
@@ -2805,6 +2884,30 @@ async function enumerateDevices(): Promise<void> {
 
 function renderSettings(): HTMLElement {
   const overlay = $('div', 'settings-overlay');
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', 'Configurações do v0x');
+  overlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      settingsOpen = false;
+      closeSettings();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [...overlay.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
+    )].filter((element) => !element.hidden && element.getClientRects().length > 0);
+    if (focusable.length === 0) return;
+    const first = focusable[0]!;
+    const last = focusable.at(-1)!;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
       settingsOpen = false;
@@ -2817,6 +2920,7 @@ function renderSettings(): HTMLElement {
   // --- nav ---
   const nav = $('div', 'settings-nav');
   const sections = [
+    { id: 'profile', icon: '●', label: t('Perfil') },
     { id: 'identity', icon: '◈', label: t('Identidade') },
     { id: 'capture', icon: '🎙', label: t('Capturar') },
     { id: 'playback', icon: '🔊', label: t('Reprodução') },
@@ -2829,7 +2933,7 @@ function renderSettings(): HTMLElement {
         ]
       : []),
   ];
-  let activeSection = 'identity';
+  let activeSection = 'profile';
 
   function buildNav(): void {
     nav.replaceChildren();
@@ -2852,7 +2956,9 @@ function renderSettings(): HTMLElement {
 
   function buildBody(): void {
     body.replaceChildren();
-    if (activeSection === 'identity') buildIdentitySection(body, buildBody);
+    body.classList.toggle('profile-settings-body', activeSection === 'profile');
+    if (activeSection === 'profile') buildProfileSection(body);
+    else if (activeSection === 'identity') buildIdentitySection(body, buildBody);
     else if (activeSection === 'capture') buildCaptureSection(body, buildBody);
     else if (activeSection === 'playback') buildPlaybackSection(body);
     else if (activeSection === 'notifications') buildNotificationsSection(body);
@@ -2884,6 +2990,388 @@ function renderSettings(): HTMLElement {
   panel.append(nav, body, footer);
   overlay.append(panel);
   return overlay;
+}
+
+function buildProfileSection(body: HTMLElement): void {
+  body.append(text('h3', '', t('MEU PERFIL')));
+  body.append(text('span', 'settings-note', t('Personalize como você aparece para as pessoas deste servidor.')));
+
+  const me = client.self;
+  const fingerprint = client.identity?.fingerprint ?? '';
+  if (!me || !fingerprint) {
+    const empty = $('div', 'profile-settings-state empty');
+    empty.setAttribute('role', 'status');
+    empty.append(
+      text('strong', '', t('Perfil indisponível')),
+      text('span', '', t('Entre em um servidor com sua identidade carregada para editar o perfil.')),
+    );
+    body.append(empty);
+    return;
+  }
+
+  const draft: UserProfile = { ...client.profileFor(me), fingerprint };
+  const layout = $('div', 'profile-settings-layout');
+  const editor = $('div', 'profile-editor');
+  const previewColumn = $('aside', 'profile-preview-column');
+  previewColumn.append(text('span', 'user-profile-kicker', t('PRÉVIA AO VIVO')));
+  const previewHost = $('div', 'profile-preview-host');
+  previewColumn.append(previewHost);
+
+  const nameInput = $('input') as HTMLInputElement;
+  nameInput.type = 'text';
+  nameInput.maxLength = 32;
+  nameInput.value = me.nickname;
+  nameInput.setAttribute('autocomplete', 'nickname');
+
+  const statusInput = $('input') as HTMLInputElement;
+  statusInput.type = 'text';
+  statusInput.maxLength = 64;
+  statusInput.value = draft.statusText;
+  statusInput.placeholder = t('ex: organizando a próxima hunt');
+
+  const descriptionInput = $('textarea') as HTMLTextAreaElement;
+  descriptionInput.rows = 4;
+  descriptionInput.maxLength = 200;
+  descriptionInput.value = me.description ?? '';
+  descriptionInput.placeholder = t('Conte sobre você. Para integrar o personagem, use Main: Nome do Char.');
+
+  const accentInput = $('input') as HTMLInputElement;
+  accentInput.type = 'color';
+  accentInput.value = draft.accent || DEFAULT_PROFILE_ACCENT;
+  accentInput.setAttribute('aria-label', t('Cor de destaque do perfil'));
+
+  const refreshPreview = (): void => {
+    draft.accent = accentInput.value;
+    draft.statusText = statusInput.value.slice(0, 64);
+    const previewClient: ClientInfo = {
+      ...me,
+      nickname: nameInput.value.trim() || me.nickname,
+      description: descriptionInput.value.trim(),
+    };
+    previewHost.replaceChildren(renderUserProfileCard(previewClient, draft, previewClient.description, true));
+  };
+
+  const avatarSection = $('section', 'profile-editor-section avatar-editor-section');
+  const avatarHeading = $('div', 'profile-editor-heading');
+  avatarHeading.append(
+    text('span', 'user-profile-kicker', t('AVATAR')),
+    text('span', 'settings-note', t('JPG, PNG ou WebP · até 10 MB')),
+  );
+
+  const avatarActions = $('div', 'profile-avatar-actions');
+  const currentAvatar = $('div', 'profile-current-avatar');
+  currentAvatar.append(renderProfileAvatar(me, 'profile-avatar-editor', true, draft));
+  const file = $('input') as HTMLInputElement;
+  file.type = 'file';
+  file.accept = 'image/png,image/jpeg,image/webp';
+  file.hidden = true;
+  file.setAttribute('aria-label', t('Escolher uma imagem para o avatar'));
+  const chooseAvatar = $('button', 'ghost');
+  chooseAvatar.textContent = draft.avatar ? t('trocar imagem') : t('escolher imagem');
+  chooseAvatar.addEventListener('click', () => file.click());
+  const removeAvatar = $('button', 'ghost danger');
+  removeAvatar.textContent = t('remover');
+  removeAvatar.disabled = !draft.avatar;
+  removeAvatar.addEventListener('click', () => {
+    draft.avatar = '';
+    removeAvatar.disabled = true;
+    chooseAvatar.textContent = t('escolher imagem');
+    currentAvatar.replaceChildren(renderProfileAvatar(me, 'profile-avatar-editor', true, draft));
+    refreshPreview();
+  });
+  const avatarButtons = $('div', 'profile-avatar-buttons');
+  avatarButtons.append(chooseAvatar, removeAvatar, file);
+  avatarActions.append(currentAvatar, avatarButtons);
+
+  const imageState = $('div', 'profile-image-state');
+  imageState.setAttribute('role', 'status');
+  imageState.setAttribute('aria-live', 'polite');
+  const cropHost = $('div', 'profile-crop-host');
+  avatarSection.append(avatarHeading, avatarActions, imageState, cropHost);
+
+  file.addEventListener('change', async () => {
+    const selected = file.files?.[0];
+    file.value = '';
+    if (!selected) return;
+    imageState.className = 'profile-image-state';
+    if (!selected.type.startsWith('image/')) {
+      imageState.classList.add('error');
+      imageState.textContent = t('Escolha um arquivo de imagem válido.');
+      return;
+    }
+    if (selected.size > 10 * 1024 * 1024) {
+      imageState.classList.add('error');
+      imageState.textContent = t('A imagem ultrapassa o limite de 10 MB.');
+      return;
+    }
+
+    imageState.classList.add('loading');
+    imageState.textContent = t('Preparando recorte…');
+    cropHost.replaceChildren();
+    try {
+      const image = await loadProfileImage(selected);
+      imageState.textContent = '';
+      buildAvatarCropper(cropHost, image, (avatar) => {
+        draft.avatar = avatar;
+        chooseAvatar.textContent = t('trocar imagem');
+        removeAvatar.disabled = false;
+        currentAvatar.replaceChildren(renderProfileAvatar(me, 'profile-avatar-editor', true, draft));
+        refreshPreview();
+        cropHost.replaceChildren();
+        imageState.className = 'profile-image-state success';
+        imageState.textContent = t('Recorte aplicado. Salve o perfil para publicar.');
+      }, (message) => {
+        imageState.className = 'profile-image-state error';
+        imageState.textContent = message;
+      });
+    } catch {
+      imageState.className = 'profile-image-state error';
+      imageState.textContent = t('Não foi possível abrir essa imagem.');
+    }
+  });
+
+  const identitySection = $('section', 'profile-editor-section');
+  identitySection.append(text('span', 'user-profile-kicker', t('APRESENTAÇÃO')));
+  identitySection.append(
+    profileField(t('Nome exibido'), nameInput, t('O mesmo nome usado na lista de canais.')),
+    profileField(t('Recado de status'), statusInput, t('Uma frase curta visível abaixo do seu nome.')),
+    profileField(t('Sobre você'), descriptionInput, t('Até 200 caracteres.')),
+  );
+
+  const styleSection = $('section', 'profile-editor-section');
+  styleSection.append(text('span', 'user-profile-kicker', t('ESTILO')));
+  const accentRow = $('div', 'profile-accent-row');
+  const accentCopy = $('div');
+  accentCopy.append(text('strong', '', t('Cor de destaque')), text('span', 'settings-note', t('Usada no banner, foco e moldura.')));
+  const resetAccent = $('button', 'ghost profile-accent-reset');
+  resetAccent.textContent = t('restaurar');
+  resetAccent.addEventListener('click', () => {
+    accentInput.value = DEFAULT_PROFILE_ACCENT;
+    refreshPreview();
+  });
+  accentRow.append(accentCopy, accentInput, resetAccent);
+  styleSection.append(accentRow);
+
+  const frameGrid = $('div', 'profile-frame-grid');
+  frameGrid.setAttribute('role', 'radiogroup');
+  frameGrid.setAttribute('aria-label', t('Moldura do avatar'));
+  for (const frame of PROFILE_FRAMES) {
+    const option = $('label', `profile-frame-option profile-border-${frame.id}`);
+    const radio = $('input') as HTMLInputElement;
+    radio.type = 'radio';
+    radio.name = 'profile-border';
+    radio.value = frame.id;
+    radio.checked = draft.border === frame.id;
+    const sample = $('span', 'profile-frame-sample');
+    sample.style.setProperty('--profile-accent', draft.accent);
+    sample.textContent = me.nickname.charAt(0).toUpperCase() || '?';
+    const copy = $('span', 'profile-frame-copy');
+    copy.append(text('strong', '', t(frame.label)), text('small', '', t(frame.hint)));
+    option.append(radio, sample, copy);
+    option.classList.toggle('selected', radio.checked);
+    radio.addEventListener('change', () => {
+      draft.border = radio.value as ProfileBorder;
+      for (const item of frameGrid.querySelectorAll('.profile-frame-option')) item.classList.remove('selected');
+      option.classList.add('selected');
+      refreshPreview();
+    });
+    frameGrid.append(option);
+  }
+  styleSection.append(frameGrid);
+
+  const saveState = $('span', 'profile-save-state');
+  saveState.setAttribute('role', 'status');
+  saveState.setAttribute('aria-live', 'polite');
+  const save = $('button', 'primary profile-save');
+  save.textContent = t('salvar perfil');
+  save.addEventListener('click', () => {
+    const nextName = nameInput.value.trim();
+    if (!nextName) {
+      saveState.className = 'profile-save-state error';
+      saveState.textContent = t('Informe um nome para salvar.');
+      nameInput.focus();
+      return;
+    }
+    if (client.link !== 'online') {
+      saveState.className = 'profile-save-state error';
+      saveState.textContent = t('Você está offline. Reconecte para publicar o perfil.');
+      return;
+    }
+    save.disabled = true;
+    save.textContent = t('salvando…');
+    saveState.className = 'profile-save-state loading';
+    saveState.textContent = t('Sincronizando com o servidor…');
+    try {
+      if (nextName !== me.nickname) client.setNickname(nextName);
+      const description = descriptionInput.value.trim();
+      if (description !== me.description) client.setClientDescription(fingerprint, description);
+      client.setProfile({
+        ...draft,
+        accent: accentInput.value,
+        statusText: statusInput.value.trim(),
+        updatedAt: Date.now(),
+      });
+      saveState.className = 'profile-save-state success';
+      saveState.textContent = t('Perfil salvo e publicado.');
+      save.textContent = t('salvo');
+      setTimeout(() => {
+        save.disabled = false;
+        save.textContent = t('salvar perfil');
+      }, 900);
+    } catch {
+      save.disabled = false;
+      save.textContent = t('salvar perfil');
+      saveState.className = 'profile-save-state error';
+      saveState.textContent = t('Não foi possível salvar o perfil. Tente novamente.');
+    }
+  });
+  const saveRow = $('div', 'profile-save-row');
+  saveRow.append(saveState, save);
+
+  for (const input of [nameInput, statusInput, descriptionInput, accentInput]) {
+    input.addEventListener('input', refreshPreview);
+  }
+
+  editor.append(avatarSection, identitySection, styleSection, saveRow);
+  layout.append(editor, previewColumn);
+  body.append(layout);
+  refreshPreview();
+}
+
+function profileField(label: string, control: HTMLInputElement | HTMLTextAreaElement, hint: string): HTMLElement {
+  const field = $('label', 'profile-field');
+  field.append(text('span', 'profile-field-label', label), control, text('small', '', hint));
+  return field;
+}
+
+async function loadProfileImage(file: File): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = url;
+  try {
+    await image.decode();
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function buildAvatarCropper(
+  host: HTMLElement,
+  image: HTMLImageElement,
+  onApply: (avatar: string) => void,
+  onError: (message: string) => void,
+): void {
+  const panel = $('div', 'profile-cropper');
+  const heading = $('div', 'profile-cropper-heading');
+  heading.append(text('strong', '', t('Ajustar avatar')), text('span', 'settings-note', t('Arraste para reposicionar e use o zoom.')));
+  const canvas = $('canvas', 'profile-crop-canvas') as HTMLCanvasElement;
+  canvas.width = 320;
+  canvas.height = 320;
+  canvas.tabIndex = 0;
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', t('Área de recorte do avatar. Use as setas para reposicionar.'));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    onError(t('Seu navegador não conseguiu processar a imagem.'));
+    return;
+  }
+
+  let zoom = 1;
+  let offsetX = 0;
+  let offsetY = 0;
+  let pointer = 0;
+  let startX = 0;
+  let startY = 0;
+  let startOffsetX = 0;
+  let startOffsetY = 0;
+
+  const draw = (): void => {
+    const base = Math.max(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
+    const scale = base * zoom;
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    const limitX = Math.max(0, (width - canvas.width) / 2);
+    const limitY = Math.max(0, (height - canvas.height) / 2);
+    offsetX = Math.max(-limitX, Math.min(limitX, offsetX));
+    offsetY = Math.max(-limitY, Math.min(limitY, offsetY));
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, (canvas.width - width) / 2 + offsetX, (canvas.height - height) / 2 + offsetY, width, height);
+  };
+
+  canvas.addEventListener('pointerdown', (event) => {
+    pointer = event.pointerId;
+    startX = event.clientX;
+    startY = event.clientY;
+    startOffsetX = offsetX;
+    startOffsetY = offsetY;
+    canvas.setPointerCapture(pointer);
+    canvas.classList.add('dragging');
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    if (pointer !== event.pointerId) return;
+    const ratio = canvas.width / canvas.getBoundingClientRect().width;
+    offsetX = startOffsetX + (event.clientX - startX) * ratio;
+    offsetY = startOffsetY + (event.clientY - startY) * ratio;
+    draw();
+  });
+  const release = (event: PointerEvent): void => {
+    if (pointer !== event.pointerId) return;
+    pointer = 0;
+    canvas.classList.remove('dragging');
+  };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+  canvas.addEventListener('keydown', (event) => {
+    const step = event.shiftKey ? 12 : 4;
+    if (event.key === 'ArrowLeft') offsetX -= step;
+    else if (event.key === 'ArrowRight') offsetX += step;
+    else if (event.key === 'ArrowUp') offsetY -= step;
+    else if (event.key === 'ArrowDown') offsetY += step;
+    else return;
+    event.preventDefault();
+    draw();
+  });
+
+  const zoomRow = $('label', 'profile-zoom-row');
+  zoomRow.append(text('span', '', t('Zoom')));
+  const zoomInput = $('input') as HTMLInputElement;
+  zoomInput.type = 'range';
+  zoomInput.min = '100';
+  zoomInput.max = '300';
+  zoomInput.value = '100';
+  zoomInput.setAttribute('aria-label', t('Zoom do avatar'));
+  const zoomValue = text('span', '', '100%');
+  zoomInput.addEventListener('input', () => {
+    zoom = Number(zoomInput.value) / 100;
+    zoomValue.textContent = `${zoomInput.value}%`;
+    draw();
+  });
+  zoomRow.append(zoomInput, zoomValue);
+
+  const actions = $('div', 'profile-crop-actions');
+  const cancel = $('button', 'ghost');
+  cancel.textContent = t('cancelar');
+  cancel.addEventListener('click', () => host.replaceChildren());
+  const apply = $('button', 'primary');
+  apply.textContent = t('usar este recorte');
+  apply.addEventListener('click', () => {
+    apply.disabled = true;
+    apply.textContent = t('processando…');
+    try {
+      onApply(encodeProfileAvatar(canvas));
+    } catch (error) {
+      apply.disabled = false;
+      apply.textContent = t('usar este recorte');
+      onError(error instanceof Error ? t(error.message) : t('Não foi possível processar a imagem.'));
+    }
+  });
+  actions.append(cancel, apply);
+  panel.append(heading, canvas, zoomRow, actions);
+  host.append(panel);
+  draw();
+  canvas.focus();
 }
 
 function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {

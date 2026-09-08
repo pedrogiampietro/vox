@@ -1,7 +1,7 @@
 /** Persistencia permanente dos servidores em SQLite, com export JSON legivel. */
 import { readFileSync } from 'node:fs';
 import { ChannelFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, DEFAULT_PRESET_ID, Group, PermissionAction, findPreset, parsePreset } from '@vox/protocol';
-import type { ChannelInfo, GroupDef, ServerPreset } from '@vox/protocol';
+import type { ChannelInfo, GroupDef, ServerPreset, UserProfile } from '@vox/protocol';
 import { config } from './config.js';
 import { database, exportJson } from './sqlite.js';
 
@@ -53,6 +53,8 @@ export interface StoredServer {
   botConfig: StoredBotConfig;
   /** fingerprint -> descricao livre (ex: "Main: Pedrao Warsz"). */
   descriptions: Record<string, string>;
+  /** fingerprint -> perfil visual sincronizado entre os clientes. */
+  profiles: Record<string, UserProfile>;
   /** action -> minimo grupo. Overrides sobre DEFAULT_PERMISSIONS. */
   permissions: Partial<Record<PermissionAction, Group>>;
   /** Preset ativo: id de um embutido, ou `custom:*` quando importado. */
@@ -130,7 +132,7 @@ export const DEFAULT_BOT_CONFIG: StoredBotConfig = {
 };
 
 export function defaultServer(id = 1): StoredServer {
-  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS], claims: [], botConfig: { ...DEFAULT_BOT_CONFIG }, descriptions: {}, permissions: {}, presetId: DEFAULT_PRESET_ID, customPreset: null };
+  return { id, slug: `server-${id}`, ownerId: null, name: config.serverName, motd: config.motd, password: config.password, maxClients: config.maxClients, channels: defaultChannels(), groups: {}, bans: [], groupDefs: [...DEFAULT_GROUP_DEFS], claims: [], botConfig: { ...DEFAULT_BOT_CONFIG }, descriptions: {}, profiles: {}, permissions: {}, presetId: DEFAULT_PRESET_ID, customPreset: null };
 }
 
 export function loadServers(): StoredServer[] {
@@ -145,11 +147,11 @@ export function loadServers(): StoredServer[] {
 }
 
 export function saveServers(servers: StoredServer[]): void {
-  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json, claims_json, bot_config_json, descriptions_json, permissions_json, preset_id, custom_preset_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const insert = database.prepare('INSERT INTO servers (id, slug, owner_id, name, motd, password, max_clients, channels_json, groups_json, bans_json, group_defs_json, claims_json, bot_config_json, descriptions_json, profiles_json, permissions_json, preset_id, custom_preset_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   database.exec('BEGIN');
   try {
     database.exec('DELETE FROM servers');
-    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs), JSON.stringify(s.claims), JSON.stringify(s.botConfig), JSON.stringify(s.descriptions ?? {}), JSON.stringify(s.permissions ?? {}), s.presetId || DEFAULT_PRESET_ID, s.customPreset ? JSON.stringify(s.customPreset) : '');
+    for (const s of servers) insert.run(s.id, s.slug, s.ownerId, s.name, s.motd, s.password, s.maxClients, JSON.stringify(s.channels), JSON.stringify(s.groups), JSON.stringify(s.bans), JSON.stringify(s.groupDefs), JSON.stringify(s.claims), JSON.stringify(s.botConfig), JSON.stringify(s.descriptions ?? {}), JSON.stringify(s.profiles ?? {}), JSON.stringify(s.permissions ?? {}), s.presetId || DEFAULT_PRESET_ID, s.customPreset ? JSON.stringify(s.customPreset) : '');
     database.exec('COMMIT');
   } catch (err) {
     database.exec('ROLLBACK');
@@ -246,11 +248,31 @@ function normalize(s: Partial<StoredServer>): StoredServer {
   const preDono = !Array.isArray(s.groupDefs) || !s.groupDefs.some((g) => g?.id === Group.Dono);
   const migratedGroups = migrateGroupValues(rawGroups, preDono);
   const migratedGroupDefs = migrateGroupDefIds(s.groupDefs, preDono);
-  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: migratedGroups, bans: s.bans ?? [], groupDefs: migratedGroupDefs.length ? migratedGroupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig), descriptions: normalizeDescriptions(s.descriptions), permissions: normalizePermissions(s.permissions, preDono), ...normalizePreset(s.presetId, s.customPreset) };
+  return { ...base, ...s, id: s.id ?? base.id, slug: normalizeSlug(s.slug) || `server-${s.id ?? base.id}`, ownerId: typeof s.ownerId === 'number' ? s.ownerId : null, channels: s.channels?.length ? s.channels : base.channels, groups: migratedGroups, bans: s.bans ?? [], groupDefs: migratedGroupDefs.length ? migratedGroupDefs : [...DEFAULT_GROUP_DEFS], claims: normalizeClaims(s.claims), botConfig: normalizeBotConfig(s.botConfig), descriptions: normalizeDescriptions(s.descriptions), profiles: normalizeProfiles(s.profiles), permissions: normalizePermissions(s.permissions, preDono), ...normalizePreset(s.presetId, s.customPreset) };
 }
 
 function fromRow(row: Record<string, unknown>): StoredServer {
-  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)), claims: JSON.parse(String(row.claims_json || '[]')), botConfig: JSON.parse(String(row.bot_config_json || '{}')), descriptions: JSON.parse(String(row.descriptions_json || '{}')), permissions: JSON.parse(String(row.permissions_json || '{}')), presetId: String(row.preset_id || DEFAULT_PRESET_ID), customPreset: parseStoredPreset(row.custom_preset_json) });
+  return normalize({ id: Number(row.id), slug: String(row.slug), ownerId: row.owner_id === null ? null : Number(row.owner_id), name: String(row.name), motd: String(row.motd), password: String(row.password), maxClients: Number(row.max_clients), channels: JSON.parse(String(row.channels_json)), groups: JSON.parse(String(row.groups_json)), bans: JSON.parse(String(row.bans_json)), groupDefs: JSON.parse(String(row.group_defs_json)), claims: JSON.parse(String(row.claims_json || '[]')), botConfig: JSON.parse(String(row.bot_config_json || '{}')), descriptions: JSON.parse(String(row.descriptions_json || '{}')), profiles: JSON.parse(String(row.profiles_json || '{}')), permissions: JSON.parse(String(row.permissions_json || '{}')), presetId: String(row.preset_id || DEFAULT_PRESET_ID), customPreset: parseStoredPreset(row.custom_preset_json) });
+}
+
+function normalizeProfiles(raw: unknown): Record<string, UserProfile> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, UserProfile> = {};
+  const borders = new Set(['none', 'ember', 'royal', 'signal', 'frost']);
+  for (const [fingerprint, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object' || !fingerprint) continue;
+    const p = value as Partial<UserProfile>;
+    const avatar = typeof p.avatar === 'string'
+      && p.avatar.length <= 40 * 1024
+      && (!p.avatar || /^data:image\/(?:webp|jpeg|png);base64,[a-z0-9+/=]+$/i.test(p.avatar))
+      ? p.avatar
+      : '';
+    const border = typeof p.border === 'string' && borders.has(p.border) ? p.border as UserProfile['border'] : 'none';
+    const accent = typeof p.accent === 'string' && /^#[0-9a-f]{6}$/i.test(p.accent) ? p.accent : '#e8a33d';
+    const statusText = typeof p.statusText === 'string' ? p.statusText.slice(0, 64) : '';
+    out[fingerprint] = { fingerprint, avatar, border, accent, statusText, updatedAt: Number(p.updatedAt) || 0 };
+  }
+  return out;
 }
 
 function parseStoredPreset(raw: unknown): ServerPreset | null {

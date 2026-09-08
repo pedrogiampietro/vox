@@ -61,6 +61,79 @@ const TRANSLATIONS: readonly Translation[] = [
   ['identidade', 'identity', 'identidad'],
   ['Identidade', 'Identity', 'Identidad'],
   ['IDENTIDADE', 'IDENTITY', 'IDENTIDAD'],
+  ['Perfil', 'Profile', 'Perfil'],
+  ['Perfil de', 'Profile of', 'Perfil de'],
+  ['Avatar de', 'Avatar of', 'Avatar de'],
+  ['Novo usuário', 'New user', 'Nuevo usuario'],
+  ['Online agora', 'Online now', 'En línea ahora'],
+  ['Ausente', 'Away', 'Ausente'],
+  ['· seu recado aparece aqui', '· your status appears here', '· tu estado aparece aquí'],
+  ['✓ identidade verificada', '✓ verified identity', '✓ identidad verificada'],
+  ['Identidade protegida pela chave local do v0x', 'Identity protected by the local v0x key', 'Identidad protegida por la clave local de v0x'],
+  ['SOBRE', 'ABOUT', 'ACERCA DE'],
+  ['Conte um pouco sobre você ou informe seu Main.', 'Tell people about yourself or enter your Main.', 'Cuéntanos sobre ti o indica tu Main.'],
+  ['Este usuário ainda não adicionou uma apresentação.', 'This user has not added an introduction yet.', 'Este usuario todavía no agregó una presentación.'],
+  ['CANAL', 'CHANNEL', 'CANAL'],
+  ['NA SESSÃO', 'IN SESSION', 'EN LA SESIÓN'],
+  ['Sem canal', 'No channel', 'Sin canal'],
+  ['agora', 'now', 'ahora'],
+  ['MEU PERFIL', 'MY PROFILE', 'MI PERFIL'],
+  ['Personalize como você aparece para as pessoas deste servidor.', 'Customize how you appear to people on this server.', 'Personaliza cómo apareces para las personas de este servidor.'],
+  ['Perfil indisponível', 'Profile unavailable', 'Perfil no disponible'],
+  ['Entre em um servidor com sua identidade carregada para editar o perfil.', 'Join a server with your identity loaded to edit your profile.', 'Entra a un servidor con tu identidad cargada para editar tu perfil.'],
+  ['PRÉVIA AO VIVO', 'LIVE PREVIEW', 'VISTA PREVIA EN VIVO'],
+  ['AVATAR', 'AVATAR', 'AVATAR'],
+  ['JPG, PNG ou WebP · até 10 MB', 'JPG, PNG or WebP · up to 10 MB', 'JPG, PNG o WebP · hasta 10 MB'],
+  ['trocar imagem', 'change image', 'cambiar imagen'],
+  ['escolher imagem', 'choose image', 'elegir imagen'],
+  ['Escolher uma imagem para o avatar', 'Choose an image for the avatar', 'Elegir una imagen para el avatar'],
+  ['Escolha um arquivo de imagem válido.', 'Choose a valid image file.', 'Elige un archivo de imagen válido.'],
+  ['A imagem ultrapassa o limite de 10 MB.', 'The image exceeds the 10 MB limit.', 'La imagen supera el límite de 10 MB.'],
+  ['Preparando recorte…', 'Preparing crop…', 'Preparando recorte…'],
+  ['Recorte aplicado. Salve o perfil para publicar.', 'Crop applied. Save the profile to publish it.', 'Recorte aplicado. Guarda el perfil para publicarlo.'],
+  ['Não foi possível abrir essa imagem.', 'Could not open this image.', 'No se pudo abrir esta imagen.'],
+  ['APRESENTAÇÃO', 'INTRODUCTION', 'PRESENTACIÓN'],
+  ['Nome exibido', 'Display name', 'Nombre mostrado'],
+  ['O mesmo nome usado na lista de canais.', 'The same name used in the channel list.', 'El mismo nombre usado en la lista de canales.'],
+  ['Recado de status', 'Status message', 'Mensaje de estado'],
+  ['ex: organizando a próxima hunt', 'e.g. organizing the next hunt', 'ej.: organizando la próxima hunt'],
+  ['Uma frase curta visível abaixo do seu nome.', 'A short line shown below your name.', 'Una frase corta visible debajo de tu nombre.'],
+  ['Sobre você', 'About you', 'Sobre ti'],
+  ['Conte sobre você. Para integrar o personagem, use Main: Nome do Char.', 'Tell people about yourself. To link your character, use Main: Character Name.', 'Cuéntanos sobre ti. Para vincular tu personaje, usa Main: Nombre del personaje.'],
+  ['Até 200 caracteres.', 'Up to 200 characters.', 'Hasta 200 caracteres.'],
+  ['ESTILO', 'STYLE', 'ESTILO'],
+  ['Cor de destaque', 'Accent color', 'Color de destaque'],
+  ['Cor de destaque do perfil', 'Profile accent color', 'Color de destaque del perfil'],
+  ['Usada no banner, foco e moldura.', 'Used in the banner, focus and frame.', 'Se usa en el banner, foco y marco.'],
+  ['restaurar', 'restore', 'restaurar'],
+  ['Moldura do avatar', 'Avatar frame', 'Marco del avatar'],
+  ['Essencial', 'Essential', 'Esencial'],
+  ['limpa e discreta', 'clean and subtle', 'limpio y discreto'],
+  ['Brasa', 'Ember', 'Brasa'],
+  ['ouro quente do v0x', 'v0x warm gold', 'oro cálido de v0x'],
+  ['Royal', 'Royal', 'Royal'],
+  ['camadas de prestígio', 'layers of prestige', 'capas de prestigio'],
+  ['Sinal', 'Signal', 'Señal'],
+  ['energia de presença', 'presence energy', 'energía de presencia'],
+  ['Frost', 'Frost', 'Frost'],
+  ['contraste azulado', 'cool blue contrast', 'contraste azulado'],
+  ['salvar perfil', 'save profile', 'guardar perfil'],
+  ['salvando…', 'saving…', 'guardando…'],
+  ['Sincronizando com o servidor…', 'Syncing with the server…', 'Sincronizando con el servidor…'],
+  ['Perfil salvo e publicado.', 'Profile saved and published.', 'Perfil guardado y publicado.'],
+  ['salvo', 'saved', 'guardado'],
+  ['Informe um nome para salvar.', 'Enter a name before saving.', 'Escribe un nombre antes de guardar.'],
+  ['Não foi possível salvar o perfil. Tente novamente.', 'Could not save the profile. Try again.', 'No se pudo guardar el perfil. Inténtalo de nuevo.'],
+  ['Você está offline. Reconecte para publicar o perfil.', 'You are offline. Reconnect to publish the profile.', 'Estás desconectado. Vuelve a conectarte para publicar el perfil.'],
+  ['Ajustar avatar', 'Adjust avatar', 'Ajustar avatar'],
+  ['Arraste para reposicionar e use o zoom.', 'Drag to reposition and use zoom.', 'Arrastra para reposicionar y usa el zoom.'],
+  ['Área de recorte do avatar. Use as setas para reposicionar.', 'Avatar crop area. Use the arrow keys to reposition.', 'Área de recorte del avatar. Usa las flechas para reposicionar.'],
+  ['Zoom', 'Zoom', 'Zoom'],
+  ['Zoom do avatar', 'Avatar zoom', 'Zoom del avatar'],
+  ['usar este recorte', 'use this crop', 'usar este recorte'],
+  ['processando…', 'processing…', 'procesando…'],
+  ['Seu navegador não conseguiu processar a imagem.', 'Your browser could not process the image.', 'Tu navegador no pudo procesar la imagen.'],
+  ['Não foi possível processar a imagem.', 'Could not process the image.', 'No se pudo procesar la imagen.'],
   ['Capturar', 'Capture', 'Captura'],
   ['CAPTURAR', 'CAPTURE', 'CAPTURA'],
   ['Reprodução', 'Playback', 'Reproducción'],
@@ -575,6 +648,18 @@ function translatedText(source: string): string {
   if (match) return locale === 'en' ? `${match[1]} user(s)` : `${match[1]} usuario(s)`;
   match = /^(\d+) usuários$/.exec(source);
   if (match) return locale === 'en' ? `${match[1]} users` : `${match[1]} usuarios`;
+  match = /^(\d+) segundos?$/.exec(source);
+  if (match) {
+    const amount = Number(match[1]);
+    if (locale === 'en') return `${amount} second${amount === 1 ? '' : 's'}`;
+    return `${amount} segundo${amount === 1 ? '' : 's'}`;
+  }
+  match = /^(\d+) minutos?$/.exec(source);
+  if (match) {
+    const amount = Number(match[1]);
+    if (locale === 'en') return `${amount} minute${amount === 1 ? '' : 's'}`;
+    return `${amount} minuto${amount === 1 ? '' : 's'}`;
+  }
   match = /^(\d+) slots$/.exec(source);
   if (match) return `${match[1]} slots`;
   match = /^(\d+) slots para o seu time$/.exec(source);

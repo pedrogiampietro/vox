@@ -164,6 +164,7 @@ export class Registry {
         channelName: preset.bot.channelName ?? DEFAULT_BOT_CONFIG.channelName,
       },
       descriptions: {},
+      profiles: {},
       permissions: {},
       presetId: preset.id,
       customPreset: null,

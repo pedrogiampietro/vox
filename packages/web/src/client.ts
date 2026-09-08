@@ -5,7 +5,7 @@
  */
 
 import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, DEFAULT_PRESET_ID, FailureCode, Group, NO_CHANNEL, Op, PermissionAction, findPreset, parsePreset } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, ServerPreset } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, ServerPreset, UserProfile } from '@vox/protocol';
 import { Connection, type LinkState, type Target, type VoiceTransport } from './net/connection.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer, type VoicePlaybackHealth, type VoiceSenderStats } from './audio/mixer.js';
@@ -16,6 +16,7 @@ import { loadAudioPrefs, saveAudioPrefs, type AudioPrefs } from './audio-prefs.j
 import { touchFavorite, type Favorite } from './favorites.js';
 import { notifications } from './notifications.js';
 import { ScreenShare } from './screen-share.js';
+import { emptyProfile, loadLocalProfile, normalizeProfile, saveLocalProfile } from './profile.js';
 
 export interface ChatLine {
   scope: ChatScope;
@@ -68,6 +69,8 @@ export interface DmTab {
 export class VoxClient {
   readonly channels = new Map<number, ChannelInfo>();
   readonly clients = new Map<number, ClientInfo>();
+  /** fingerprint -> perfil visual; avatares chegam em frames separados. */
+  readonly profiles = new Map<string, UserProfile>();
   readonly claims = new Map<number, RespClaimInfo>();
   botState: BotStateInfo | null = null;
   /** fingerprint -> info do char Tibia (vocation/level/online), via bot Rubinot. */
@@ -123,6 +126,8 @@ export class VoxClient {
 
   private audioPrefs: AudioPrefs | null = null;
   private connectGeneration = 0;
+  private profileSentForConnection = false;
+  private profileReceivedForConnection = false;
 
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
@@ -185,6 +190,11 @@ export class VoxClient {
 
   get self(): ClientInfo | undefined {
     return this.clients.get(this.selfId);
+  }
+
+  profileFor(client: ClientInfo | undefined): UserProfile {
+    if (!client?.fingerprint) return emptyProfile();
+    return this.profiles.get(client.fingerprint) ?? emptyProfile(client.fingerprint);
   }
 
   get flags(): number {
@@ -256,8 +266,6 @@ export class VoxClient {
     this.favorite = favorite;
     this.audioPrefs = loadAudioPrefs(favorite.serverId);
     this.applyAudioPrefs(this.audioPrefs);
-    await this.ensureAudio();
-    if (generation !== this.connectGeneration) return;
 
     const target: Target = {
       address: favorite.address,
@@ -304,6 +312,7 @@ export class VoxClient {
     if (this.isVoiceRecording) void this.stopVoiceRecording();
     this.channels.clear();
     this.clients.clear();
+    this.profiles.clear();
     this.claims.clear();
     this.playerInfos.clear();
     this.permissions.clear();
@@ -318,6 +327,8 @@ export class VoxClient {
     this.myGroup = Group.Guest;
     this.groupDefs = [...DEFAULT_GROUP_DEFS];
     this.botState = null;
+    this.profileSentForConnection = false;
+    this.profileReceivedForConnection = false;
     this.screen.close();
     // Offline de verdade: nao ha reconexao a caminho para justificar segurar o
     // dispositivo, entao o microfone sai na hora.
@@ -815,6 +826,22 @@ export class VoxClient {
     this.connection.send({ t: Op.SetClientDescription, fingerprint, description });
   }
 
+  setProfile(input: UserProfile): void {
+    const fingerprint = this.identity?.fingerprint ?? '';
+    if (!fingerprint) return;
+    const profile = normalizeProfile({ ...input, fingerprint, updatedAt: Date.now() });
+    this.profiles.set(fingerprint, profile);
+    saveLocalProfile(profile);
+    this.connection.send({
+      t: Op.SetProfile,
+      avatar: profile.avatar,
+      border: profile.border,
+      accent: profile.accent,
+      statusText: profile.statusText,
+    });
+    this.onChange();
+  }
+
   setPermission(action: PermissionAction, minGroup: Group): void {
     this.connection.send({ t: Op.SetPermission, action, minGroup });
   }
@@ -950,6 +977,21 @@ export class VoxClient {
         for (const claim of m.claims) this.claims.set(claim.id, claim);
         void this.startMic();
         this.syncMicMute();
+        if (!this.profileSentForConnection && this.identity) {
+          this.profileSentForConnection = true;
+          const local = loadLocalProfile(this.identity.fingerprint);
+          if (local) {
+            // Mostra o cache imediatamente, mas aguarda o servidor responder
+            // antes de publicar. Assim um cache antigo deste dispositivo não
+            // sobrescreve um perfil mais novo salvo em outro dispositivo.
+            this.profiles.set(local.fingerprint, local);
+            const generation = this.connectGeneration;
+            setTimeout(() => {
+              if (generation !== this.connectGeneration || this.link !== 'online') return;
+              if (!this.profileReceivedForConnection) this.setProfile(local);
+            }, 500);
+          }
+        }
         break;
 
       case Op.ChannelAdd:
@@ -1126,6 +1168,16 @@ export class VoxClient {
       case Op.PlayerInfoBatch:
         for (const info of m.infos) this.playerInfos.set(info.fingerprint, info);
         break;
+
+      case Op.ProfileUpdate: {
+        const profile = normalizeProfile(m.profile);
+        this.profiles.set(profile.fingerprint, profile);
+        if (profile.fingerprint === this.identity?.fingerprint) {
+          this.profileReceivedForConnection = true;
+          saveLocalProfile(profile);
+        }
+        break;
+      }
 
       case Op.Permissions:
         this.permissions.clear();

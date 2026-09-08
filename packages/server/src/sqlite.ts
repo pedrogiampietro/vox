@@ -53,6 +53,9 @@ database.exec(`
   if (!has.has('descriptions_json')) {
     database.exec("ALTER TABLE servers ADD COLUMN descriptions_json TEXT NOT NULL DEFAULT '{}'");
   }
+  if (!has.has('profiles_json')) {
+    database.exec("ALTER TABLE servers ADD COLUMN profiles_json TEXT NOT NULL DEFAULT '{}'");
+  }
   if (!has.has('permissions_json')) {
     database.exec("ALTER TABLE servers ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{}'");
   }

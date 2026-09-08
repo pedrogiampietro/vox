@@ -4,6 +4,7 @@ target/
 *.log
 .env
 data/
+.tmp-*/
 .DS_Store
 
 .env

@@ -30,7 +30,7 @@ import {
   encodeClientMessage,
   encodeVoice,
 } from '@vox/protocol';
-import type { ChannelInfo, ClientInfo, ClientMessage, ServerMessage } from '@vox/protocol';
+import type { ChannelInfo, ClientInfo, ClientMessage, ServerMessage, UserProfile } from '@vox/protocol';
 
 interface Welcome {
   voiceToken: Uint8Array;
@@ -75,6 +75,7 @@ class TestClient {
 
   readonly channels = new Map<number, ChannelInfo>();
   readonly clients = new Map<number, ClientInfo>();
+  readonly profiles = new Map<string, UserProfile>();
   readonly chat: { senderId: number; scope: ChatScope; targetId: number; text: string }[] = [];
   readonly voice: HeardVoice[] = [];
   readonly failures: { code: FailureCode; message: string }[] = [];
@@ -145,6 +146,9 @@ class TestClient {
       }
       case Op.ChatDeliver:
         this.chat.push({ senderId: m.senderId, scope: m.scope, targetId: m.targetId, text: m.text });
+        break;
+      case Op.ProfileUpdate:
+        this.profiles.set(m.profile.fingerprint, m.profile);
         break;
     }
   }
@@ -336,6 +340,22 @@ async function main(): Promise<void> {
   check('alice ve o bob na lista', alice.clients.has(bob.id));
   check('bob ve a alice na lista', bob.clients.has(alice.id));
   check('os dois entram no mesmo canal padrao', alice.channelId === bob.channelId);
+
+  // --- perfil publico -----------------------------------------------------
+
+  const aliceFingerprint = alice.clients.get(alice.id)?.fingerprint ?? '';
+  alice.send({
+    t: Op.SetProfile,
+    avatar: '',
+    border: 'signal',
+    accent: '#48d889',
+    statusText: `perfil ${RUN}`,
+  });
+  const profileDelivered = await until('perfil da alice chega aos clientes visiveis', () =>
+    bob.profiles.get(aliceFingerprint)?.statusText === `perfil ${RUN}`
+    && alice.profiles.get(aliceFingerprint)?.border === 'signal');
+  check('perfil sincroniza moldura, cor e recado', profileDelivered
+    && bob.profiles.get(aliceFingerprint)?.accent === '#48d889');
 
   // --- voz dentro do mesmo canal ------------------------------------------
 

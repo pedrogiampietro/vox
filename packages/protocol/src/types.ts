@@ -18,8 +18,9 @@
  * 16: editor de servidor e capacidade anunciada no handshake.
  * 17: permissões de visibilidade/entrada em canais e canal sem voz.
  * 18: mover canais na arvore (drag-and-drop) com permissao propria.
+ * 19: perfil visual por identidade (avatar, moldura, cor e status).
  */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -80,6 +81,7 @@ export enum Op {
   SetPermission = 0x7a,
   SetPreset = 0x7b,
   EditServer = 0x7c,
+  SetProfile = 0x7d,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -105,6 +107,7 @@ export enum Op {
   Permissions = 0xc6,
   PresetState = 0xc7,
   ServerUpdate = 0xc8,
+  ProfileUpdate = 0xc9,
 }
 
 export enum BotControlAction {
@@ -279,6 +282,26 @@ export interface ClientInfo {
   platform: string;
   /** Descricao livre por identidade (ex: "Main: Pedrao Warsz"). Persistida. */
   description: string;
+}
+
+/** Molduras de avatar disponíveis no cliente oficial. */
+export type ProfileBorder = 'none' | 'ember' | 'royal' | 'signal' | 'frost';
+
+/**
+ * Perfil visual persistido pela identidade. O avatar já chega recortado e
+ * comprimido pelo cliente; mantê-lo em uma mensagem separada evita que o
+ * snapshot de canais cresça conforme entram usuários com foto.
+ */
+export interface UserProfile {
+  fingerprint: string;
+  /** Data URI WebP/JPEG/PNG, limitada e validada pelo servidor. */
+  avatar: string;
+  border: ProfileBorder;
+  /** Cor hexadecimal usada nos destaques do cartão. */
+  accent: string;
+  /** Recado curto mostrado junto da presença. */
+  statusText: string;
+  updatedAt: number;
 }
 
 /** Definicao visual de um grupo. */

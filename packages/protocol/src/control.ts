@@ -7,7 +7,7 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, RespQueueEntry, VoiceEdge } from './types.js';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, ProfileBorder, RespClaimInfo, RespQueueEntry, UserProfile, VoiceEdge } from './types.js';
 import { BotControlAction, ChatScope, FailureCode, FrameKind, Group, Op, PermissionAction, RemoveReason } from './types.js';
 
 export type ClientMessage =
@@ -72,9 +72,10 @@ export type ClientMessage =
   /**
    * Aplica um preset. `presetId` referencia um embutido; `custom` carrega o
    * JSON completo quando o preset veio de importacao (e ai o id e ignorado).
-   */
+  */
   | { t: Op.SetPreset; presetId: string; custom: string }
-  | { t: Op.EditServer; name: string; motd: string; maxClients: number };
+  | { t: Op.EditServer; name: string; motd: string; maxClients: number }
+  | { t: Op.SetProfile; avatar: string; border: ProfileBorder; accent: string; statusText: string };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -132,6 +133,7 @@ export type ServerMessage =
   /** Preset ativo. `custom` vem preenchido so quando nao e um embutido. */
   | { t: Op.PresetState; presetId: string; custom: string }
   | { t: Op.ServerUpdate; name: string; motd: string; maxClients: number }
+  | { t: Op.ProfileUpdate; profile: UserProfile }
   | { t: Op.ScreenSignalDeliver; senderId: number; targetId: number; kind: string; data: string };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
@@ -173,6 +175,27 @@ function readClient(r: Reader): ClientInfo {
     connectedAt: r.u32() * 1000,
     platform: r.str(),
     description: r.str(),
+  };
+}
+
+function writeProfile(w: Writer, p: UserProfile): void {
+  w
+    .str(p.fingerprint)
+    .str(p.avatar)
+    .str(p.border)
+    .str(p.accent)
+    .str(p.statusText)
+    .f64(p.updatedAt);
+}
+
+function readProfile(r: Reader): UserProfile {
+  return {
+    fingerprint: r.str(),
+    avatar: r.str(),
+    border: r.str() as ProfileBorder,
+    accent: r.str(),
+    statusText: r.str(),
+    updatedAt: r.f64(),
   };
 }
 
@@ -421,6 +444,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
     case Op.EditServer:
       w.str(m.name).str(m.motd).u16(m.maxClients);
       break;
+    case Op.SetProfile:
+      w.str(m.avatar).str(m.border).str(m.accent).str(m.statusText);
+      break;
   }
   return w.finish();
 }
@@ -521,6 +547,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { t, presetId: r.str(), custom: r.str() };
     case Op.EditServer:
       return { t, name: r.str(), motd: r.str(), maxClients: r.u16() };
+    case Op.SetProfile:
+      return { t, avatar: r.str(), border: r.str() as ProfileBorder, accent: r.str(), statusText: r.str() };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -610,6 +638,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.ServerUpdate:
       w.str(m.name).str(m.motd).u16(m.maxClients);
       break;
+    case Op.ProfileUpdate:
+      writeProfile(w, m.profile);
+      break;
   }
   return w.finish();
 }
@@ -685,6 +716,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, presetId: r.str(), custom: r.str() };
     case Op.ServerUpdate:
       return { t, name: r.str(), motd: r.str(), maxClients: r.u16() };
+    case Op.ProfileUpdate:
+      return { t, profile: readProfile(r) };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }
