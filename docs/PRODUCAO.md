@@ -195,7 +195,7 @@ atual de quem enviou. As variáveis (`VOX_BOT_PASSWORD`, `VOX_BOT_VOLUME`,
 
 ## Deploy de uma atualização
 
-O workflow do GitHub Actions já executa este fluxo quando há push na `master`:
+O workflow do GitHub Actions executa este fluxo quando há push na `master`:
 
 ```bash
 cd /opt/vox
@@ -206,7 +206,11 @@ systemctl restart vox.service
 ```
 
 O `.env`, `/etc/caddy` e os dados ficam fora do Git e não são sobrescritos pelo
-deploy.
+deploy. Depois que os edges regionais forem cadastrados em
+`VOX_EDGE_TARGETS`, o mesmo workflow também envia o artefato compilado para
+cada VPS, atualiza `vox-edge.service`, reinicia o serviço e restaura a versão
+anterior se a nova não ficar saudável. Consulte o [runbook do edge](VOX_EDGE.md)
+para a preparação única e o formato da lista.
 
 ## Teste de carga e métricas
 

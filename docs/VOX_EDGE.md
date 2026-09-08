@@ -57,6 +57,37 @@ Além dos edges configurados, a própria origem é anunciada automaticamente com
 mais um candidato quando o WebTransport local consegue iniciar. Isso permite
 comparar uma VPS regional com a origem sem criar outra máquina.
 
+## Atualização automática de todos os edges
+
+O workflow da `master` compila o edge uma vez e publica o mesmo artefato em
+todas as VPS cadastradas. O `.env` da máquina, os certificados, os dados e o
+segredo do link não são tocados. Depois do upload, o serviço é reiniciado e
+validado; se não ficar `active`, a versão anterior é restaurada
+automaticamente.
+
+Faça a preparação de cada VPS uma única vez:
+
+1. Instale a chave pública de deploy em `/root/.ssh/authorized_keys` (ou no
+   usuário dedicado que executa `vox-edge.service`).
+2. Garanta que a instalação inicial descrita abaixo esteja funcionando.
+3. No GitHub, em **Settings → Secrets and variables → Actions**, crie a
+   variável `VOX_EDGE_TARGETS`, uma linha por máquina, no formato:
+
+   ```text
+   voice-sp|179.199.142.231|root|22
+   ```
+
+   Para outra região, acrescente outra linha, por exemplo
+   `voice-dallas|IP|root|22`.
+4. Crie o secret `VOX_EDGE_SSH_KEY` com a chave privada correspondente. Use
+   uma chave exclusiva de deploy, sem senha de usuário e sem colocá-la no
+   repositório.
+
+A partir daí, cada push aprovado na `master` atualiza a origem e todos os
+edges automaticamente. O cadastro de uma VPS nova continua exigindo apenas a
+preparação inicial da máquina e a inclusão da linha; os deploys seguintes
+deixam de ser manuais.
+
 ## Instalação da VPS em São Paulo
 
 Requisitos: Ubuntu/Debian 64-bit, Node.js 22+, acesso root, IPv4 público e

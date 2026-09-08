@@ -36,6 +36,16 @@ jobs:
         run: echo 'Dependências restauradas do cache; npm ci ignorado.'
       - run: npm run typecheck
       - run: npm run build
+      - name: Package regional edge
+        run: |
+          mkdir -p edge-deploy
+          cp dist/edge.mjs edge-deploy/edge.mjs
+          cp docs/vox-edge.service edge-deploy/vox-edge.service
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v0x-edge-deploy
+          path: edge-deploy
+          if-no-files-found: error
 
   desktop:
     name: Build Windows desktop
@@ -175,6 +185,23 @@ jobs:
             echo 'Jukebox nao instalado nesta maquina; nada a fazer.'
           fi
           REMOTE
+
+  deploy-edges:
+    name: Deploy regional voice edges
+    needs: [validate, deploy]
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.deploy.result == 'success') || (github.event_name == 'workflow_dispatch' && needs.deploy.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: v0x-edge-deploy
+          path: edge-deploy
+      - name: Deploy all configured regional edges
+        env:
+          EDGE_TARGETS: ${{ vars.VOX_EDGE_TARGETS }}
+          EDGE_SSH_KEY: ${{ secrets.VOX_EDGE_SSH_KEY }}
+        run: bash .github/scripts/deploy-edges.sh edge-deploy
 
   # Os instaladores vao para as releases de pedrogiampietro/v0x-desktop, e nao
   # mais para /downloads na VPS. Dois motivos, os dois sobre o aviso
