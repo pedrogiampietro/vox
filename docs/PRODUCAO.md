@@ -285,10 +285,11 @@ o maior cenário que mantém cerca de 30% de folga e `event loop p95` abaixo de
 
 O workflow manual `Production voice stress` executa em sequência os cenários
 isolados de 50, 100 e 150 clientes, com 8, 16 e 24 falantes distribuídos em 2,
-4 e 8 canais. Cada caso usa um runner separado, publica seu `report.json` como
-artefato e aguarda um intervalo de resfriamento antes do próximo. Ao final, a
-Action monta um resumo consolidado na própria página, permitindo comparar CPU,
-memória, banda, event loop, RTT, descartes e transportes sem somar as cargas.
+4 e 8 canais. Cada cenário é dividido em shards de no máximo 8 clientes, que
+rodam simultaneamente em runners diferentes para não concentrar toda a carga
+em um único IP. Cada shard publica seu `report.json`; ao final, a Action agrega
+os relatórios na própria página, permitindo comparar CPU, memória, banda, event
+loop, RTT, descartes e transportes sem somar as cargas entre cenários.
 
 Antes de iniciar, confirme que a VPS aceita a quantidade de conexões por IP e
 combine a janela com quem opera a produção. Se quiser CPU, RAM e event loop no
@@ -298,11 +299,11 @@ Sem ele, o painel master continua mostrando essas métricas em tempo real.
 Depois abra **Actions → Production voice stress → Run workflow**, informe a
 URL WSS, a duração, o transporte e digite `PRODUCAO` no campo de confirmação.
 
-Os três runners têm IPs diferentes, mas a infraestrutura do GitHub fica na
-mesma região geral. Para representar jogadores do Brasil, Europa e América do
-Norte, repita a execução a partir de máquinas ou runners nessas regiões e
-compare os artefatos pelo mesmo cenário. O workflow é manual e não agenda
-carga automaticamente.
+Os runners hospedados pelo GitHub normalmente têm IPs públicos diferentes, mas
+isso não é uma garantia de diversidade geográfica. Se aparecer `429` por limite
+de IP, repita a rodada com runners ou máquinas distribuídos no Brasil, Europa e
+América do Norte e compare os artefatos pelo mesmo cenário. O workflow é manual
+e não agenda carga automaticamente.
 
 ## Checkout Pro do Mercado Pago
 

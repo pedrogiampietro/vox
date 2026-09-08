@@ -63,28 +63,24 @@ jobs:
             echo 'Aviso: STRESS_ADMIN_TOKEN nao foi informado; o relatorio nao tera CPU/RAM/event loop.'
           fi
 
-  stress:
-    name: '${{ matrix.name }} voice load'
+  stress_50:
+    name: '50 clientes · shard ${{ matrix.shard }}'
     needs: guard
+    if: ${{ needs.guard.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 7
       matrix:
         include:
-          - name: 50-clientes
-            clients: 50
-            speakers: 8
-            channels: 2
-          - name: 100-clientes
-            clients: 100
-            speakers: 16
-            channels: 4
-          - name: 150-clientes
-            clients: 150
-            speakers: 24
-            channels: 8
+          - { shard: 1, clients: 8, speakers: 2 }
+          - { shard: 2, clients: 7, speakers: 1 }
+          - { shard: 3, clients: 7, speakers: 1 }
+          - { shard: 4, clients: 7, speakers: 1 }
+          - { shard: 5, clients: 7, speakers: 1 }
+          - { shard: 6, clients: 7, speakers: 1 }
+          - { shard: 7, clients: 7, speakers: 1 }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -93,10 +89,11 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
-      - name: Run production stress scenario
+      - name: Run production stress shard
         env:
           STRESS_CONFIRM: '1'
           STRESS_ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          STRESS_JSON_OUT: report.json
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_TRANSPORT: ${{ inputs.voice_transport }}
@@ -105,15 +102,141 @@ jobs:
             --url "$TARGET_URL" \
             --clients '${{ matrix.clients }}' \
             --speakers '${{ matrix.speakers }}' \
-            --channels '${{ matrix.channels }}' \
+            --channels 2 \
             --duration "$DURATION_SEC" \
             --voice-profile realistic \
             --voice-transport "$VOICE_TRANSPORT"
-      - name: Upload scenario report
+      - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: production-stress-${{ matrix.name }}-${{ github.run_id }}
+          name: production-stress-50-clientes-shard-${{ matrix.shard }}-${{ github.run_id }}
+          path: report.json
+          if-no-files-found: warn
+      - name: Cool down before the next scenario
+        if: always()
+        run: sleep 15
+
+  stress_100:
+    name: '100 clientes · shard ${{ matrix.shard }}'
+    needs: [guard, stress_50]
+    if: ${{ always() && needs.guard.result == 'success' && needs.stress_50.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 13
+      matrix:
+        include:
+          - { shard: 1, clients: 8, speakers: 1 }
+          - { shard: 2, clients: 8, speakers: 1 }
+          - { shard: 3, clients: 8, speakers: 1 }
+          - { shard: 4, clients: 8, speakers: 1 }
+          - { shard: 5, clients: 8, speakers: 1 }
+          - { shard: 6, clients: 8, speakers: 1 }
+          - { shard: 7, clients: 8, speakers: 1 }
+          - { shard: 8, clients: 8, speakers: 1 }
+          - { shard: 9, clients: 8, speakers: 1 }
+          - { shard: 10, clients: 8, speakers: 1 }
+          - { shard: 11, clients: 8, speakers: 1 }
+          - { shard: 12, clients: 8, speakers: 1 }
+          - { shard: 13, clients: 4, speakers: 4 }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Run production stress shard
+        env:
+          STRESS_CONFIRM: '1'
+          STRESS_ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          STRESS_JSON_OUT: report.json
+          TARGET_URL: ${{ inputs.target_url }}
+          DURATION_SEC: ${{ inputs.duration_sec }}
+          VOICE_TRANSPORT: ${{ inputs.voice_transport }}
+        run: |
+          npm run stress -- \
+            --url "$TARGET_URL" \
+            --clients '${{ matrix.clients }}' \
+            --speakers '${{ matrix.speakers }}' \
+            --channels 4 \
+            --duration "$DURATION_SEC" \
+            --voice-profile realistic \
+            --voice-transport "$VOICE_TRANSPORT"
+      - name: Upload shard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-stress-100-clientes-shard-${{ matrix.shard }}-${{ github.run_id }}
+          path: report.json
+          if-no-files-found: warn
+      - name: Cool down before the next scenario
+        if: always()
+        run: sleep 15
+
+  stress_150:
+    name: '150 clientes · shard ${{ matrix.shard }}'
+    needs: [guard, stress_50, stress_100]
+    if: ${{ always() && needs.guard.result == 'success' && needs.stress_50.result != 'cancelled' && needs.stress_100.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 19
+      matrix:
+        include:
+          - { shard: 1, clients: 8, speakers: 1 }
+          - { shard: 2, clients: 8, speakers: 1 }
+          - { shard: 3, clients: 8, speakers: 1 }
+          - { shard: 4, clients: 8, speakers: 1 }
+          - { shard: 5, clients: 8, speakers: 1 }
+          - { shard: 6, clients: 8, speakers: 1 }
+          - { shard: 7, clients: 8, speakers: 1 }
+          - { shard: 8, clients: 8, speakers: 1 }
+          - { shard: 9, clients: 8, speakers: 1 }
+          - { shard: 10, clients: 8, speakers: 1 }
+          - { shard: 11, clients: 8, speakers: 1 }
+          - { shard: 12, clients: 8, speakers: 1 }
+          - { shard: 13, clients: 8, speakers: 1 }
+          - { shard: 14, clients: 8, speakers: 1 }
+          - { shard: 15, clients: 8, speakers: 1 }
+          - { shard: 16, clients: 8, speakers: 1 }
+          - { shard: 17, clients: 8, speakers: 1 }
+          - { shard: 18, clients: 8, speakers: 1 }
+          - { shard: 19, clients: 6, speakers: 6 }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Run production stress shard
+        env:
+          STRESS_CONFIRM: '1'
+          STRESS_ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          STRESS_JSON_OUT: report.json
+          TARGET_URL: ${{ inputs.target_url }}
+          DURATION_SEC: ${{ inputs.duration_sec }}
+          VOICE_TRANSPORT: ${{ inputs.voice_transport }}
+        run: |
+          npm run stress -- \
+            --url "$TARGET_URL" \
+            --clients '${{ matrix.clients }}' \
+            --speakers '${{ matrix.speakers }}' \
+            --channels 8 \
+            --duration "$DURATION_SEC" \
+            --voice-profile realistic \
+            --voice-transport "$VOICE_TRANSPORT"
+      - name: Upload shard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-stress-150-clientes-shard-${{ matrix.shard }}-${{ github.run_id }}
           path: report.json
           if-no-files-found: warn
       - name: Cool down before the next scenario
@@ -123,7 +246,7 @@ jobs:
   summary:
     name: Summarize production stress
     if: always()
-    needs: stress
+    needs: [stress_50, stress_100, stress_150]
     runs-on: ubuntu-latest
     steps:
       - name: Download scenario reports
@@ -153,29 +276,60 @@ jobs:
             }
           };
           visit(root);
-          files.sort();
 
-          const rows = files.map((file) => {
+          const groups = new Map();
+          for (const file of files) {
+            const folder = path.basename(path.dirname(file));
+            const match = folder.match(/^production-stress-(50|100|150)-clientes-/);
+            const scenario = match ? `${match[1]} clientes` : folder;
             const report = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const current = groups.get(scenario) ?? {
+              requested: 0,
+              active: 0,
+              sent: 0,
+              received: 0,
+              rttP95: 0,
+              cpu: null,
+              rss: null,
+              loop: null,
+              outboundKbps: null,
+              transport: { quic: 0, wsDedicated: 0, ws: 0 },
+              pass: true,
+              reports: 0,
+            };
+            current.requested += report.clientsRequested ?? 0;
+            current.active += report.clientsActive ?? 0;
+            current.sent += report.voiceSent ?? 0;
+            current.received += report.voiceReceived ?? 0;
+            current.rttP95 = Math.max(current.rttP95, report.rttMs?.p95 ?? 0);
+            current.pass = current.pass && report.pass === true;
+            current.reports += 1;
+            for (const key of ['quic', 'wsDedicated', 'ws']) {
+              current.transport[key] += report.voiceTransports?.[key] ?? 0;
+            }
             const runtime = report.adminRuntime;
-            const transport = report.voiceTransports ?? {};
-            return [
-              path.basename(path.dirname(file)),
-              `${report.clientsActive}/${report.clientsRequested}`,
-              `${Math.round(report.rttMs?.p95 ?? 0)} ms`,
-              runtime ? `${Number(runtime.processCpuPercent).toFixed(1)}%` : 'n/d',
-              runtime ? `${Number(runtime.eventLoopLagP95Ms).toFixed(1)} ms` : 'n/d',
-              runtime ? `${Number(runtime.traffic?.outboundKbps ?? 0).toFixed(1)} kbps` : 'n/d',
-              `${transport.quic ?? 0} QUIC / ${transport.wsDedicated ?? 0} WS dedicado / ${transport.ws ?? 0} WS controle`,
-              report.pass ? 'PASS' : 'FAIL',
-            ];
-          });
+            if (runtime) {
+              current.cpu = Math.max(current.cpu ?? 0, runtime.processCpuPercent ?? 0);
+              current.rss = Math.max(current.rss ?? 0, runtime.memory?.rssBytes ?? 0);
+              current.loop = Math.max(current.loop ?? 0, runtime.eventLoopLagP95Ms ?? 0);
+              current.outboundKbps = Math.max(current.outboundKbps ?? 0, runtime.traffic?.outboundKbps ?? 0);
+            }
+            groups.set(scenario, current);
+          }
 
+          const order = ['50 clientes', '100 clientes', '150 clientes'];
+          const formatBytes = (bytes) => bytes == null ? 'n/d' : `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+          const formatNumber = (value, suffix = '') => value == null ? 'n/d' : `${Number(value).toFixed(1)}${suffix}`;
           let markdown = '# Resumo do stress de produção\n\n';
           markdown += `Alvo: \`${process.env.TARGET_URL ?? 'informado no workflow'}\`\n\n`;
-          markdown += '| Cenário | Ativos | RTT p95 | CPU processo | Event loop p95 | Saída | Transporte | Resultado |\n';
-          markdown += '|---|---:|---:|---:|---:|---:|---|---|\n';
-          for (const row of rows) markdown += `| ${row.join(' | ')} |\n`;
-          if (rows.length === 0) markdown += '| Nenhum relatório foi gerado | — | — | — | — | — | — | — |\n';
+          markdown += '| Cenário | Ativos | Voz recebida | RTT p95 | CPU máx. | RSS máx. | Loop p95 máx. | Saída máx. | Transporte | Resultado |\n';
+          markdown += '|---|---:|---:|---:|---:|---:|---:|---:|---|---|\n';
+          for (const scenario of order) {
+            const group = groups.get(scenario);
+            if (!group) continue;
+            const transport = `${group.transport.quic} QUIC / ${group.transport.wsDedicated} WS dedicado / ${group.transport.ws} WS controle`;
+            markdown += `| ${scenario} (${group.reports} shards) | ${group.active}/${group.requested} | ${group.received}/${group.sent} | ${Math.round(group.rttP95)} ms | ${formatNumber(group.cpu, '%')} | ${formatBytes(group.rss)} | ${formatNumber(group.loop, ' ms')} | ${formatNumber(group.outboundKbps, ' kbps')} | ${transport} | ${group.pass ? 'PASS' : 'FAIL'} |\n`;
+          }
+          if (groups.size === 0) markdown += '| Nenhum relatório foi gerado | — | — | — | — | — | — | — | — | — |\n';
           fs.appendFileSync(output, markdown);
           NODE
