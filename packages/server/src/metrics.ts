@@ -31,6 +31,8 @@ export interface RuntimeMetricsSnapshot {
     controlOutboundBytesTotal: number;
     voiceInboundBytesTotal: number;
     voiceOutboundBytesTotal: number;
+    voiceFanoutFramesTotal: number;
+    voiceFanoutRecipientsTotal: number;
     voiceDroppedPacketsTotal: number;
     voiceDroppedBytesTotal: number;
   };
@@ -43,6 +45,8 @@ interface TrafficTotals {
   controlOutbound: number;
   voiceInbound: number;
   voiceOutbound: number;
+  voiceFanoutFrames: number;
+  voiceFanoutRecipients: number;
   voiceDroppedPackets: number;
   voiceDroppedBytes: number;
 }
@@ -60,6 +64,8 @@ export class RuntimeMetricsCollector {
     controlOutbound: 0,
     voiceInbound: 0,
     voiceOutbound: 0,
+    voiceFanoutFrames: 0,
+    voiceFanoutRecipients: 0,
     voiceDroppedPackets: 0,
     voiceDroppedBytes: 0,
   };
@@ -88,6 +94,19 @@ export class RuntimeMetricsCollector {
     this.totals.outbound += bytes;
     if (kind === 'voice') this.totals.voiceOutbound += bytes;
     else this.totals.controlOutbound += bytes;
+  }
+
+  /**
+   * Registra uma entrega de voz inteira. O hot path pode fazer uma unica
+   * atualizacao para os N destinatarios, em vez de repetir os mesmos testes
+   * de tipo e validade para cada socket.
+   */
+  recordVoiceFanout(bytes: number, recipients: number): void {
+    if (!Number.isFinite(bytes) || bytes <= 0 || !Number.isInteger(recipients) || recipients <= 0) return;
+    this.totals.outbound += bytes * recipients;
+    this.totals.voiceOutbound += bytes * recipients;
+    this.totals.voiceFanoutFrames++;
+    this.totals.voiceFanoutRecipients += recipients;
   }
 
   recordVoiceDrop(bytes: number): void {
@@ -158,6 +177,8 @@ export class RuntimeMetricsCollector {
         controlOutboundBytesTotal: this.totals.controlOutbound,
         voiceInboundBytesTotal: this.totals.voiceInbound,
         voiceOutboundBytesTotal: this.totals.voiceOutbound,
+        voiceFanoutFramesTotal: this.totals.voiceFanoutFrames,
+        voiceFanoutRecipientsTotal: this.totals.voiceFanoutRecipients,
         voiceDroppedPacketsTotal: this.totals.voiceDroppedPackets,
         voiceDroppedBytesTotal: this.totals.voiceDroppedBytes,
       },

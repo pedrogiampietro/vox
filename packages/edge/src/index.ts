@@ -25,6 +25,14 @@ import {
 const EDGE_ACCEPT = 0xf0;
 const EDGE_STATE = 0xf1;
 const EDGE_REJECT = 0xf2;
+const EDGE_MUX_REGISTER = 0xf3;
+const EDGE_MUX_ACCEPT = 0xf4;
+const EDGE_MUX_STATE = 0xf5;
+const EDGE_MUX_VOICE = 0xf6;
+const EDGE_MUX_DELIVERY = 0xf7;
+const EDGE_MUX_RELEASE = 0xf8;
+const EDGE_MUX_DELIVERY_CLIENT = 0xf9;
+const EDGE_MUX_REJECT = 0xfa;
 
 loadEnv();
 
@@ -98,6 +106,15 @@ class EdgeRouter {
     }
   }
 
+  broadcastRemote(channelId: number, frame: Uint8Array): void {
+    const peers = this.channelClients.get(channelId);
+    if (!peers) return;
+    for (const peer of peers) {
+      if (peer.clientFlags & ClientFlags.MutedSpeakers) continue;
+      peer.sendToBrowser(frame);
+    }
+  }
+
   private pruneEchoes(now: number): void {
     for (const [key, expires] of this.localEchoes) {
       if (expires < now) this.localEchoes.delete(key);
@@ -120,15 +137,6 @@ http3.startServer();
 await http3.ready;
 console.log(`[vox-edge] WebTransport ouvindo em udp/${port} (${host})`);
 console.log(`[vox-edge] origem: ${originUrl}`);
-void acceptLoop(http3.sessionStream('/vox'), router);
-
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    console.log('[vox-edge] encerrando...');
-    http3.stopServer();
-    process.exit(0);
-  });
-}
 
 class EdgeClient {
   channelId = NO_CHANNEL;
@@ -143,7 +151,7 @@ class EdgeClient {
   constructor(
     private readonly session: WTSession,
     private readonly tokenStream: TokenStream,
-    private readonly link: OriginLink,
+    private readonly link: OriginMuxLink,
     private readonly router: EdgeRouter,
     readonly clientId: number,
   ) {
@@ -171,7 +179,7 @@ class EdgeClient {
 
   sendVoice(frame: Uint8Array): void {
     if (this.closed) return;
-    this.link.send(frame);
+    this.link.sendVoice(this.clientId, frame);
   }
 
   sendToBrowser(frame: Uint8Array): void {
@@ -190,111 +198,215 @@ class EdgeClient {
     this.sendToBrowser(frame);
   }
 
-  close(): void {
+  close(notifyOrigin = true): void {
     if (this.closed) return;
     this.closed = true;
     this.router.remove(this);
-    this.link.close();
+    this.link.detach(this.clientId);
+    if (notifyOrigin) this.link.release(this.clientId);
     try { this.writer.close(); } catch { /* ja fechando */ }
     try { this.session.close(); } catch { /* ja fechada */ }
   }
 }
 
-class OriginLink {
-  private readonly ws: WebSocket;
-  private readonly acceptedPromise: Promise<AcceptedState>;
-  private resolveAccepted!: (value: AcceptedState) => void;
-  private rejectAccepted!: (reason: Error) => void;
-  private accepted = false;
-  private client: EdgeClient | null = null;
-  private readonly pending: Uint8Array[] = [];
+class OriginMuxLink {
+  private ws: WebSocket | null = null;
+  private readyPromise: Promise<void>;
+  private resolveReady!: () => void;
+  private rejectReady!: (reason: Error) => void;
+  private readonly pending = new Map<number, {
+    resolve: (state: AcceptedState) => void;
+    reject: (reason: Error) => void;
+  }>();
+  private readonly clients = new Map<number, EdgeClient>();
+  private nextRequestId = 1;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
 
-  constructor(token: Uint8Array) {
-    this.acceptedPromise = new Promise<AcceptedState>((resolve, reject) => {
-      this.resolveAccepted = resolve;
-      this.rejectAccepted = reject;
-    });
-    this.ws = new WebSocket(originUrl, {
-      headers: {
-        'x-vox-edge-secret': secret,
-        ...(edgeId ? { 'x-vox-edge-id': edgeId } : {}),
-      },
-      handshakeTimeout: 5000,
-    });
-    const timeout = setTimeout(() => this.rejectAccepted(new Error('origem nao respondeu')), 6000);
-    timeout.unref();
-    this.ws.binaryType = 'nodebuffer';
-    this.ws.once('open', () => this.ws.send(token, { binary: true }));
-    this.ws.on('message', (data, isBinary) => {
-      if (!isBinary) return this.fail(new Error('origem enviou texto'));
-      const frame = toBytes(data);
-      if (!this.accepted) {
-        const state = decodeAccepted(frame);
-        if (!state) return this.fail(new Error('origem recusou o edge'));
-        this.accepted = true;
-        clearTimeout(timeout);
-        this.resolveAccepted(state);
-        return;
+  constructor() {
+    this.readyPromise = Promise.reject(new Error('link ainda nao conectado'));
+    this.readyPromise.catch(() => {});
+    this.connect();
+  }
+
+  async register(token: Uint8Array): Promise<AcceptedState> {
+    await this.readyPromise;
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) throw new Error('origem indisponivel');
+    const requestId = this.allocateRequestId();
+    return new Promise<AcceptedState>((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject });
+      const frame = new Uint8Array(3 + token.length);
+      frame[0] = EDGE_MUX_REGISTER;
+      writeU16(frame, 1, requestId);
+      frame.set(token, 3);
+      try {
+        ws.send(frame, { binary: true });
+      } catch (error) {
+        this.pending.delete(requestId);
+        reject(error instanceof Error ? error : new Error('falha ao registrar sessao'));
       }
-      if (frame[0] === EDGE_STATE) {
-        const state = decodeState(frame);
-        if (state) this.client?.applyState(state);
-        return;
-      }
-      if (frame[0] === FrameKind.Voice) {
-        if (this.client) this.client.onOriginVoice(frame);
-        else this.pending.push(frame);
-      }
-    });
-    this.ws.on('close', () => {
-      if (!this.accepted) this.fail(new Error('link com a origem fechou'));
-      this.client?.close();
-    });
-    this.ws.on('error', (err) => {
-      if (!this.accepted) this.fail(err);
-      this.client?.close();
     });
   }
 
-  async waitAccepted(): Promise<AcceptedState> {
-    return this.acceptedPromise;
+  attach(client: EdgeClient): void {
+    this.clients.set(client.clientId, client);
   }
 
-  setClient(client: EdgeClient): void {
-    this.client = client;
-    for (const frame of this.pending.splice(0)) client.onOriginVoice(frame);
+  detach(clientId: number): void {
+    this.clients.delete(clientId);
   }
 
-  send(frame: Uint8Array): void {
-    if (this.ws.readyState === this.ws.OPEN) this.ws.send(frame, { binary: true });
+  release(clientId: number): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(new Uint8Array([EDGE_MUX_RELEASE, clientId & 0xff, (clientId >>> 8) & 0xff]), { binary: true });
+  }
+
+  sendVoice(clientId: number, frame: Uint8Array): void {
+    const ws = this.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const out = new Uint8Array(frame.byteLength + 3);
+    out[0] = EDGE_MUX_VOICE;
+    writeU16(out, 1, clientId);
+    out.set(frame, 3);
+    ws.send(out, { binary: true });
   }
 
   close(): void {
-    try { this.ws.close(); } catch { this.ws.terminate(); }
+    this.stopped = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    try { this.ws?.close(); } catch { this.ws?.terminate(); }
   }
 
-  private fail(err: Error): void {
-    if (!this.accepted) this.rejectAccepted(err);
-    this.close();
+  private connect(): void {
+    if (this.stopped) return;
+    this.readyPromise = new Promise<void>((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+    });
+    const ws = new WebSocket(originUrl, {
+      headers: {
+        'x-vox-edge-secret': secret,
+        'x-vox-edge-mux': '1',
+        ...(edgeId ? { 'x-vox-edge-id': edgeId } : {}),
+      },
+      handshakeTimeout: 5000,
+      perMessageDeflate: false,
+    });
+    this.ws = ws;
+    ws.binaryType = 'nodebuffer';
+    let ready = false;
+    const timeout = setTimeout(() => {
+      if (!ready) {
+        this.rejectReady(new Error('origem nao respondeu'));
+        ws.terminate();
+      }
+    }, 6000);
+    timeout.unref();
+
+    ws.once('open', () => {
+      ready = true;
+      clearTimeout(timeout);
+      this.resolveReady();
+      console.log('[vox-edge] upstream multiplexado conectado');
+    });
+    ws.on('message', (data, isBinary) => {
+      if (!isBinary) return ws.close(1003, 'link binario esperado');
+      this.onFrame(toBytes(data));
+    });
+    ws.once('close', () => {
+      clearTimeout(timeout);
+      if (!ready) this.rejectReady(new Error('link com a origem fechou'));
+      for (const pending of this.pending.values()) pending.reject(new Error('link com a origem fechou'));
+      this.pending.clear();
+      if (this.ws === ws) this.ws = null;
+      for (const client of [...this.clients.values()]) client.close(false);
+      this.clients.clear();
+      if (!this.stopped) {
+        this.reconnectTimer = setTimeout(() => this.connect(), 2000);
+        this.reconnectTimer.unref?.();
+      }
+    });
+    ws.once('error', (error) => {
+      if (!ready) this.rejectReady(error instanceof Error ? error : new Error('falha no upstream'));
+    });
+  }
+
+  private onFrame(frame: Uint8Array): void {
+    const kind = frame[0];
+    if (kind === EDGE_MUX_ACCEPT && frame.length >= 12) {
+      const requestId = readU16(frame, 1);
+      const pending = this.pending.get(requestId);
+      const state = decodeState(frame, 5);
+      if (!pending || !state) return;
+      this.pending.delete(requestId);
+      pending.resolve({ clientId: readU16(frame, 3), ...state });
+      return;
+    }
+    if (kind === EDGE_MUX_REJECT && frame.length === 3) {
+      const pending = this.pending.get(readU16(frame, 1));
+      if (!pending) return;
+      this.pending.delete(readU16(frame, 1));
+      pending.reject(new Error('origem recusou a sessao de voz'));
+      return;
+    }
+    if (kind === EDGE_MUX_STATE && frame.length >= 10) {
+      const client = this.clients.get(readU16(frame, 1));
+      const state = decodeState(frame, 3);
+      if (client && state) client.applyState(state);
+      return;
+    }
+    if (kind === EDGE_MUX_DELIVERY && frame.length > 3 && frame[3] === FrameKind.Voice) {
+      router.broadcastRemote(readU16(frame, 1), frame.subarray(3));
+      return;
+    }
+    if (kind === EDGE_MUX_DELIVERY_CLIENT && frame.length > 3 && frame[3] === FrameKind.Voice) {
+      this.clients.get(readU16(frame, 1))?.onOriginVoice(frame.subarray(3));
+      return;
+    }
+    if (kind === EDGE_MUX_RELEASE && frame.length === 3) {
+      this.clients.get(readU16(frame, 1))?.close(false);
+    }
+  }
+
+  private allocateRequestId(): number {
+    for (let i = 0; i < 0xffff; i++) {
+      const id = this.nextRequestId;
+      this.nextRequestId = this.nextRequestId >= 0xffff ? 1 : this.nextRequestId + 1;
+      if (!this.pending.has(id)) return id;
+    }
+    throw new Error('registro de edge cheio');
   }
 }
 
-async function serve(session: WTSession, router: EdgeRouter): Promise<void> {
+const origin = new OriginMuxLink();
+void acceptLoop(http3.sessionStream('/vox'), router, origin);
+
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    console.log('[vox-edge] encerrando...');
+    origin.close();
+    http3.stopServer();
+    process.exit(0);
+  });
+}
+
+async function serve(session: WTSession, router: EdgeRouter, origin: OriginMuxLink): Promise<void> {
   await session.ready;
   const token = await readToken(session);
   if (!token) return closeSession(session);
 
-  const link = new OriginLink(token.value);
   let accepted: AcceptedState;
   try {
-    accepted = await link.waitAccepted();
+    accepted = await origin.register(token.value);
   } catch {
     return closeSession(session);
   }
 
-  const client = new EdgeClient(session, token, link, router, accepted.clientId);
+  const client = new EdgeClient(session, token, origin, router, accepted.clientId);
   client.applyState(accepted);
-  link.setClient(client);
+  origin.attach(client);
   router.add(client);
   void echoProbeStreams(session);
   await token.reply(1);
@@ -324,13 +436,13 @@ async function serve(session: WTSession, router: EdgeRouter): Promise<void> {
   client.close();
 }
 
-async function acceptLoop(sessions: ReadableStream<unknown>, router: EdgeRouter): Promise<void> {
+async function acceptLoop(sessions: ReadableStream<unknown>, router: EdgeRouter, origin: OriginMuxLink): Promise<void> {
   const reader = sessions.getReader();
   for (;;) {
     try {
       const { done, value } = await reader.read();
       if (done) return;
-      void serve(value as WTSession, router).catch((err) => {
+      void serve(value as WTSession, router, origin).catch((err) => {
         console.error('[vox-edge] sessao encerrada:', String(err));
       });
     } catch (err) {
@@ -455,6 +567,11 @@ function decodeState(frame: Uint8Array, offset = 1): VoiceState | null {
 
 function readU16(frame: Uint8Array, offset: number): number {
   return frame[offset]! | (frame[offset + 1]! << 8);
+}
+
+function writeU16(out: Uint8Array, offset: number, value: number): void {
+  out[offset] = value & 0xff;
+  out[offset + 1] = (value >>> 8) & 0xff;
 }
 
 function closeSession(session: WTSession): void {

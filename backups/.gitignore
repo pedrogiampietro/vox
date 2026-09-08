@@ -1,0 +1,6 @@
+# Backups reais nunca devem entrar no repositório principal.
+*
+!.gitignore
+!README.md
+!*.db.gpg
+!*.db.gpg.sha256

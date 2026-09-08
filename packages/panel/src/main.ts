@@ -50,6 +50,8 @@ type RuntimeMetrics = {
     controlOutboundBytesTotal: number;
     voiceInboundBytesTotal: number;
     voiceOutboundBytesTotal: number;
+    voiceFanoutFramesTotal: number;
+    voiceFanoutRecipientsTotal: number;
     voiceDroppedPacketsTotal: number;
     voiceDroppedBytesTotal: number;
   };
@@ -434,6 +436,8 @@ function renderRuntimeMetrics(runtime: RuntimeMetrics | null): HTMLElement {
   const health = runtimeHealth(runtime);
   const voiceDroppedPackets = runtime.traffic.voiceDroppedPacketsTotal ?? 0;
   const voiceDroppedBytes = runtime.traffic.voiceDroppedBytesTotal ?? 0;
+  const voiceFanoutFrames = runtime.traffic.voiceFanoutFramesTotal ?? 0;
+  const voiceFanoutRecipients = runtime.traffic.voiceFanoutRecipientsTotal ?? 0;
   const badge = text('span', `runtime-health runtime-health-${health.kind}`, health.label);
   heading.append(badge);
 
@@ -450,6 +454,7 @@ function renderRuntimeMetrics(runtime: RuntimeMetrics | null): HTMLElement {
   details.append(
     text('span', 'mono subtle', `event loop p95 ${formatMs(runtime.eventLoopLagP95Ms)} · atual ${formatMs(runtime.eventLoopLagMs)}`),
     text('span', 'mono subtle', `voz ${formatBytes(runtime.traffic.voiceInboundBytesTotal)} in / ${formatBytes(runtime.traffic.voiceOutboundBytesTotal)} out`),
+    text('span', 'mono subtle', `fan-out ${voiceFanoutRecipients.toLocaleString('pt-BR')} destinos em ${voiceFanoutFrames.toLocaleString('pt-BR')} pacotes`),
     text('span', 'mono subtle', `drops de voz ${voiceDroppedPackets.toLocaleString('pt-BR')} · ${formatBytes(voiceDroppedBytes)}`),
     text('span', 'mono subtle', `controle ${formatBytes(runtime.traffic.controlInboundBytesTotal)} in / ${formatBytes(runtime.traffic.controlOutboundBytesTotal)} out`),
     text('span', 'mono subtle', `uptime ${formatDuration(runtime.uptimeSec)}`),

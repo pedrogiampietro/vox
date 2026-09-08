@@ -85,6 +85,12 @@ interface Channel {
 
 export class Hub {
   private readonly channels = new Map<number, Channel>();
+  /**
+   * Lista estável para o caminho quente da voz. O Set continua sendo a fonte
+   * de verdade para as operações de canal; este cache evita criar um iterador
+   * novo para cada pacote e só é invalidado quando a composição do canal muda.
+   */
+  private readonly voiceMemberCache = new Map<number, Session[]>();
   private readonly sessions = new Map<number, Session>();
   /** Conexoes abertas que ainda nao terminaram o handshake. */
   private readonly pending = new Set<Session>();
@@ -509,6 +515,24 @@ export class Hub {
     if (info.id >= this.nextChannelId) this.nextChannelId = info.id + 1;
   }
 
+  private voiceMembers(channel: Channel): Session[] {
+    const cached = this.voiceMemberCache.get(channel.info.id);
+    if (cached) return cached;
+    const members = [...channel.members];
+    this.voiceMemberCache.set(channel.info.id, members);
+    return members;
+  }
+
+  private addMember(channel: Channel, session: Session): void {
+    channel.members.add(session);
+    this.voiceMemberCache.delete(channel.info.id);
+  }
+
+  private removeMember(channel: Channel, session: Session): void {
+    channel.members.delete(session);
+    this.voiceMemberCache.delete(channel.info.id);
+  }
+
   private allocChannelId(): number {
     for (let i = 0; i < 0xffff; i++) {
       const id = this.nextChannelId;
@@ -676,12 +700,28 @@ export class Hub {
     // reconhecer o proprio eco. Clientes sem edgeId continuam no caminho
     // normal, preservando a compatibilidade com edges antigos.
     const sourceEdgeId = s.voice?.edgeId;
-    for (const peer of channel.members) {
+    let recipients = 0;
+    const groupedEdges = new Map<string, VoiceSink>();
+    const members = this.voiceMembers(channel);
+    for (let i = 0; i < members.length; i++) {
+      const peer = members[i]!;
       if (peer === s) continue;
       if (sourceEdgeId && peer.voice?.edgeId === sourceEdgeId) continue;
       if (peer.flags & ClientFlags.MutedSpeakers) continue;
-      peer.sendVoice(frame);
+      recipients++;
+      const peerVoice = peer.voice;
+      const groupId = peerVoice?.voiceGroupId;
+      if (groupId && peerVoice.sendChannel) {
+        groupedEdges.set(groupId, peerVoice);
+        continue;
+      }
+      // A contabilidade do fan-out acontece uma vez abaixo, depois que o
+      // conjunto de destinos foi filtrado. Isso reduz trabalho por pacote sem
+      // mudar o comportamento do transporte nem da fila de cada cliente.
+      peer.sendVoice(frame, false);
     }
+    for (const sink of groupedEdges.values()) sink.sendChannel!(channel.info.id, frame);
+    serverMetrics.recordVoiceFanout(frame.byteLength, recipients);
   }
 
   // ----------------------------------------------------------- controle --
@@ -1056,7 +1096,7 @@ export class Hub {
     // Spy fica fora de qualquer canal até ser puxado por um moderador. Isso
     // evita que o lobby inicial revele membros e conversas para ele.
     if (home && this.canViewChannels(s)) {
-      home.members.add(s);
+      this.addMember(home, s);
       s.channelId = home.info.id;
     }
 
@@ -1266,7 +1306,7 @@ export class Hub {
     if (channelId !== this.afkChannelId()) target.afkReturnChannelId = NO_CHANNEL;
     this.leaveChannel(target);
     const ch = this.channels.get(channelId)!;
-    ch.members.add(target);
+    this.addMember(ch, target);
     target.channelId = channelId;
     this.syncVoiceState(target);
     this.broadcast({ t: Op.ClientMove, clientId: target.id, channelId });
@@ -1313,7 +1353,7 @@ export class Hub {
       s.flags &= ~ClientFlags.HasVoice;
       this.broadcast({ t: Op.ClientState, clientId: s.id, flags: s.flags });
     }
-    target.members.add(s);
+    this.addMember(target, s);
     s.channelId = channelId;
     this.syncVoiceState(s);
     this.broadcast({ t: Op.ClientMove, clientId: s.id, channelId });
@@ -1330,7 +1370,7 @@ export class Hub {
   private leaveChannel(s: Session): void {
     const old = this.channels.get(s.channelId);
     if (!old) return;
-    old.members.delete(s);
+    this.removeMember(old, s);
     s.channelId = NO_CHANNEL;
     this.syncVoiceState(s);
     if (old.members.size === 0 && !(old.info.flags & ChannelFlags.Permanent)) {
@@ -1379,15 +1419,16 @@ export class Hub {
     }
     const home = this.defaultChannel();
     for (const member of [...ch.members]) {
-      ch.members.delete(member);
+      this.removeMember(ch, member);
       if (home) {
-        home.members.add(member);
+        this.addMember(home, member);
         member.channelId = home.info.id;
         this.syncVoiceState(member);
         this.broadcast({ t: Op.ClientMove, clientId: member.id, channelId: home.info.id });
       }
     }
     this.channels.delete(channelId);
+    this.voiceMemberCache.delete(channelId);
     this.broadcast({ t: Op.ChannelRemove, channelId });
     this.deps.onChanged();
   }

@@ -10,7 +10,7 @@ usuários de outras regiões e manter a autoridade do servidor.
 cliente ── WSS controle ───────────────► servidor principal
 cliente ── WebTransport/QUIC ──────────► voice-sp.v0x.online (São Paulo)
                                            │
-                                           └── WSS privado ──► origem /internal/edge
+                                           └── um WSS multiplexado ──► origem /internal/edge
 ```
 
 ## DNS
@@ -24,6 +24,12 @@ A     voice-sp  179.199.142.231   DNS somente
 
 O hostname precisa resolver diretamente para a VPS. Proxy HTTP não transporta
 o WebTransport/QUIC UDP do edge.
+
+O edge usa um upstream multiplexado: cada navegador continua autenticando o
+próprio token, mas a VPS regional mantém um único enlace privado com a origem.
+Quando usuários da mesma região falam, a origem envia um frame uma vez por
+canal para o edge, e o edge distribui localmente. O caminho antigo por link
+individual continua aceito pela origem durante a atualização dos edges.
 
 ## Origem
 
@@ -174,6 +180,11 @@ No cliente, o Welcome deve anunciar `voice-sp.v0x.online` e o transporte deve
 aparecer como `QUIC`. Para usuários próximos de São Paulo, o RTT de voz deve
 ser medido no edge, enquanto o RTT de controle continua refletindo a distância
 até a origem.
+
+No log do edge, procure `upstream multiplexado conectado`. Se aparecer apenas
+o erro de conexão com a origem, o serviço tenta novamente a cada dois segundos;
+os clientes aguardam o próximo upstream ou caem para a rota anunciada pela
+origem.
 
 ## Fallback e rollback
 

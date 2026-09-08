@@ -527,6 +527,39 @@ fora, por exemplo com um `rsync` diário a partir de outra máquina:
 rsync -az --delete root@IP_DA_VPS:/opt/vox/data/backups/ ~/vox-backups/
 ```
 
+### Cópia remota criptografada no GitHub
+
+O workflow `.github/workflows/backup-to-github.yml` publica a cópia mais
+recente na pasta `backups/` deste próprio repositório, sempre criptografada.
+O banco original nunca é enviado ao GitHub. O workflow mantém os 14 últimos
+snapshots atuais e roda diariamente ou manualmente por `workflow_dispatch`.
+Como cada execução cria um commit, versões cifradas antigas continuam no
+histórico do Git; isso é esperado e não expõe o banco sem a senha, mas faz o
+repositório crescer com o tempo.
+
+Configure em **Settings → Secrets and variables → Actions**:
+
+- secret `VOX_BACKUP_PASSPHRASE`: senha longa usada para cifrar os arquivos.
+
+Os secrets `VPS_HOST`, `VPS_USER` e `VPS_SSH_KEY` já usados pelo deploy também
+são usados para ler o snapshot da VPS. Guarde a senha de cifragem fora do
+GitHub: sem ela, os arquivos continuam ilegíveis; com ela, é possível
+restaurar o banco em outra máquina. O backup automático continua cobrindo
+somente o banco — `.env` e certificados precisam de um procedimento separado
+e igualmente protegido.
+
+Para restaurar uma cópia publicada, baixe o arquivo `.db.gpg` do repositório
+privado e mantenha a senha fora do shell sempre que possível:
+
+```bash
+gpg --quiet --batch --pinentry-mode loopback --decrypt \
+  --output vox-restaurado.db vox-20260904-061200.db.gpg
+```
+
+Valide o checksum do arquivo cifrado antes de descriptografar. O workflow não
+é ativado até que a senha de cifragem esteja configurada; isso evita uma
+execução que publique um snapshot sem proteção.
+
 ## Auditoria e limites de requisição
 
 Toda ação administrativa fica gravada em `audit_log`, na mesma base SQLite do

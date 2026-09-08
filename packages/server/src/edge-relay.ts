@@ -23,6 +23,16 @@ const PATH = '/internal/edge';
 const EDGE_ACCEPT = 0xf0;
 const EDGE_STATE = 0xf1;
 const EDGE_REJECT = 0xf2;
+const EDGE_MUX_REGISTER = 0xf3;
+const EDGE_MUX_ACCEPT = 0xf4;
+const EDGE_MUX_STATE = 0xf5;
+const EDGE_MUX_VOICE = 0xf6;
+const EDGE_MUX_DELIVERY = 0xf7;
+const EDGE_MUX_RELEASE = 0xf8;
+const EDGE_MUX_DELIVERY_CLIENT = 0xf9;
+const EDGE_MUX_REJECT = 0xfa;
+
+let nextMuxId = 1;
 
 export function attachEdgeWebSocket(
   server: HttpServer | HttpsServer,
@@ -31,7 +41,7 @@ export function attachEdgeWebSocket(
   const wss = new WebSocketServer({
     noServer: true,
     perMessageDeflate: false,
-    maxPayload: MAX_VOICE_PACKET,
+    maxPayload: MAX_VOICE_PACKET + 32,
   });
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -39,7 +49,13 @@ export function attachEdgeWebSocket(
     if (path !== PATH) return;
     if (!authorized(req)) return reject(socket, 401, 'edge nao autorizado');
 
-    wss.handleUpgrade(req, socket, head, (ws) => serve(ws, registry, edgeIdFrom(req)));
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      if (req.headers['x-vox-edge-mux'] === '1') {
+        serveMultiplexed(ws, registry, edgeIdFrom(req));
+      } else {
+        serve(ws, registry, edgeIdFrom(req));
+      }
+    });
   });
 }
 
@@ -82,6 +98,159 @@ function serve(ws: WebSocket, registry: Registry, edgeId: string): void {
   ws.once('error', release);
 }
 
+/**
+ * Versao multiplexada: um websocket privado representa todos os usuarios de
+ * um edge. O token continua autenticando cada sessao individualmente, mas a
+ * voz que sai da origem pode ser entregue uma vez por canal/regiao.
+ */
+function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: string): void {
+  ws.binaryType = 'nodebuffer';
+  const edgeId = announcedEdgeId || `edge-mux-${nextMuxId++}`;
+  const sessions = new Map<number, { owner: Session; sink: MultiplexedVoiceSink }>();
+  let closed = false;
+
+  const detach = (clientId: number, notifyEdge: boolean): void => {
+    const entry = sessions.get(clientId);
+    if (!entry) return;
+    sessions.delete(clientId);
+    if (entry.owner.voice === entry.sink) entry.owner.voice = null;
+    entry.sink.markDetached();
+    if (notifyEdge) entry.sink.sendRelease();
+  };
+
+  ws.on('message', (data, isBinary) => {
+    if (!isBinary) return close(ws, 1003, 'link binario esperado');
+    const frame = toBytes(data);
+    const kind = frame[0];
+
+    if (kind === EDGE_MUX_REGISTER) {
+      if (frame.length !== 3 + VOICE_TOKEN_BYTES) return close(ws, 1008, 'registro invalido');
+      const requestId = readU16(frame, 1);
+      let sink: MultiplexedVoiceSink;
+      const owner = registry.bindEdgeVoice(frame.subarray(3), sink = new MultiplexedVoiceSink(
+        ws,
+        edgeId,
+        0,
+        () => detach(sink.clientId, false),
+      ));
+      const hub = owner ? registry.hubOf(owner) : undefined;
+      if (!owner || !hub) {
+        return sendControl(ws, encodeMuxReject(requestId));
+      }
+      sink.setClientId(owner.id);
+      sessions.set(owner.id, { owner, sink });
+      return sendControl(ws, encodeMuxAccept(requestId, owner.id, hub.voiceState(owner)));
+    }
+
+    if (kind === EDGE_MUX_VOICE) {
+      if (frame.length <= 3 || frame.length > MAX_VOICE_PACKET + 3 || frame[3] !== FrameKind.Voice) {
+        return close(ws, 1008, 'frame de voz invalido');
+      }
+      const entry = sessions.get(readU16(frame, 1));
+      if (!entry) return;
+      const hub = registry.hubOf(entry.owner);
+      if (hub) hub.handleFrame(entry.owner, frame.subarray(3));
+      return;
+    }
+
+    if (kind === EDGE_MUX_RELEASE) {
+      if (frame.length !== 3) return close(ws, 1008, 'liberacao invalida');
+      detach(readU16(frame, 1), false);
+      return;
+    }
+
+    close(ws, 1008, 'frame de edge desconhecido');
+  });
+
+  const releaseAll = (): void => {
+    if (closed) return;
+    closed = true;
+    for (const { owner, sink } of sessions.values()) {
+      if (owner.voice === sink) owner.voice = null;
+      sink.markDetached();
+    }
+    sessions.clear();
+  };
+  ws.once('close', releaseAll);
+  ws.once('error', releaseAll);
+}
+
+class MultiplexedVoiceSink implements VoiceSink {
+  readonly voiceGroupId: string;
+  private closed = false;
+  clientId: number;
+
+  constructor(
+    private readonly ws: WebSocket,
+    readonly edgeId: string,
+    clientId: number,
+    private readonly onDetach: () => void,
+  ) {
+    this.voiceGroupId = edgeId;
+    this.clientId = clientId;
+  }
+
+  setClientId(clientId: number): void {
+    this.clientId = clientId;
+  }
+
+  send(frame: Uint8Array): void {
+    this.sendClient(frame);
+  }
+
+  sendChannel(channelId: number, frame: Uint8Array): void {
+    this.sendEnvelope(EDGE_MUX_DELIVERY, channelId, frame);
+  }
+
+  updateState(state: VoiceState): void {
+    if (this.closed || this.ws.readyState !== this.ws.OPEN) return;
+    const out = new Uint8Array(10);
+    out[0] = EDGE_MUX_STATE;
+    writeU16(out, 1, this.clientId);
+    writeState(out, 3, 0, state);
+    this.ws.send(out, { binary: true });
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.detach();
+    this.sendRelease();
+  }
+
+  detach(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.onDetach();
+  }
+
+  markDetached(): void {
+    this.closed = true;
+  }
+
+  sendRelease(): void {
+    if (this.ws.readyState !== this.ws.OPEN || this.clientId <= 0) return;
+    const out = new Uint8Array([EDGE_MUX_RELEASE, this.clientId & 0xff, (this.clientId >>> 8) & 0xff]);
+    this.ws.send(out, { binary: true });
+  }
+
+  private sendClient(frame: Uint8Array): void {
+    this.sendEnvelope(EDGE_MUX_DELIVERY_CLIENT, this.clientId, frame);
+  }
+
+  private sendEnvelope(kind: number, id: number, frame: Uint8Array): void {
+    if (this.closed || this.ws.readyState !== this.ws.OPEN) return;
+    if (this.ws.bufferedAmount > 4 * 1024 * 1024) {
+      serverMetrics.recordVoiceDrop(frame.byteLength);
+      return;
+    }
+    const out = new Uint8Array(frame.byteLength + 3);
+    out[0] = kind;
+    writeU16(out, 1, id);
+    out.set(frame, 3);
+    this.ws.send(out, { binary: true });
+  }
+}
+
 class EdgeVoiceSink implements VoiceSink {
   constructor(private readonly ws: WebSocket, readonly edgeId: string) {}
 
@@ -118,6 +287,22 @@ function encodeState(state: VoiceState): Uint8Array {
   return out;
 }
 
+function encodeMuxAccept(requestId: number, clientId: number, state: VoiceState): Uint8Array {
+  const out = new Uint8Array(12);
+  out[0] = EDGE_MUX_ACCEPT;
+  writeU16(out, 1, requestId);
+  writeU16(out, 3, clientId);
+  writeState(out, 5, 0, state);
+  return out;
+}
+
+function encodeMuxReject(requestId: number): Uint8Array {
+  const out = new Uint8Array(3);
+  out[0] = EDGE_MUX_REJECT;
+  writeU16(out, 1, requestId);
+  return out;
+}
+
 function writeState(out: Uint8Array, offset: number, clientId: number, state: VoiceState): void {
   out[offset] = clientId & 0xff;
   out[offset + 1] = (clientId >>> 8) & 0xff;
@@ -126,6 +311,15 @@ function writeState(out: Uint8Array, offset: number, clientId: number, state: Vo
   out[offset + 4] = state.channelFlags & 0xff;
   out[offset + 5] = state.clientFlags & 0xff;
   out[offset + 6] = state.group & 0xff;
+}
+
+function writeU16(out: Uint8Array, offset: number, value: number): void {
+  out[offset] = value & 0xff;
+  out[offset + 1] = (value >>> 8) & 0xff;
+}
+
+function readU16(frame: Uint8Array, offset: number): number {
+  return frame[offset]! | (frame[offset + 1]! << 8);
 }
 
 function authorized(req: IncomingMessage): boolean {

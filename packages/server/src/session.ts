@@ -10,6 +10,10 @@ export interface VoiceSink {
   close(): void;
   /** Identifica clientes atendidos pelo mesmo edge regional. */
   readonly edgeId?: string;
+  /** Grupo físico de fan-out; um edge multiplexado compartilha este sink. */
+  readonly voiceGroupId?: string;
+  /** Entrega um frame uma vez ao edge, que distribui no canal localmente. */
+  sendChannel?(channelId: number, frame: Uint8Array): void;
   /** Atualiza o estado necessario para o edge fazer o encaminhamento local. */
   updateState?(state: VoiceState): void;
 }
@@ -123,8 +127,8 @@ export class Session {
    * Voz sai pelo canal dedicado quando existe. Um cliente em WebTransport e
    * outro em WebSocket convivem no mesmo canal sem o Hub saber a diferenca.
    */
-  sendVoice(frame: Uint8Array): void {
-    serverMetrics.recordOutbound('voice', frame.byteLength);
+  sendVoice(frame: Uint8Array, accountMetrics = true): void {
+    if (accountMetrics) serverMetrics.recordOutbound('voice', frame.byteLength);
     if (this.voice) this.voice.send(frame);
     else if (this.socket.sendVoice) this.socket.sendVoice(frame);
     else this.socket.send(frame);

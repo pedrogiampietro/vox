@@ -1,0 +1,98 @@
+name: Backup remoto criptografado
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 02:17 no horário de Brasília durante o horário padrão.
+    - cron: '17 5 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vox-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Copiar snapshot da VPS para o repositório
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validar configuração
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.VOX_BACKUP_PASSPHRASE }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$BACKUP_PASSPHRASE" || { echo 'Defina o secret VOX_BACKUP_PASSPHRASE.' >&2; exit 1; }
+          test -n "$VPS_HOST" || { echo 'O secret VPS_HOST está vazio.' >&2; exit 1; }
+          test -n "$VPS_USER" || { echo 'O secret VPS_USER está vazio.' >&2; exit 1; }
+          test -n "$VPS_SSH_KEY" || { echo 'O secret VPS_SSH_KEY está vazio.' >&2; exit 1; }
+
+      - name: Preparar SSH da VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+
+      - name: Baixar o snapshot mais recente
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          umask 077
+          latest="$(ssh "$VPS_USER@$VPS_HOST" "find /opt/vox/data/backups -maxdepth 1 -type f -name 'vox-*.db' -printf '%T@ %p\\n' | sort -nr | head -n 1 | cut -d' ' -f2-")"
+          test -n "$latest" || { echo 'Nenhum snapshot encontrado na VPS.' >&2; exit 1; }
+          name="$(basename "$latest")"
+          scp "$VPS_USER@$VPS_HOST:$latest" "$RUNNER_TEMP/$name"
+          printf '%s\n' "$name" > "$RUNNER_TEMP/backup-name"
+
+      - name: Abrir o repositório de backups
+        uses: actions/checkout@v5
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Criptografar o snapshot
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.VOX_BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          name="$(cat "$RUNNER_TEMP/backup-name")"
+          trap 'rm -f "$RUNNER_TEMP/$name" "$RUNNER_TEMP/backup-passphrase"' EXIT
+          install -d -m 700 backups
+          printf '%s' "$BACKUP_PASSPHRASE" > "$RUNNER_TEMP/backup-passphrase"
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase-file "$RUNNER_TEMP/backup-passphrase" \
+            --symmetric --cipher-algo AES256 \
+            --output "backups/$name.gpg" "$RUNNER_TEMP/$name"
+          sha256sum "backups/$name.gpg" > "backups/$name.gpg.sha256"
+
+      - name: Reter os últimos 14 snapshots e publicar
+        run: |
+          set -euo pipefail
+          # O nome carrega o timestamp UTC e continua ordenavel depois do
+          # checkout. O mtime do arquivo nao e confiavel no runner.
+          mapfile -t old < <(find backups -maxdepth 1 -type f -name 'vox-*.db.gpg' -printf '%f\\n' | sort -r | tail -n +15 | sed 's#^#backups/#')
+          for file in "${old[@]}"; do
+            rm -f "$file" "$file.sha256"
+          done
+          git config user.name 'vox-backup'
+          git config user.email 'vox-backup@users.noreply.github.com'
+          git add backups
+          if git diff --cached --quiet; then
+            echo 'Nenhum backup novo para publicar.'
+            exit 0
+          fi
+          git commit -m "backup: snapshot $(date -u +%Y-%m-%d)"
+          git push origin HEAD:master
