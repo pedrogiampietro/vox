@@ -176,7 +176,7 @@ async fn read_node(link: Arc<NodeLink>) {
 
 #[tokio::main]
 async fn main() -> Result<(), AnyError> {
-    let bind = env_socket("VOX_VOICE_QUIC_BIND", "0.0.0.0:9988")?;
+    let bind = env_socket("VOX_VOICE_QUIC_BIND", "0.0.0.0:11000")?;
     let control = env_socket("VOX_VOICE_QUIC_CONTROL", "127.0.0.1:19878")?;
     let node = env_socket("VOX_VOICE_QUIC_NODE", "127.0.0.1:19877")?;
     let cert = required_env("VOX_VOICE_QUIC_CERT")?;

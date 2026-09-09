@@ -73,7 +73,7 @@ continuar ativo como candidato de fallback enquanto o gateway é validado.
 Crie `/etc/vox-voice-quic.env` na VPS:
 
 ```ini
-VOX_VOICE_QUIC_BIND=0.0.0.0:9988
+VOX_VOICE_QUIC_BIND=0.0.0.0:11000
 VOX_VOICE_QUIC_CERT=/caminho/para/hostname.crt
 VOX_VOICE_QUIC_KEY=/caminho/para/hostname.key
 VOX_VOICE_QUIC_CONTROL=127.0.0.1:19878
@@ -85,7 +85,7 @@ No ambiente do `vox.service`, habilite o mesmo candidato para o Welcome:
 ```ini
 VOX_VOICE_QUIC_GATEWAY_ENABLED=1
 VOX_VOICE_QUIC_GATEWAY_HOST=manowar.v0x.online
-VOX_VOICE_QUIC_GATEWAY_PORT=9988
+VOX_VOICE_QUIC_GATEWAY_PORT=11000
 VOX_VOICE_QUIC_GATEWAY_REGION=Origem Rust
 VOX_VOICE_QUIC_GATEWAY_CONTROL=127.0.0.1:19878
 ```
