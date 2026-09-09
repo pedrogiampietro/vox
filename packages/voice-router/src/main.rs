@@ -6,7 +6,7 @@
 //! com o Node é um protocolo UDP local, para que uma fila de voz nunca bloqueie
 //! o event loop do controle.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
@@ -125,6 +125,9 @@ fn spawn_workers(count: usize, output: UdpSocket, target: SocketAddr) -> Vec<Syn
 
 fn worker_loop(receiver: Receiver<Command>, socket: UdpSocket, target: SocketAddr) {
     let mut clients = HashMap::<ClientKey, ClientState>::new();
+    // O worker pode atender vários canais que caíram no mesmo shard. Manter
+    // o índice por canal evita varrer todos eles a cada frame de voz.
+    let mut channel_members = HashMap::<(u32, u32), HashSet<ClientKey>>::new();
     while let Ok(command) = receiver.recv() {
         match command {
             Command::Register {
@@ -133,6 +136,15 @@ fn worker_loop(receiver: Receiver<Command>, socket: UdpSocket, target: SocketAdd
                 flags,
                 edge_group,
             } => {
+                if let Some(previous) = clients.get(&key) {
+                    if previous.channel_id != channel_id {
+                        remove_channel_member(
+                            &mut channel_members,
+                            (key.server_id, previous.channel_id),
+                            key,
+                        );
+                    }
+                }
                 clients.insert(
                     key,
                     ClientState {
@@ -141,9 +153,14 @@ fn worker_loop(receiver: Receiver<Command>, socket: UdpSocket, target: SocketAdd
                         edge_group,
                     },
                 );
+                channel_members
+                    .entry((key.server_id, channel_id))
+                    .or_default()
+                    .insert(key);
             }
-            Command::Unregister { key, .. } => {
+            Command::Unregister { key, channel_id } => {
                 clients.remove(&key);
+                remove_channel_member(&mut channel_members, (key.server_id, channel_id), key);
             }
             Command::Voice {
                 key,
@@ -151,7 +168,14 @@ fn worker_loop(receiver: Receiver<Command>, socket: UdpSocket, target: SocketAdd
                 sent_at_ms,
                 frame,
             } => route_voice(
-                &clients, &socket, target, key, channel_id, sent_at_ms, frame,
+                &clients,
+                &channel_members,
+                &socket,
+                target,
+                key,
+                channel_id,
+                sent_at_ms,
+                frame,
             ),
             Command::Probe => {
                 let _ = announce_ready(&socket, target);
@@ -160,8 +184,23 @@ fn worker_loop(receiver: Receiver<Command>, socket: UdpSocket, target: SocketAdd
     }
 }
 
+fn remove_channel_member(
+    channel_members: &mut HashMap<(u32, u32), HashSet<ClientKey>>,
+    channel: (u32, u32),
+    key: ClientKey,
+) {
+    let Some(members) = channel_members.get_mut(&channel) else {
+        return;
+    };
+    members.remove(&key);
+    if members.is_empty() {
+        channel_members.remove(&channel);
+    }
+}
+
 fn route_voice(
     clients: &HashMap<ClientKey, ClientState>,
+    channel_members: &HashMap<(u32, u32), HashSet<ClientKey>>,
     socket: &UdpSocket,
     target: SocketAddr,
     source: ClientKey,
@@ -182,17 +221,19 @@ fn route_voice(
     if now_ms.saturating_sub(sent_at_ms) > MAX_FRAME_AGE.as_millis() as u64 {
         return;
     }
-    let mut recipients = Vec::new();
     let source_edge = clients
         .get(&source)
         .map(|state| state.edge_group)
         .unwrap_or(0);
-    for (key, state) in clients {
-        if *key == source
-            || key.server_id != source.server_id
-            || state.channel_id != channel_id
-            || state.muted
-        {
+    let Some(members) = channel_members.get(&(source.server_id, channel_id)) else {
+        return;
+    };
+    let mut recipients = Vec::with_capacity(members.len().min(MAX_RECIPIENTS));
+    for key in members {
+        let Some(state) = clients.get(key) else {
+            continue;
+        };
+        if *key == source || state.muted {
             continue;
         }
         // O edge regional já entregou o frame localmente. Evita eco na volta
@@ -206,6 +247,9 @@ fn route_voice(
         }
     }
 
+    if recipients.is_empty() {
+        return;
+    }
     if let Some(packet) = encode_delivery(source, channel_id, &recipients, &frame) {
         let _ = socket.send_to(&packet, target);
     }
@@ -427,6 +471,20 @@ mod tests {
     fn does_not_route_empty_or_silent_payloads() {
         assert!(is_silence(&[0, 0, 0]));
         assert!(!is_silence(&[0, 1, 0]));
+    }
+
+    #[test]
+    fn channel_index_removes_a_member_without_leaving_an_empty_bucket() {
+        let key = ClientKey {
+            server_id: 5,
+            client_id: 7,
+        };
+        let mut index = HashMap::<(u32, u32), HashSet<ClientKey>>::new();
+        index.entry((5, 42)).or_default().insert(key);
+
+        remove_channel_member(&mut index, (5, 42), key);
+
+        assert!(!index.contains_key(&(5, 42)));
     }
 
     #[test]

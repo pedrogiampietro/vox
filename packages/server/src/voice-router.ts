@@ -87,6 +87,7 @@ export class VoiceRouter {
 
     this.socket = createSocket('udp4');
     this.socket.on('error', (error) => {
+      this.droppedCommands++;
       this.ready = false;
       this.warnUnavailable(`UDP do roteador: ${error.message}`);
     });
@@ -141,7 +142,11 @@ export class VoiceRouter {
       this.sendRegister(next);
       return;
     }
-    this.sendRegister(next);
+    // Atualizações de presença/permissão são frequentes. O worker só precisa
+    // receber um novo registro quando algo que altera o roteamento mudou.
+    if (previous.clientFlags !== next.clientFlags || previous.edgeGroup !== next.edgeGroup) {
+      this.sendRegister(next);
+    }
   }
 
   unregister(session: Session): void {
@@ -161,9 +166,9 @@ export class VoiceRouter {
     packet.writeUInt32LE(session.serverId >>> 0, 5);
     packet.writeUInt32LE(session.id >>> 0, 9);
     packet.writeUInt32LE(channelId >>> 0, 13);
-    packet.writeBigUInt64LE(BigInt(Date.now()), 17);
+    writeTimestamp(packet, 17, Date.now());
     packet.writeUInt16LE(frame.length, 25);
-    Buffer.from(frame).copy(packet, VOICE_HEADER_SIZE);
+    Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength).copy(packet, VOICE_HEADER_SIZE);
     this.send(packet);
     return true;
   }
@@ -324,7 +329,7 @@ export class VoiceRouter {
     packet[4] = GATEWAY_SEND;
     packet.writeUInt32LE(connectionId >>> 0, 5);
     packet.writeUInt16LE(frame.length, 9);
-    Buffer.from(frame).copy(packet, GATEWAY_FRAME_HEADER_SIZE);
+    Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength).copy(packet, GATEWAY_FRAME_HEADER_SIZE);
     this.sendGateway(packet);
   }
 
@@ -341,7 +346,7 @@ export class VoiceRouter {
       packet.writeUInt32LE(connectionId >>> 0, offset);
       offset += 4;
     }
-    Buffer.from(frame).copy(packet, offset);
+    Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength).copy(packet, offset);
     this.sendGateway(packet);
   }
 
@@ -355,9 +360,13 @@ export class VoiceRouter {
 
   private sendGateway(packet: Buffer): void {
     if (!this.socket || !config.voiceQuicGatewayEnabled) return;
-    this.socket.send(packet, config.voiceQuicGatewayControlPort, config.voiceQuicGatewayControlHost, (error) => {
-      if (error) this.droppedCommands++;
-    });
+    // Não crie um callback por frame: o socket já possui tratamento global de
+    // erro e o hot path da voz não precisa aguardar confirmação individual.
+    try {
+      this.socket.send(packet, config.voiceQuicGatewayControlPort, config.voiceQuicGatewayControlHost);
+    } catch {
+      this.droppedCommands++;
+    }
   }
 
   private receiveDelivery(packet: Buffer): void {
@@ -430,9 +439,13 @@ export class VoiceRouter {
 
   private send(packet: Buffer): void {
     if (!this.socket) return;
-    this.socket.send(packet, config.voiceRouterWorkerPort, config.voiceRouterWorkerHost, (error) => {
-      if (error) this.droppedCommands++;
-    });
+    // O envio UDP interno é assíncrono; evitar um closure por pacote reduz a
+    // pressão de GC durante fan-out intenso.
+    try {
+      this.socket.send(packet, config.voiceRouterWorkerPort, config.voiceRouterWorkerHost);
+    } catch {
+      this.droppedCommands++;
+    }
   }
 
   private clientFor(session: Session, state: VoiceState): RouterClient {
@@ -465,4 +478,11 @@ function hashGroup(value: string | undefined): number {
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return hash || 1;
+}
+
+function writeTimestamp(packet: Buffer, offset: number, timestampMs: number): void {
+  // Date.now() permanece seguro como Number nesta escala; escrever as duas
+  // metades evita criar um BigInt para cada frame recebido.
+  packet.writeUInt32LE(timestampMs >>> 0, offset);
+  packet.writeUInt32LE(Math.floor(timestampMs / 0x1_0000_0000) >>> 0, offset + 4);
 }
