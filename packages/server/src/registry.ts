@@ -40,10 +40,10 @@ export class Registry {
     certHash: new Uint8Array(0),
   };
 
-  /** Retorna a porta do QUIC para o hostname da conexão de controle. */
-  voiceEndpoint: (hostname: string) => ({ host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] }) = () => this.voiceInfo;
+  /** Retorna os candidatos QUIC para o host e servidor virtual da conexão. */
+  voiceEndpoint: (hostname: string, serverId?: number) => ({ host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] }) = () => this.voiceInfo;
 
-  setVoiceEndpointProvider(provider: (hostname: string) => { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] }): void {
+  setVoiceEndpointProvider(provider: (hostname: string, serverId?: number) => { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] }): void {
     this.voiceEndpoint = provider;
   }
 
@@ -90,7 +90,7 @@ export class Registry {
       forceSave: () => this.saveNow(),
       claimVoiceKey: (key, session) => this.byVoiceKey.set(key, session),
       releaseVoiceKey: (key) => this.byVoiceKey.delete(key),
-      voiceEndpoint: (hostname) => this.voiceEndpoint(hostname),
+      voiceEndpoint: (hostname, serverId) => this.voiceEndpoint(hostname, serverId),
       ...(this.voiceRouter ? { voiceRouter: this.voiceRouter } : {}),
     };
     const hub = new Hub(settings, stored, deps);

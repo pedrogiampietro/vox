@@ -22,6 +22,11 @@ on:
           - quic
           - ws-dedicated
           - ws
+      voice_edges:
+        description: 'Edges QUIC para distribuir shards (auto ou seletores separados por vírgula)'
+        required: true
+        default: auto
+        type: string
       confirmation:
         description: 'Digite PRODUCAO para confirmar a janela de carga'
         required: true
@@ -45,6 +50,7 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}
+          VOICE_EDGES: ${{ inputs.voice_edges }}
           ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
         run: |
           if [[ "$CONFIRMATION" != "PRODUCAO" ]]; then
@@ -57,6 +63,10 @@ jobs:
           fi
           if [[ ! "$DURATION_SEC" =~ ^[0-9]+$ ]] || (( DURATION_SEC < 5 || DURATION_SEC > 600 )); then
             echo 'A duracao precisa ser um numero entre 5 e 600 segundos.' >&2
+            exit 1
+          fi
+          if [[ "$VOICE_EDGES" != "auto" && ! "$VOICE_EDGES" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then
+            echo 'voice_edges precisa ser auto ou uma lista de seletores separados por virgula.' >&2
             exit 1
           fi
           if [[ -z "$ADMIN_TOKEN" ]]; then
@@ -97,7 +107,15 @@ jobs:
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_TRANSPORT: ${{ inputs.voice_transport }}
+          VOICE_EDGE_LIST: ${{ inputs.voice_edges }}
+          SHARD: ${{ matrix.shard }}
         run: |
+          voice_edge=''
+          if [[ "$VOICE_EDGE_LIST" != "auto" ]]; then
+            IFS=',' read -r -a edge_list <<< "$VOICE_EDGE_LIST"
+            edge_index=$(( (SHARD - 1) % ${#edge_list[@]} ))
+            voice_edge="${edge_list[$edge_index]}"
+          fi
           npm run stress -- \
             --url "$TARGET_URL" \
             --clients '${{ matrix.clients }}' \
@@ -105,7 +123,8 @@ jobs:
             --channels 2 \
             --duration "$DURATION_SEC" \
             --voice-profile realistic \
-            --voice-transport "$VOICE_TRANSPORT"
+            --voice-transport "$VOICE_TRANSPORT" \
+            --voice-edge "$voice_edge"
       - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@v4
@@ -157,7 +176,15 @@ jobs:
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_TRANSPORT: ${{ inputs.voice_transport }}
+          VOICE_EDGE_LIST: ${{ inputs.voice_edges }}
+          SHARD: ${{ matrix.shard }}
         run: |
+          voice_edge=''
+          if [[ "$VOICE_EDGE_LIST" != "auto" ]]; then
+            IFS=',' read -r -a edge_list <<< "$VOICE_EDGE_LIST"
+            edge_index=$(( (SHARD - 1) % ${#edge_list[@]} ))
+            voice_edge="${edge_list[$edge_index]}"
+          fi
           npm run stress -- \
             --url "$TARGET_URL" \
             --clients '${{ matrix.clients }}' \
@@ -165,7 +192,8 @@ jobs:
             --channels 4 \
             --duration "$DURATION_SEC" \
             --voice-profile realistic \
-            --voice-transport "$VOICE_TRANSPORT"
+            --voice-transport "$VOICE_TRANSPORT" \
+            --voice-edge "$voice_edge"
       - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@v4
@@ -223,7 +251,15 @@ jobs:
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_TRANSPORT: ${{ inputs.voice_transport }}
+          VOICE_EDGE_LIST: ${{ inputs.voice_edges }}
+          SHARD: ${{ matrix.shard }}
         run: |
+          voice_edge=''
+          if [[ "$VOICE_EDGE_LIST" != "auto" ]]; then
+            IFS=',' read -r -a edge_list <<< "$VOICE_EDGE_LIST"
+            edge_index=$(( (SHARD - 1) % ${#edge_list[@]} ))
+            voice_edge="${edge_list[$edge_index]}"
+          fi
           npm run stress -- \
             --url "$TARGET_URL" \
             --clients '${{ matrix.clients }}' \
@@ -231,7 +267,8 @@ jobs:
             --channels 8 \
             --duration "$DURATION_SEC" \
             --voice-profile realistic \
-            --voice-transport "$VOICE_TRANSPORT"
+            --voice-transport "$VOICE_TRANSPORT" \
+            --voice-edge "$voice_edge"
       - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@v4
@@ -294,6 +331,7 @@ jobs:
               loop: null,
               outboundKbps: null,
               transport: { quic: 0, wsDedicated: 0, ws: 0 },
+              edges: {},
               pass: true,
               reports: 0,
             };
@@ -306,6 +344,9 @@ jobs:
             current.reports += 1;
             for (const key of ['quic', 'wsDedicated', 'ws']) {
               current.transport[key] += report.voiceTransports?.[key] ?? 0;
+            }
+            for (const [edge, count] of Object.entries(report.voiceEdges ?? {})) {
+              current.edges[edge] = (current.edges[edge] ?? 0) + Number(count || 0);
             }
             const runtime = report.adminRuntime;
             if (runtime) {
@@ -322,14 +363,15 @@ jobs:
           const formatNumber = (value, suffix = '') => value == null ? 'n/d' : `${Number(value).toFixed(1)}${suffix}`;
           let markdown = '# Resumo do stress de produção\n\n';
           markdown += `Alvo: \`${process.env.TARGET_URL ?? 'informado no workflow'}\`\n\n`;
-          markdown += '| Cenário | Ativos | Voz recebida | RTT p95 | CPU máx. | RSS máx. | Loop p95 máx. | Saída máx. | Transporte | Resultado |\n';
-          markdown += '|---|---:|---:|---:|---:|---:|---:|---:|---|---|\n';
+          markdown += '| Cenário | Ativos | Voz recebida | RTT p95 | CPU máx. | RSS máx. | Loop p95 máx. | Saída máx. | Transporte | Distribuição | Resultado |\n';
+          markdown += '|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|\n';
           for (const scenario of order) {
             const group = groups.get(scenario);
             if (!group) continue;
             const transport = `${group.transport.quic} QUIC / ${group.transport.wsDedicated} WS dedicado / ${group.transport.ws} WS controle`;
-            markdown += `| ${scenario} (${group.reports} shards) | ${group.active}/${group.requested} | ${group.received}/${group.sent} | ${Math.round(group.rttP95)} ms | ${formatNumber(group.cpu, '%')} | ${formatBytes(group.rss)} | ${formatNumber(group.loop, ' ms')} | ${formatNumber(group.outboundKbps, ' kbps')} | ${transport} | ${group.pass ? 'PASS' : 'FAIL'} |\n`;
+            const distribution = Object.entries(group.edges).map(([edge, count]) => `${edge}: ${count}`).join('<br>') || 'n/d';
+            markdown += `| ${scenario} (${group.reports} shards) | ${group.active}/${group.requested} | ${group.received}/${group.sent} | ${Math.round(group.rttP95)} ms | ${formatNumber(group.cpu, '%')} | ${formatBytes(group.rss)} | ${formatNumber(group.loop, ' ms')} | ${formatNumber(group.outboundKbps, ' kbps')} | ${transport} | ${distribution} | ${group.pass ? 'PASS' : 'FAIL'} |\n`;
           }
-          if (groups.size === 0) markdown += '| Nenhum relatório foi gerado | — | — | — | — | — | — | — | — | — |\n';
+          if (groups.size === 0) markdown += '| Nenhum relatório foi gerado | — | — | — | — | — | — | — | — | — | — |\n';
           fs.appendFileSync(output, markdown);
           NODE

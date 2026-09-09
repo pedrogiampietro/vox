@@ -41,6 +41,8 @@ type Options = {
   voiceBytes: number;
   voiceProfile: 'continuous' | 'realistic';
   voiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto';
+  /** Fixa o edge QUIC para testes distribuídos; vazio = seleção automática. */
+  voiceEdge: string;
   voiceIntervalMs: number;
   batch: number;
   voiceBatch: number;
@@ -71,6 +73,7 @@ type StressSummary = {
   voiceReceived: number;
   channelsRequested: number;
   voiceTransports: { ws: number; wsDedicated: number; quic: number };
+  voiceEdges: Record<string, number>;
   rttMs: { p50: number; p95: number; p99: number; samples: number };
   failures: string[];
   adminRuntime: AdminRuntime | null;
@@ -224,6 +227,7 @@ class StressClient {
   sentVoice = 0;
   receivedVoice = 0;
   private readonly requestedVoiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto';
+  private readonly requestedVoiceEdge: string;
   private readonly desiredChannelSlot: number;
   private readonly controlUrl: string;
   private joinedChannel = false;
@@ -231,11 +235,19 @@ class StressClient {
   private welcome: WelcomeVoice | null = null;
   private voiceLink: VoiceLink | DedicatedVoiceLink | null = null;
   private activeVoiceTransport: 'quic' | 'ws-dedicated' | null = null;
+  activeVoiceEdge = '';
   private identity: Identity | null = null;
   private readonly opened: Promise<void>;
 
-  constructor(readonly nickname: string, url: string, voiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto', channelSlot = 0) {
+  constructor(
+    readonly nickname: string,
+    url: string,
+    voiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto',
+    channelSlot = 0,
+    voiceEdge = '',
+  ) {
     this.requestedVoiceTransport = voiceTransport;
+    this.requestedVoiceEdge = voiceEdge.trim();
     this.desiredChannelSlot = Math.max(0, Math.trunc(channelSlot));
     this.controlUrl = url;
     this.ws = new WebSocket(url);
@@ -356,45 +368,59 @@ class StressClient {
   async openVoiceLink(): Promise<boolean> {
     const welcome = this.welcome;
     if (!welcome) return false;
-    const candidate = welcome.voiceEdges.find((edge) => edge.host && edge.port > 0)
-      ?? (welcome.voiceHost && welcome.wtPort > 0
-        ? { host: welcome.voiceHost, port: welcome.wtPort, region: welcome.voiceHost, certHash: welcome.wtCertHash }
-        : null);
-    if (!candidate) return false;
-
-    let transport: VoiceTransportLike | null = null;
-    try {
-      const mod = await import('@fails-components/webtransport');
-      await mod.quicheLoaded;
-      const init = candidate.certHash.length > 0
-        ? { serverCertificateHashes: [{ algorithm: 'sha-256' as const, value: candidate.certHash }] }
-        : {};
-      transport = new mod.WebTransport(`https://${candidate.host}:${candidate.port}/vox`, init) as VoiceTransportLike;
-      await withTimeout(transport.ready, 10_000, `WebTransport ${candidate.host}`);
-
-      const stream = await withTimeout(transport.createBidirectionalStream(), 5_000, 'handshake WebTransport');
-      const streamWriter = stream.writable.getWriter();
-      await streamWriter.write(welcome.voiceToken);
-      const reply = await withTimeout(stream.readable.getReader().read(), 5_000, 'resposta WebTransport');
-      if (reply.value?.[0] !== 1) throw new Error('edge recusou a sessão de voz');
-
-      const datagrams = transport.datagrams.createWritable
-        ? transport.datagrams.createWritable()
-        : transport.datagrams.writable;
-      if (!datagrams) throw new Error('edge sem escrita de datagramas');
-      this.voiceLink = new VoiceLink(transport, datagrams, () => this.receivedVoice++);
-      this.activeVoiceTransport = 'quic';
-      return true;
-    } catch (error) {
-      transport?.close();
-      if (this.requestedVoiceTransport === 'quic') {
-        this.protocolFailures.push({
-          code: FailureCode.Malformed,
-          message: `QUIC: ${error instanceof Error ? error.message : String(error)}`,
-        });
-      }
+    const candidates = welcome.voiceEdges.filter((edge) => edge.host && edge.port > 0);
+    const requested = this.requestedVoiceEdge.toLowerCase();
+    const requestedCandidate = requested
+      ? candidates.find((edge) => edge.host.toLowerCase() === requested
+        || edge.region.toLowerCase() === requested
+        || edge.host.toLowerCase().includes(requested)
+        || requested.includes(edge.host.toLowerCase()))
+      : null;
+    const fallback = !requested && welcome.voiceHost && welcome.wtPort > 0
+      ? { host: welcome.voiceHost, port: welcome.wtPort, region: welcome.voiceHost, certHash: welcome.wtCertHash }
+      : null;
+    const candidatesToTry = requestedCandidate ? [requestedCandidate] : requested ? [] : (candidates.length > 0 ? candidates : fallback ? [fallback] : []);
+    if (candidatesToTry.length === 0) {
+      if (requested) this.protocolFailures.push({ code: FailureCode.Malformed, message: `edge QUIC não anunciado: ${this.requestedVoiceEdge}` });
       return false;
     }
+
+    for (const candidate of candidatesToTry) {
+      let transport: VoiceTransportLike | null = null;
+      try {
+        const mod = await import('@fails-components/webtransport');
+        await mod.quicheLoaded;
+        const init = candidate.certHash.length > 0
+          ? { serverCertificateHashes: [{ algorithm: 'sha-256' as const, value: candidate.certHash }] }
+          : {};
+        transport = new mod.WebTransport(`https://${candidate.host}:${candidate.port}/vox`, init) as VoiceTransportLike;
+        await withTimeout(transport.ready, 10_000, `WebTransport ${candidate.host}`);
+
+        const stream = await withTimeout(transport.createBidirectionalStream(), 5_000, 'handshake WebTransport');
+        const streamWriter = stream.writable.getWriter();
+        await streamWriter.write(welcome.voiceToken);
+        const reply = await withTimeout(stream.readable.getReader().read(), 5_000, 'resposta WebTransport');
+        if (reply.value?.[0] !== 1) throw new Error('edge recusou a sessão de voz');
+
+        const datagrams = transport.datagrams.createWritable
+          ? transport.datagrams.createWritable()
+          : transport.datagrams.writable;
+        if (!datagrams) throw new Error('edge sem escrita de datagramas');
+        this.voiceLink = new VoiceLink(transport, datagrams, () => this.receivedVoice++);
+        this.activeVoiceTransport = 'quic';
+        this.activeVoiceEdge = candidate.host;
+        return true;
+      } catch (error) {
+        transport?.close();
+        if (this.requestedVoiceTransport === 'quic' || this.requestedVoiceEdge) {
+          this.protocolFailures.push({
+            code: FailureCode.Malformed,
+            message: `QUIC ${candidate.host}: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      }
+    }
+    return false;
   }
 
   async openDedicatedVoiceLink(): Promise<boolean> {
@@ -498,6 +524,7 @@ async function main(): Promise<void> {
           // Usa exatamente os canais pedidos, sem espalhar a carga pela
           // arvore inteira de canais permanentes do servidor.
           options.channels > 1 ? (offset + index) % options.channels : 0,
+          options.voiceEdge,
         ),
       );
       clients.push(...batch);
@@ -637,6 +664,11 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
   const receivedVoice = clients.reduce((sum, client) => sum + client.receivedVoice, 0);
   const quic = clients.filter((client) => client.voiceTransport === 'quic').length;
   const dedicated = clients.filter((client) => client.voiceTransport === 'ws-dedicated').length;
+  const voiceEdges: Record<string, number> = {};
+  for (const client of clients) {
+    if (client.voiceTransport !== 'quic' || !client.activeVoiceEdge) continue;
+    voiceEdges[client.activeVoiceEdge] = (voiceEdges[client.activeVoiceEdge] ?? 0) + 1;
+  }
   const performanceFailures: string[] = [];
   const maxRttP95Ms = boundedNumber(process.env.STRESS_MAX_RTT_P95_MS, 250, 1, 60_000);
   const maxEventLoopP95Ms = boundedNumber(process.env.STRESS_MAX_EVENT_LOOP_P95_MS, 100, 1, 60_000);
@@ -657,6 +689,7 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
     voiceReceived: receivedVoice,
     channelsRequested: options.channels,
     voiceTransports: { ws: live - quic - dedicated, wsDedicated: dedicated, quic },
+    voiceEdges,
     rttMs: {
       p50: percentile(latencies, 0.50),
       p95: percentile(latencies, 0.95),
@@ -670,6 +703,9 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
   console.log('\nresultado');
   console.log(`  clientes: ${live}/${clients.length} ativos (${connected} sockets abertos)`);
   console.log(`  canais: ${options.channels} solicitados · transporte: ${quic} QUIC / ${dedicated} WS dedicado / ${live - quic - dedicated} WS controle`);
+  if (Object.keys(voiceEdges).length > 0) {
+    console.log(`  edges QUIC: ${Object.entries(voiceEdges).map(([edge, count]) => `${edge} ${count}`).join(' · ')}`);
+  }
   console.log(`  voz: ${sentVoice} enviados · ${receivedVoice} recebidos`);
   console.log(`  RTT: ${latencies.length > 0 ? `p50 ${formatMs(summary.rttMs.p50)} · p95 ${formatMs(summary.rttMs.p95)} · p99 ${formatMs(summary.rttMs.p99)}` : 'sem amostras'}`);
   if (adminRuntime) {
@@ -688,8 +724,8 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
 
 function parseOptions(): Options {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.log('Uso: npm run stress -- [--clients N] [--speakers N] [--channels N] [--duration SEC] [--url WS_URL] [--voice-profile continuous|realistic] [--voice-transport ws|ws-dedicated|quic|auto]');
-    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_BATCH, STRESS_VOICE_BATCH, STRESS_VOICE_RAMP_MS, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS');
+    console.log('Uso: npm run stress -- [--clients N] [--speakers N] [--channels N] [--duration SEC] [--url WS_URL] [--voice-profile continuous|realistic] [--voice-transport ws|ws-dedicated|quic|auto] [--voice-edge EDGE]');
+    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_VOICE_EDGE, STRESS_BATCH, STRESS_VOICE_BATCH, STRESS_VOICE_RAMP_MS, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS');
     process.exit(0);
   }
   return {
@@ -700,6 +736,7 @@ function parseOptions(): Options {
     voiceBytes: boundedNumber(process.env.STRESS_VOICE_BYTES, 96, 1, 512),
     voiceProfile: (argument('--voice-profile') ?? process.env.STRESS_VOICE_PROFILE) === 'realistic' ? 'realistic' : 'continuous',
     voiceTransport: parseVoiceTransport(argument('--voice-transport') ?? process.env.STRESS_VOICE_TRANSPORT),
+    voiceEdge: argument('--voice-edge') ?? process.env.STRESS_VOICE_EDGE ?? '',
     voiceIntervalMs: boundedNumber(process.env.STRESS_VOICE_INTERVAL_MS, 20, 10, 1000),
     // Oito handshakes por lote reproduzem melhor entradas reais e evitam que
     // o gerador transforme um pico artificial em falha de capacidade.

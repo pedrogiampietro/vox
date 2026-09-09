@@ -316,6 +316,11 @@ repositório; ele é opcional e nunca deve ser colocado no workflow ou na URL.
 Sem ele, o painel master continua mostrando essas métricas em tempo real.
 Depois abra **Actions → Production voice stress → Run workflow**, informe a
 URL WSS, a duração, o transporte e digite `PRODUCAO` no campo de confirmação.
+O campo `voice_edges` pode ficar em `auto` para medir a seleção normal do
+cliente. Para distribuir os shards entre as duas VPS, informe os IDs estáveis
+dos edges separados por vírgula, por exemplo `voice-sp,voice-eu`; o seletor
+deve ser o nome da região ou um trecho do hostname anunciado. Cada shard será
+fixado em um edge e o resumo final mostrará a quantidade de conexões por edge.
 
 Em uma instalação atrás de Caddy ou outro proxy confiável, valide primeiro
 `VOX_TRUST_PROXY=1`. Sem essa opção, o servidor enxerga o endereço do proxy em

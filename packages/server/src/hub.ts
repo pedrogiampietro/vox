@@ -73,7 +73,7 @@ export interface HubDeps {
   forceSave(): void;
   claimVoiceKey(key: string, session: Session): void;
   releaseVoiceKey(key: string): void;
-  voiceEndpoint(hostname: string): { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] };
+  voiceEndpoint(hostname: string, serverId?: number): { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] };
   voiceRouter?: VoiceRouter;
 }
 
@@ -1136,7 +1136,7 @@ export class Hub {
     }
     this.deps.voiceRouter?.register(s, this.voiceState(s));
 
-    const voice = this.deps.voiceEndpoint(s.hostname);
+    const voice = this.deps.voiceEndpoint(s.hostname, this.settings.id);
     s.send(
       encodeServerMessage({
         t: Op.Welcome,

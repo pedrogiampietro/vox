@@ -20,6 +20,8 @@ export interface EdgeMetricsSnapshot {
   connected: boolean;
   /** O endpoint QUIC local da origem está pronto para receber clientes. */
   available: boolean;
+  /** Último heartbeat ou sessão observado para este edge. */
+  lastSeenAt: number;
   upstreams: number;
   sessions: number;
   handshakes: {
@@ -263,6 +265,28 @@ export class RuntimeMetricsCollector {
     else edge.outboundBytes += bytes;
   }
 
+  /**
+   * Visão compacta usada pelo seletor de rota no handshake do cliente.
+   * Diferente do snapshot completo, não calcula CPU, memória ou histórico.
+   */
+  edgeRoutingHealth(): {
+    id: string;
+    connected: boolean;
+    available: boolean;
+    lastSeenAt: number;
+    sessions: number;
+    p95Ms: number;
+  }[] {
+    return [...this.edges.entries()].map(([id, edge]) => ({
+      id,
+      connected: edge.connected,
+      available: edge.available,
+      lastSeenAt: edge.lastSeenAt,
+      sessions: edge.sessions,
+      p95Ms: edge.reportedP95Ms || percentile(edge.handshakeDurations, 0.95),
+    }));
+  }
+
   updateEdgeStatus(edgeId: string, status: {
     attempts: number;
     successes: number;
@@ -440,6 +464,7 @@ export class RuntimeMetricsCollector {
         id,
         connected: edge.connected,
         available: edge.available,
+        lastSeenAt: edge.lastSeenAt,
         upstreams: edge.upstreams,
         sessions: edge.sessions,
         handshakes: {

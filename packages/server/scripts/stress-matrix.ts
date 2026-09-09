@@ -10,6 +10,8 @@
  *   npm run stress:matrix -- --duration 10
  *   npm run stress:matrix -- --target hostinger=wss://server-1.v0x.online/vox
  *   npm run stress:matrix -- --target contabo=wss://contabo.v0x.online/vox --duration 30
+ *   npm run stress:matrix -- --target sp@voice-sp=wss://server-1.v0x.online/vox
+ *   npm run stress:matrix -- --target eu@voice-eu=wss://server-1.v0x.online/vox
  *
  * Para destinos remotos, STRESS_CONFIRM=1 continua obrigatorio. O token
  * administrativo e herdado de STRESS_ADMIN_TOKEN e nunca e salvo no relatorio.
@@ -29,6 +31,7 @@ type Case = {
 type Target = {
   name: string;
   url: string;
+  voiceEdge: string;
 };
 
 type StressSummary = {
@@ -40,6 +43,7 @@ type StressSummary = {
   voiceReceived: number;
   rttMs: { p50: number; p95: number; p99: number; samples: number };
   voiceTransports?: { ws: number; wsDedicated?: number; quic: number };
+  voiceEdges?: Record<string, number>;
   failures: string[];
   adminRuntime: {
     processCpuPercent: number;
@@ -65,7 +69,7 @@ async function main(): Promise<void> {
   mkdirSync(reportDir, { recursive: true });
   const results: CaseResult[] = [];
 
-  console.log(`matriz: ${options.targets.map((target) => `${target.name}=${target.url}`).join(' · ')}`);
+  console.log(`matriz: ${options.targets.map((target) => `${target.name}=${target.url}${target.voiceEdge ? ` [edge ${target.voiceEdge}]` : ''}`).join(' · ')}`);
   console.log(`casos: ${options.cases.map((item) => `${item.name} (${item.clients} clientes/${item.speakers} falantes)`).join(' · ')}`);
   console.log(`duracao por caso: ${options.durationSec}s · voz sintetica · Rubinot ausente · Jukebox ${process.env.VOX_JUKEBOX_ENABLED === '0' ? 'desligado' : 'ligado'}`);
   console.log(`perfil: realista · transporte: ${options.voiceTransport}`);
@@ -119,6 +123,7 @@ function runCase(target: Target, item: Case, outputFile: string): Promise<number
     String(item.channels),
     '--duration',
     String(options.durationSec),
+    ...(target.voiceEdge ? ['--voice-edge', target.voiceEdge] : []),
   ], {
     cwd: process.cwd(),
     env: {
@@ -138,7 +143,7 @@ function runCase(target: Target, item: Case, outputFile: string): Promise<number
 
 function printReport(report: { results: CaseResult[] }): void {
   console.log('\n=== resumo da matriz ===');
-  console.log('alvo | caso | ativos | RTT p95 | CPU processo | RSS | banda saida | resultado');
+  console.log('alvo | caso | ativos | RTT p95 | CPU processo | RSS | banda saida | edges | resultado');
   for (const result of report.results) {
     const summary = result.summary;
     if (!summary) {
@@ -146,6 +151,9 @@ function printReport(report: { results: CaseResult[] }): void {
       continue;
     }
     const runtime = summary.adminRuntime;
+    const edgeSummary = Object.entries(summary.voiceEdges ?? {})
+      .map(([edge, count]) => `${edge}:${count}`)
+      .join(', ');
     console.log([
       result.target,
       result.name,
@@ -154,6 +162,7 @@ function printReport(report: { results: CaseResult[] }): void {
       runtime ? `${runtime.processCpuPercent.toFixed(1)}%` : 'n/d',
       runtime ? formatBytes(runtime.memory.rssBytes) : 'n/d',
       runtime ? `${runtime.traffic.outboundKbps.toFixed(1)}kbps` : 'n/d',
+      edgeSummary || 'n/d',
       summary.pass && result.exitCode === 0 ? 'PASS' : 'FAIL',
     ].join(' | '));
   }
@@ -162,13 +171,13 @@ function printReport(report: { results: CaseResult[] }): void {
 
 function parseOptions(): { targets: Target[]; cases: Case[]; durationSec: number; outputDir: string; voiceTransport: 'ws' | 'ws-dedicated' | 'quic' | 'auto' } {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    console.log('Uso: npm run stress:matrix -- [--target nome=WS_URL] [--duration SEC] [--output DIR] [--voice-transport ws|ws-dedicated|quic|auto]');
+    console.log('Uso: npm run stress:matrix -- [--target nome[@EDGE]=WS_URL] [--duration SEC] [--output DIR] [--voice-transport ws|ws-dedicated|quic|auto]');
     console.log('Padrao: 50, 100 e 150 clientes, distribuidos em 2, 4 e 8 canais; use STRESS_ADMIN_TOKEN para CPU/RAM/banda.');
     process.exit(0);
   }
   const targets = values('--target').map(parseTarget);
   return {
-    targets: targets.length > 0 ? targets : [{ name: 'local', url: DEFAULT_URL }],
+    targets: targets.length > 0 ? targets : [{ name: 'local', url: DEFAULT_URL, voiceEdge: '' }],
     cases: [
       { name: '50-clientes', clients: 50, speakers: 8, channels: 2 },
       { name: '100-clientes', clients: 100, speakers: 16, channels: 4 },
@@ -201,8 +210,13 @@ function value(flag: string): string | undefined {
 
 function parseTarget(raw: string): Target {
   const separator = raw.indexOf('=');
-  if (separator <= 0) return { name: 'target', url: raw };
-  return { name: raw.slice(0, separator), url: raw.slice(separator + 1) };
+  if (separator <= 0) return { name: 'target', url: raw, voiceEdge: '' };
+  const label = raw.slice(0, separator);
+  const edgeMarker = '@';
+  const edgeSeparator = label.indexOf(edgeMarker);
+  return edgeSeparator > 0
+    ? { name: label.slice(0, edgeSeparator), voiceEdge: label.slice(edgeSeparator + edgeMarker.length), url: raw.slice(separator + 1) }
+    : { name: label, url: raw.slice(separator + 1), voiceEdge: '' };
 }
 
 function boundedNumber(raw: string | undefined, fallback: number, min: number, max: number): number {

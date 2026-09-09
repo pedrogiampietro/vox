@@ -13,6 +13,22 @@ cliente ── WebTransport/QUIC ──────────► voice-sp.v0x.
                                            └── um WSS multiplexado ──► origem /internal/edge
 ```
 
+## Topologia atual
+
+Os DNS atualmente confirmados são:
+
+```text
+origem Node / server-1.v0x.online  -> 207.180.254.148 (Contabo, Europa)
+voice-eu.v0x.online                 -> 207.180.254.148 (mesma origem)
+voice-sp.v0x.online                 -> 179.199.142.231 (Hostinger, São Paulo)
+```
+
+Como `voice-eu` aponta para a mesma VPS da origem, a Europa já usa o
+WebTransport local do Node. Não é necessário instalar um segundo processo de
+edge nessa máquina; o processo regional fica na VPS de São Paulo. O hostname
+`voice-eu` só deve ser anunciado como edge separado se existir um serviço QUIC
+independente escutando nele.
+
 ## DNS
 
 Crie na zona DNS do domínio:
@@ -54,11 +70,19 @@ O Caddy da origem já encaminha o caminho `/internal/edge` junto com os demais
 WebSockets. Depois de atualizar o `.env`, reinicie o `vox.service`.
 
 Quando houver mais de uma região, cada edge precisa de DNS, certificado,
-  UDP/9987 e o mesmo segredo compartilhado com a origem. O cliente abre os candidatos
-  em paralelo e mantém o primeiro handshake completo de voz concluído; isso
-  escolhe a menor latência de rota disponível naquele momento, sem depender de
-  uma base fixa de geolocalização. Se o QUIC abrir, mas o edge não conseguir
-  autenticar na origem, o cliente fecha esse candidato e tenta o próximo.
+UDP/9987 e o mesmo segredo compartilhado com a origem. O Node mantém uma
+afinidade preferencial por servidor virtual: para o mesmo servidor, o edge
+saudável escolhido permanece estável enquanto a capacidade e o heartbeat não
+mudarem. Isso reduz troca de rota e mantém o tráfego de um servidor distribuído
+de forma previsível.
+
+O cliente ainda abre os candidatos em paralelo e mantém o primeiro handshake
+completo de voz concluído; assim, a decisão final usa a latência real do jogador,
+sem depender de uma base fixa de geolocalização. Se o QUIC abrir, mas o edge não
+conseguir autenticar na origem, o cliente fecha esse candidato e tenta o próximo.
+Edges sem heartbeat recente ficam depois da origem na preferência do Node. A
+origem continua anunciada como fallback para não deixar um servidor sem áudio
+quando uma VPS regional estiver indisponível.
 Além dos edges configurados, a própria origem é anunciada automaticamente como
 mais um candidato quando o WebTransport local consegue iniciar. Isso permite
 comparar uma VPS regional com a origem sem criar outra máquina.
@@ -66,10 +90,14 @@ comparar uma VPS regional com a origem sem criar outra máquina.
 O ID do edge é estável. `VOX_EDGE_ID` pode ser usado para dar um nome amigável;
 se ele não existir, o processo usa automaticamente o hostname da VPS. Assim,
 uma reconexão do upstream atualiza o mesmo edge no painel, em vez de criar
-entradas `edge-mux-1`, `edge-mux-2` e assim por diante. O cliente também fecha
-automaticamente candidatos especulativos que perderam a corrida sem registrá-los
-como falhas de autenticação, mantém a rota WebSocket como fallback e tenta o
-QUIC novamente com backoff quando a origem ou o edge voltarem.
+entradas `edge-mux-1`, `edge-mux-2` e assim por diante. Para a seleção feita
+antes do handshake, use no `VOX_VOICE_EDGES` um nome curto que também apareça no
+hostname (por exemplo, `voice-sp`) ou na região (`São Paulo`); o protocolo de
+voz anuncia host, porta e região, não expõe o segredo interno do edge. O
+cliente também fecha automaticamente candidatos especulativos que perderam a
+corrida sem registrá-los como falhas de autenticação, mantém a rota WebSocket
+como fallback e tenta o QUIC novamente com backoff quando a origem ou o edge
+voltarem.
 
 ## Atualização automática de todos os edges
 

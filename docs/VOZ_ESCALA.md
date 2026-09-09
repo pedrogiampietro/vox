@@ -42,6 +42,13 @@ relatório registra a divisão entre os transportes e o event loop p95. Para
 medir regiões de verdade, cada rodada ainda deve ser disparada a partir de
 origens geográficas diferentes; um único runner não representa vários IPs.
 
+Quando houver dois edges configurados, o workflow aceita `voice_edges` como
+uma lista de seletores separados por vírgula, por exemplo `voice-sp,voice-eu`.
+Os shards são distribuídos em round-robin e cada relatório registra o host
+QUIC que realmente recebeu as conexões. Com `auto`, o cliente volta a medir os
+candidatos anunciados normalmente; com um seletor, a rodada confirma a
+capacidade de cada VPS isoladamente.
+
 ### 1. Medir e reduzir o trabalho do caminho quente
 
 O servidor agora registra o fan-out no painel: quantos pacotes entraram e

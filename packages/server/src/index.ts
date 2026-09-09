@@ -27,6 +27,8 @@ import { closeDeusoldBrowser } from '../../bot/src/scrapers/deusold.js';
 import { providerFor } from './bot-ctrl.js';
 import { spawnAllJukeboxes, spawnJukebox, stopAllJukeboxes, stopJukebox } from './jukebox-spawn.js';
 import { VoiceRouter } from './voice-router.js';
+import { orderVoiceEdges } from './voice-edge-selection.js';
+import { serverMetrics } from './metrics.js';
 
 // --------------------------------------------------------------- estado --
 
@@ -202,7 +204,7 @@ let voice: VoiceEndpoint | null = null;
  * rota. Assim, um usuario em outra regiao tambem consegue testar o caminho
  * direto ate a VPS principal sem precisar de uma terceira maquina.
  */
-function voiceEndpointWithOrigin(hostname: string): {
+function voiceEndpointWithOrigin(hostname: string, serverId = 0): {
   host: string;
   port: number;
   certHash: Uint8Array;
@@ -228,10 +230,16 @@ function voiceEndpointWithOrigin(hostname: string): {
         certHash: new Uint8Array(0),
       }
     : null;
-  const edges = gatewayEdge ? [gatewayEdge, ...config.voiceEdges] : [...config.voiceEdges];
-  if (originEdge && !edges.some((edge) => edge.host === originEdge.host && edge.port === originEdge.port)) {
-    edges.push(originEdge);
+  const configuredEdges = gatewayEdge ? [gatewayEdge, ...config.voiceEdges] : [...config.voiceEdges];
+  const allEdges = [...configuredEdges];
+  if (originEdge && !allEdges.some((edge) => edge.host === originEdge.host && edge.port === originEdge.port)) {
+    allEdges.push(originEdge);
   }
+  const edges = orderVoiceEdges(allEdges, {
+    serverId,
+    origin: originEdge,
+    health: serverMetrics.edgeRoutingHealth(),
+  });
   const primary = edges[0] ?? originEdge;
   return {
     host: primary?.host ?? '',
@@ -244,7 +252,7 @@ function voiceEndpointWithOrigin(hostname: string): {
 if (config.voiceEdges.length > 0 || config.voiceQuicGatewayEnabled) {
   // Disponibiliza o edge regional desde o primeiro instante, enquanto o
   // listener QUIC da origem termina de carregar o certificado.
-  registry.setVoiceEndpointProvider((hostname) => voiceEndpointWithOrigin(hostname));
+  registry.setVoiceEndpointProvider((hostname, serverId) => voiceEndpointWithOrigin(hostname, serverId));
 }
 
 // O WebTransport local continua ativo mesmo quando existem edges regionais.
@@ -261,7 +269,7 @@ startVoiceTransport(registry)
       return;
     }
 
-    registry.setVoiceEndpointProvider((hostname) => voiceEndpointWithOrigin(hostname));
+    registry.setVoiceEndpointProvider((hostname, serverId) => voiceEndpointWithOrigin(hostname, serverId));
 
     if (config.voiceEdges.length > 0) {
       console.log(`[vox] ${config.voiceEdges.length + 1} edge(s) de voz anunciados; origem direta em ${config.voiceOriginRegion}`);
