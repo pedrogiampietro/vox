@@ -299,9 +299,10 @@ export class VoiceRouter {
 
   private gatewaySink(connectionId: number): VoiceSink {
     return {
-      // A identidade física do cliente continua no mapa gatewayLinks; o grupo
-      // compartilhado permite agrupar um frame antes de enviá-lo ao Rust.
-      voiceGroupId: 'quic-gateway',
+      // A identidade física de cada conexão precisa ser única para o roteador
+      // não descartar o fan-out entre clientes atendidos pelo mesmo gateway.
+      // O agrupamento final acontece no pacote enviado ao gateway.
+      voiceGroupId: `quic-gateway:${connectionId}`,
       send: (frame) => this.sendGatewayFrame(connectionId, frame),
       close: () => this.sendGatewayClose(connectionId),
     };
@@ -378,7 +379,7 @@ export class VoiceRouter {
       const target = this.clients.get(clientKey(targetServerId, targetClientId));
       if (!target || !target.session.live || target.channelId !== channelId) continue;
       const sink = target.session.voice;
-      if (sink?.voiceGroupId === 'quic-gateway') {
+      if (sink?.voiceGroupId?.startsWith('quic-gateway:')) {
         const connectionId = this.gatewaySessions.get(clientKey(targetServerId, targetClientId));
         if (connectionId !== undefined) gatewayRecipients.push(connectionId);
       } else if (sink?.voiceGroupId && sink.sendChannel) {
