@@ -1,24 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&display=swap');
 @import '@vox/ui/tokens.css';
 
-.locale-select {
-  min-height: 30px;
-  max-width: 170px;
-  padding: 0 26px 0 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r);
-  background: var(--ink-800);
-  color: var(--text-dim);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.locale-select:focus {
-  border-color: var(--amber);
-  outline: 0;
-  box-shadow: 0 0 0 2px rgba(232, 163, 61, 0.12);
-}
-
 /* ---------------------------------------------------------- landing page -- */
 
 #landing {
@@ -26,6 +8,8 @@
 }
 
 .landing-page {
+  /* Deixa a altura do `details` animar de 0 ate `auto`. Herda para a página. */
+  interpolate-size: allow-keywords;
   height: 100%;
   min-height: 100%;
   overflow-y: auto;
@@ -958,7 +942,358 @@
   font-family: var(--mono);
 }
 
+/* ------------------------------------------------------------------ bot -- */
+
+.landing-bot-showcase {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 28px;
+}
+
+/* A janela do hero flutua sobre o palco; aqui ela e conteudo de coluna. */
+.landing-bot-window {
+  position: static;
+  width: 100%;
+  margin: 0;
+  transform: none;
+}
+
+.landing-bot-row {
+  align-items: flex-start;
+  min-height: 54px;
+}
+
+.landing-bot-row-label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.landing-bot-row-label strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.landing-bot-topic {
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-bot-copy h3 {
+  margin: 0 0 14px;
+  color: var(--text);
+  font-size: 25px;
+  letter-spacing: -0.02em;
+}
+
+.landing-bot-copy > p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.landing-bot-list {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-bot-list li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.landing-bot-list li:last-child {
+  border-bottom: 0;
+}
+
+.landing-bot-list strong {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.landing-bot-list span {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.landing-bot-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 46px;
+}
+
+.landing-bot-card {
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(22, 21, 19, 0.72);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), transform 120ms var(--ease);
+}
+
+.landing-bot-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--amber-dim);
+  background: var(--ink-800);
+}
+
+.landing-bot-card h3 {
+  margin: 18px 0 10px;
+  color: var(--text);
+  font-size: 16px;
+  letter-spacing: -0.015em;
+}
+
+.landing-bot-card p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Mockup pequeno: mesma gramatica da janela grande, em miniatura. */
+.landing-bot-art {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  min-height: 104px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--ink-900);
+}
+
+.landing-bot-art-line {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.landing-bot-art-line > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-bot-art-tag {
+  flex: none;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.landing-bot-art-tag.amber { color: var(--amber); }
+.landing-bot-art-tag.signal { color: var(--signal); }
+.landing-bot-art-tag.faint { color: var(--text-faint); }
+
+.landing-bot-art .landing-bars {
+  margin-top: 2px;
+}
+
+/* Em linha, para o bloco ficar da mesma altura dos outros mockups e os
+   titulos dos quatro cartoes continuarem alinhados. */
+.landing-bot-art-commands {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 6px;
+}
+
+.landing-bot-art-commands code {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ink-800);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.landing-bot-providers {
+  margin-top: 46px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.landing-bot-chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.landing-bot-chip {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-height: 62px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(22, 21, 19, 0.5);
+}
+
+/* O convite fecha a lista sem dar a entender que ela e o limite. */
+.landing-bot-chip-ask {
+  border-color: var(--amber-dim);
+  background: rgba(232, 163, 61, 0.06);
+}
+
+.landing-bot-chip-ask strong {
+  color: var(--amber);
+}
+
+.landing-bot-chip strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.landing-bot-chip span {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+/* ------------------------------------------------------------------ faq -- */
+
+.landing-faq-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+/**
+ * Entrada em cascata.
+ *
+ * O atraso vem do JavaScript, por item (`--reveal-delay`), e a classe so e
+ * posta uma vez: animacao que refaz a cada rolagem vira poluicao. Sem
+ * IntersectionObserver ou com movimento reduzido, `is-visible` ja vem aplicada.
+ */
+.landing-faq-item {
+  border-bottom: 1px solid var(--line);
+  opacity: 0;
+  transform: translateY(10px);
+  transition:
+    opacity 420ms var(--ease-out) var(--reveal-delay, 0ms),
+    transform 420ms var(--ease-out) var(--reveal-delay, 0ms);
+}
+
+.landing-faq-item.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/**
+ * Abertura animada do `details`.
+ *
+ * `::details-content` e a caixa que o navegador cria para o conteudo; com
+ * `interpolate-size` (no `.landing-page`) a altura consegue ir de 0 ate `auto`.
+ * Onde nao houver suporte, abre instantaneo — que e o comportamento de antes.
+ */
+.landing-faq-item::details-content {
+  block-size: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    block-size 300ms var(--ease),
+    opacity 220ms var(--ease),
+    content-visibility 300ms allow-discrete;
+}
+
+.landing-faq-item[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-faq-item,
+  .landing-faq-item::details-content {
+    transition-duration: 1ms;
+    transition-delay: 0s;
+  }
+}
+
+.landing-faq-item summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 4px;
+  color: var(--text-dim);
+  font-size: 15px;
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--dur) var(--ease);
+}
+
+.landing-faq-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.landing-faq-item summary:hover,
+.landing-faq-item[open] summary {
+  color: var(--text);
+}
+
+.landing-faq-item summary:focus-visible {
+  outline: 1px solid var(--amber);
+  outline-offset: 2px;
+}
+
+.landing-faq-mark {
+  flex: none;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 16px;
+  transition: transform var(--dur) var(--ease);
+}
+
+.landing-faq-item[open] .landing-faq-mark {
+  transform: rotate(45deg);
+}
+
+.landing-faq-item p {
+  max-width: 760px;
+  margin: 0;
+  padding: 0 4px 24px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+@media (max-width: 1040px) {
+  .landing-bot-grid,
+  .landing-bot-chips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 880px) {
+  .landing-bot-showcase {
+    grid-template-columns: 1fr;
+  }
+
   .landing-hero {
     grid-template-columns: 1fr;
     padding-top: 62px;
@@ -973,7 +1308,8 @@
     right: 8%;
   }
 
-  .landing-window {
+  /* Só a janela do hero: a do bot é conteúdo de coluna, não flutua no palco. */
+  .landing-stage .landing-window {
     margin-top: 90px;
   }
 }
@@ -1091,5 +1427,18 @@
   .landing-footer-copy {
     width: 100%;
     margin-left: 0;
+  }
+
+  .landing-bot-grid,
+  .landing-bot-chips {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-bot-copy h3 {
+    font-size: 21px;
+  }
+
+  .landing-faq-item summary {
+    font-size: 14px;
   }
 }

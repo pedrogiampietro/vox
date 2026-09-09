@@ -53,24 +53,6 @@
   background: linear-gradient(90deg, var(--line-strong) 0%, transparent 100%);
 }
 
-.locale-select {
-  min-height: 30px;
-  max-width: 170px;
-  padding: 0 26px 0 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r);
-  background: var(--ink-800);
-  color: var(--text-dim);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.locale-select:focus {
-  border-color: var(--amber);
-  outline: 0;
-  box-shadow: 0 0 0 2px rgba(232, 163, 61, 0.12);
-}
-
 .browser-body {
   overflow-y: auto;
   display: grid;
@@ -3509,11 +3491,6 @@ label.field {
 
   .brand .rule {
     min-width: 20px;
-  }
-
-  .brand .locale-select {
-    width: 138px;
-    max-width: 138px;
   }
 }
 

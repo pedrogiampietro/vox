@@ -11,7 +11,7 @@ function renderLandingPage(): HTMLElement {
   page.append(renderNav());
   const shell = $('div', 'landing-shell');
   const plans = renderPlans();
-  shell.append(renderHero(), renderTrustBar(), renderDownload(), renderFeatures(), renderFlow(), plans, renderCta(), renderFooter());
+  shell.append(renderHero(), renderTrustBar(), renderDownload(), renderFeatures(), renderBot(), renderFlow(), plans, renderFaq(), renderCta(), renderFooter());
   page.append(shell);
   translateTree(page);
   void refreshLandingPlans(plans);
@@ -28,9 +28,11 @@ function renderNav(): HTMLElement {
   const links = $('div', 'landing-nav-links');
   links.append(
     landingLink('Recursos', '#recursos'),
+    landingLink('Bot', '#bot'),
     landingLink('Como Funciona', '#como-funciona'),
     landingLink('Download', '#download'),
     landingLink('Planos', '#planos'),
+    landingLink('FAQ', '#faq'),
   );
 
   const actions = $('div', 'landing-nav-actions');
@@ -257,6 +259,277 @@ function featureCard(number: string, title: string, detail: string): HTMLElement
   const card = $('article', 'landing-feature-card');
   card.append(text('span', 'landing-card-number', number), text('h3', '', title), text('p', '', detail), text('span', 'landing-card-arrow', '↗'));
   return card;
+}
+
+/**
+ * Secao do bot.
+ *
+ * As "imagens" sao mockups em CSS, nao PNG: a landing ja desenha a janela do
+ * servidor assim (`landing-window`), eles acompanham o tema, ficam nitidos em
+ * qualquer tela e nao custam download. Trocar por screenshot depois e possivel
+ * sem mexer no layout — o bloco tem tamanho proprio.
+ */
+function renderBot(): HTMLElement {
+  const section = $('section', 'landing-section landing-bot');
+  section.id = 'bot';
+  section.append(sectionIntro('o bot do v0x', 'Ele fica no canal e avisa a guilda antes de todo mundo.'));
+
+  const showcase = $('div', 'landing-bot-showcase');
+  showcase.append(renderBotWindow(), renderBotCopy());
+  section.append(showcase);
+
+  const grid = $('div', 'landing-bot-grid');
+  grid.append(
+    botCard(
+      'Claim de respawn',
+      'Reserve o respawn dentro do voice. Quem chegou primeiro fica com ele por 3 horas, e quando o tempo acaba a vez passa sozinha para quem está na fila.',
+      botClaimArt(),
+    ),
+    botCard(
+      'Jukebox por canal',
+      'Cada canal tem o seu player e a sua fila. O bot entra no canal de quem pediu e o pedido de um canal não interrompe a música do outro.',
+      botJukeboxArt(),
+    ),
+    botCard(
+      'Ficha do personagem',
+      'Escreva “Main: seu char” na apresentação e o bot completa com vocação e level, mostrando tudo junto da sua presença — mesmo com o char offline.',
+      botPlayerArt(),
+    ),
+    botCard(
+      'Comandos no chat',
+      'Sem painel e sem comando decorado: a guilda conversa com o bot pelo chat do canal, e a hunted list é editada por lá mesmo.',
+      botCommandsArt(),
+    ),
+  );
+  section.append(grid);
+
+  const providers = $('div', 'landing-bot-providers');
+  providers.append(text('span', 'landing-kicker', 'servidores suportados'));
+  const chips = $('div', 'landing-bot-chips');
+  chips.append(botChip('Rubinot'), botChip('DeusOT'), botChip('DeusOLD'), botChipAsk());
+  providers.append(chips);
+  section.append(providers);
+  return section;
+}
+
+function renderBotWindow(): HTMLElement {
+  const win = $('div', 'landing-window landing-bot-window');
+  const top = $('div', 'landing-window-top');
+  const lights = $('div', 'landing-window-lights');
+  lights.append($('i'), $('i'), $('i'));
+  top.append(lights, text('span', 'landing-window-title', 'canais do bot'), text('span', 'landing-window-signal', 'BOT ONLINE'));
+
+  const body = $('div', 'landing-window-body');
+  body.append(
+    botRow('Hunted List Online', 'HUNTED LIST ONLINE (151) · atualizado agora', '151', true),
+    botRow('UP Level', 'UP LEVEL · Orochi Ekz alcançou o level 412', ''),
+    botRow('DeathList', 'DEATH LIST · morreu para Dragon Lord às 03:12', ''),
+    botRow('Transfers', 'TRANSFERS RECENTES · destino: Aurora · level 300+', ''),
+    botRow('Former Names', 'FORMER NAMES · nomes antigos da hunted list', ''),
+  );
+
+  const footer = $('div', 'landing-window-footer');
+  footer.append(text('span', 'mono', 'music'), text('span', 'landing-window-latency', 'tocando · fila com 3'));
+  const bars = $('div', 'landing-bars');
+  for (let i = 0; i < 18; i++) bars.append($('i'));
+  footer.append(bars);
+
+  win.append(top, body, footer);
+  return win;
+}
+
+function botRow(name: string, topic: string, count: string, active = false): HTMLElement {
+  const row = $('div', `landing-window-row landing-bot-row${active ? ' active' : ''}`);
+  const label = $('div', 'landing-bot-row-label');
+  label.append(text('strong', '', name), text('span', 'landing-bot-topic', topic));
+  row.append(text('span', 'landing-window-channel', '◈'), label);
+  if (count) row.append(text('span', 'landing-window-count', count));
+  return row;
+}
+
+function renderBotCopy(): HTMLElement {
+  const copy = $('div', 'landing-bot-copy');
+  copy.append(
+    text('h3', '', 'Os canais nascem prontos'),
+    text('p', '', 'Escolha o preset do seu OT e o bot cria os canais, entra no voice e começa a publicar. Ninguém instala nada no PC — ele roda junto com o servidor.'),
+  );
+  const list = $('ul', 'landing-bot-list');
+  list.append(
+    botListItem('Hunted List', 'quem está online agora, atualizado sozinho'),
+    botListItem('DeathList', 'morreu? a guilda vê em segundos'),
+    botListItem('UP Level', 'quem subiu de level desde ontem'),
+    botListItem('Transfers', 'transferências recentes, do level 300 pra cima'),
+    botListItem('Former Names', 'os nomes antigos de quem está marcado'),
+  );
+  copy.append(list, landingLink('Ver planos com bot', '#planos', 'landing-button landing-button-outline'));
+  return copy;
+}
+
+function botListItem(title: string, detail: string): HTMLElement {
+  const item = $('li');
+  item.append(text('strong', '', title), text('span', '', detail));
+  return item;
+}
+
+function botCard(title: string, detail: string, art: HTMLElement): HTMLElement {
+  const card = $('article', 'landing-bot-card');
+  card.append(art, text('h3', '', title), text('p', '', detail));
+  return card;
+}
+
+function botArt(className = ''): HTMLElement {
+  return $('div', `landing-bot-art ${className}`.trim());
+}
+
+function artLine(label: string, value: string, tone = ''): HTMLElement {
+  const line = $('div', 'landing-bot-art-line');
+  line.append(text('span', `landing-bot-art-tag ${tone}`.trim(), label), text('span', '', value));
+  return line;
+}
+
+function botClaimArt(): HTMLElement {
+  const art = botArt('landing-bot-art-claim');
+  art.append(
+    artLine('agora', 'Cobra Bastion', 'amber'),
+    artLine('resta', '2h11', 'faint'),
+    artLine('fila', '2 esperando', 'faint'),
+  );
+  return art;
+}
+
+function botJukeboxArt(): HTMLElement {
+  const art = botArt();
+  art.append(artLine('você', 'orochi - sereia', 'amber'), artLine('music', 'tocando agora', 'signal'));
+  const bars = $('div', 'landing-bars');
+  for (let i = 0; i < 12; i++) bars.append($('i'));
+  art.append(bars);
+  return art;
+}
+
+function botPlayerArt(): HTMLElement {
+  const art = botArt();
+  art.append(artLine('desc', 'Main: Orochi Ekz', 'amber'), artLine('bot', 'EK · level 412', 'signal'));
+  return art;
+}
+
+function botCommandsArt(): HTMLElement {
+  const art = botArt('landing-bot-art-commands');
+  for (const command of ['fila', 'skip', 'stop', 'hunted add <nome>']) {
+    art.append(text('code', '', command));
+  }
+  return art;
+}
+
+function botChip(name: string): HTMLElement {
+  const chip = $('div', 'landing-bot-chip');
+  chip.append(text('strong', '', name));
+  return chip;
+}
+
+/** Joga o OT que falta pra dentro da conversa em vez de fechar a lista. */
+function botChipAsk(): HTMLElement {
+  const chip = $('div', 'landing-bot-chip landing-bot-chip-ask');
+  chip.append(text('strong', '', 'Joga em outro?'), text('span', '', 'manda pra gente que a gente adiciona'));
+  return chip;
+}
+
+/**
+ * FAQ em `details`: abre sem JavaScript, e o proprio navegador cuida do
+ * estado. So o acento do marcador e nosso.
+ */
+function renderFaq(): HTMLElement {
+  const section = $('section', 'landing-section landing-faq');
+  section.id = 'faq';
+  section.append(sectionIntro('antes de contratar', 'As perguntas que sempre chegam.'));
+  const list = $('div', 'landing-faq-list');
+  const items = FAQ.map(([question, answer]) => faqItem(question, answer));
+  list.append(...items);
+  section.append(list);
+  revealInSequence(items);
+  return section;
+}
+
+/**
+ * Revela os itens conforme entram na tela, um logo depois do outro.
+ *
+ * O atraso e por item e a classe entra uma vez so — reanimar a cada rolagem
+ * cansa mais do que enfeita. Sem suporte a IntersectionObserver, ou com
+ * movimento reduzido no sistema, tudo ja nasce visivel: a animacao e enfeite,
+ * nunca requisito para ler a pagina.
+ */
+function revealInSequence(items: HTMLElement[]): void {
+  const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if (still || typeof IntersectionObserver === 'undefined') {
+    for (const item of items) item.classList.add('is-visible');
+    return;
+  }
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
+      }
+    },
+    { rootMargin: '0px 0px -10% 0px' },
+  );
+
+  for (const [index, item] of items.entries()) {
+    item.style.setProperty('--reveal-delay', `${Math.min(index, 6) * 60}ms`);
+    observer.observe(item);
+  }
+}
+
+const FAQ: [string, string][] = [
+  [
+    'Preciso instalar alguma coisa?',
+    'Não. O v0x abre no navegador e a call começa ali mesmo. Se preferir um aplicativo, o de Windows tem cerca de 10 MB (é Tauri, não Electron) e no celular dá para instalar pelo próprio navegador, sem passar por loja.',
+  ],
+  [
+    'Tem plano grátis?',
+    'Tem: 10 slots, sem prazo. O servidor é criado na hora e já vem com a árvore de canais, as permissões e o painel — o mesmo servidor dos planos pagos, com menos gente dentro.',
+  ],
+  [
+    'O bot funciona no meu OT?',
+    'Ele vem com presets de Rubinot, DeusOT e DeusOLD. Para outros servidores dá para importar um preset próprio em JSON, sem esperar deploy. Sem uma fonte de dados conhecida, o bot fica desligado de propósito — melhor calado do que publicando lixo.',
+  ],
+  [
+    'Quanto custa o bot?',
+    'R$ 80 por mês somados ao plano escolhido. Ele é opcional: dá para usar o v0x só como voz e ligar o bot depois, pelo painel.',
+  ],
+  [
+    'A minha voz passa pelo servidor de vocês?',
+    'Passa, mas o servidor nunca decodifica: ele recebe o pacote Opus, carimba dois bytes com o id de quem falou e reencaminha. O compartilhamento de tela nem isso — o vídeo vai direto de um PC para o outro.',
+  ],
+  [
+    'Preciso criar conta para entrar num servidor?',
+    'Não. A sua identidade é uma chave gerada no seu navegador, e é ela que garante o seu nome, o seu cargo e o seu perfil. Conta só é necessária para criar e administrar servidores pelo painel.',
+  ],
+  [
+    'E se a minha rede bloquear UDP?',
+    'Nada quebra. A voz tenta o caminho rápido (WebTransport sobre QUIC) e, quando ele não está disponível, volta sozinha para o WebSocket. Você continua na call.',
+  ],
+  [
+    'Como funciona o claim de respawn?',
+    'O catálogo de respawns vem com o preset do servidor. Você reserva o respawn pelo painel de claims e ele fica seu por 3 horas, com o tempo restante à vista. Se estiver ocupado, você entra na fila e recebe a vez quando o claim expira ou o dono libera.',
+  ],
+  [
+    'A guilda tem endereço próprio?',
+    'Tem. Cada servidor ganha o seu subdomínio, no formato suaguilda.v0x.online. Você manda o link no grupo e todo mundo entra direto, sem IP e sem porta.',
+  ],
+  [
+    'E se o servidor cair?',
+    'O cliente reconecta sozinho, com espera crescente, e a árvore de canais continua na tela com o motivo da queda. Do nosso lado, o banco tem backup automático e as ações administrativas ficam registradas.',
+  ],
+];
+
+function faqItem(question: string, answer: string): HTMLElement {
+  const item = $('details', 'landing-faq-item');
+  const summary = $('summary');
+  summary.append(text('span', '', question), text('span', 'landing-faq-mark', '+'));
+  item.append(summary, text('p', '', answer));
+  return item;
 }
 
 function renderFlow(): HTMLElement {

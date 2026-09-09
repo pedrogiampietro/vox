@@ -66,6 +66,18 @@
   box-sizing: border-box;
 }
 
+/**
+ * `hidden` tem que esconder, sempre.
+ *
+ * A regra `[hidden] { display: none }` mora na folha do navegador, e qualquer
+ * declaracao de `display` nossa ganha dela — nao por especificidade, mas porque
+ * folha de autor vence folha do navegador. Sem isto, todo elemento estilizado
+ * com `display` ignora o proprio `hidden` e aparece na tela.
+ */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -266,5 +278,138 @@ input[type='range']:focus {
 @media (prefers-reduced-motion: reduce) {
   .vu.live i {
     animation: none;
+  }
+}
+
+/**
+ * Seletor de idioma.
+ *
+ * Vive aqui porque aparece em quatro telas — cliente, landing, checkout e area
+ * do cliente — e todas ja importam este arquivo. A bandeira e o conteudo: ela
+ * identifica o controle antes de qualquer texto ser lido.
+ */
+.locale-picker {
+  position: relative;
+  flex: none;
+}
+
+.locale-trigger {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--ink-800);
+}
+
+.locale-trigger:hover:not(:disabled) {
+  border-color: var(--amber);
+  background: var(--ink-700);
+}
+
+.locale-trigger[aria-expanded='true'] {
+  border-color: var(--amber);
+}
+
+.locale-flag {
+  width: 22px;
+  height: 22px;
+  display: block;
+  flex: none;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.locale-trigger .locale-flag {
+  width: 24px;
+  height: 24px;
+}
+
+/**
+ * Fechado, o menu continua no layout — so invisivel.
+ *
+ * `visibility` e o que o tira do foco e do leitor de tela, e ela e adiada ate o
+ * fim da transicao para a saida ter tempo de acontecer. Com `display: none` a
+ * animacao de saida seria cortada no primeiro quadro.
+ */
+.locale-menu {
+  min-width: 196px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--ink-800);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px) scale(0.97);
+  transform-origin: top right;
+  transition:
+    opacity 130ms var(--ease),
+    transform 190ms var(--ease-out),
+    visibility 0s linear 190ms;
+}
+
+.locale-menu.open {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+
+.locale-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: left;
+}
+
+.locale-option:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--ink-600);
+  color: var(--text);
+}
+
+.locale-option.active {
+  color: var(--amber);
+}
+
+/* As opcoes entram em cascata: da a sensacao de menu abrindo, nao aparecendo. */
+.locale-menu .locale-option {
+  opacity: 0;
+  transform: translateY(-5px);
+  transition:
+    opacity 150ms var(--ease),
+    transform 170ms var(--ease-out),
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+
+.locale-menu.open .locale-option {
+  opacity: 1;
+  transform: none;
+}
+
+.locale-menu.open .locale-option:nth-child(2) { transition-delay: 45ms; }
+.locale-menu.open .locale-option:nth-child(3) { transition-delay: 90ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .locale-menu,
+  .locale-menu .locale-option {
+    transition-duration: 1ms;
+    transition-delay: 0s;
   }
 }

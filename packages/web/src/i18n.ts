@@ -719,24 +719,118 @@ function translateAttributes(element: Element): void {
   }
 }
 
-export function createLocaleSelect(onChange?: (locale: Locale) => void): HTMLSelectElement {
-  const select = document.createElement('select');
-  select.className = 'locale-select';
-  select.setAttribute('aria-label', t('Idioma'));
-  for (const option of LOCALE_OPTIONS) {
-    const item = document.createElement('option');
-    item.value = option.value;
-    item.textContent = option.label;
-    item.selected = option.value === getLocale();
-    select.append(item);
+/**
+ * Bandeiras em SVG, nao emoji.
+ *
+ * O Windows nao tem glifo colorido de bandeira: `🇧🇷` sairia como as letras
+ * "BR" na maior parte dos clientes. Sao formas simples, recortadas em circulo
+ * pelo CSS — sem `clipPath`, que exigiria um id unico por instancia.
+ */
+const US_STRIPES = Array.from(
+  { length: 7 },
+  (_, i) => `<rect y="${(i * 24) / 13}" width="24" height="${24 / 13}" fill="#b22234"/>`,
+).join('');
+
+const LOCALE_FLAGS: Record<Locale, string> = {
+  'pt-BR':
+    '<rect width="24" height="24" fill="#009b3a"/>' +
+    '<path d="M12 3.2 21 12l-9 8.8L3 12z" fill="#fedf00"/>' +
+    '<circle cx="12" cy="12" r="4.3" fill="#002776"/>' +
+    '<path d="M7.9 10.7a8.4 8.4 0 0 1 8.2 1.9" stroke="#fff" stroke-width="1" fill="none"/>',
+  en:
+    `<rect width="24" height="24" fill="#fff"/>${US_STRIPES}` +
+    '<rect width="10.6" height="9.9" fill="#3c3b6e"/>',
+  es:
+    '<rect width="24" height="24" fill="#c60b1e"/>' +
+    '<rect y="6" width="24" height="12" fill="#ffc400"/>',
+};
+
+function localeFlag(locale: Locale): SVGSVGElement {
+  const flag = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  flag.setAttribute('viewBox', '0 0 24 24');
+  flag.setAttribute('aria-hidden', 'true');
+  flag.classList.add('locale-flag');
+  flag.innerHTML = LOCALE_FLAGS[locale];
+  return flag;
+}
+
+/**
+ * Seletor de idioma: bandeira no gatilho, lista com bandeira e nome.
+ *
+ * Um `select` nativo nao aceita imagem nas opcoes, e a bandeira e o que faz o
+ * controle ser reconhecido sem ler. O menu e um `listbox` proprio, entao o
+ * teclado precisa ser tratado aqui: Escape fecha e devolve o foco ao gatilho.
+ */
+export function createLocaleSelect(onChange?: (locale: Locale) => void): HTMLElement {
+  const picker = document.createElement('div');
+  picker.className = 'locale-picker';
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'locale-trigger';
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-label', t('Idioma'));
+  trigger.append(localeFlag(getLocale()));
+
+  // O estado e uma classe, nao `hidden`: assim a saida tambem anima. Quem
+  // esconde com `display: none` corta a transicao no meio.
+  const menu = document.createElement('div');
+  menu.className = 'locale-menu';
+  menu.setAttribute('role', 'listbox');
+
+  // O documento so escuta enquanto o menu esta aberto. Se a tela for remontada
+  // com ele aberto, o proprio ouvinte se remove na primeira chamada.
+  const onOutside = (event: PointerEvent): void => {
+    if (!picker.isConnected) {
+      document.removeEventListener('pointerdown', onOutside);
+      return;
+    }
+    if (!picker.contains(event.target as Node)) close();
+  };
+
+  function close(): void {
+    menu.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onOutside);
   }
-  select.addEventListener('change', () => {
-    const locale = select.value as Locale;
-    if (locale !== 'pt-BR' && locale !== 'en' && locale !== 'es') return;
-    setLocale(locale);
-    onChange?.(locale);
+
+  trigger.addEventListener('click', () => {
+    if (menu.classList.contains('open')) {
+      close();
+      return;
+    }
+    menu.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onOutside);
   });
-  return select;
+
+  picker.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !menu.classList.contains('open')) return;
+    close();
+    trigger.focus();
+  });
+
+  for (const option of LOCALE_OPTIONS) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'locale-option';
+    item.setAttribute('role', 'option');
+    const active = option.value === getLocale();
+    item.setAttribute('aria-selected', String(active));
+    if (active) item.classList.add('active');
+    item.append(localeFlag(option.value), document.createTextNode(option.label));
+    item.addEventListener('click', () => {
+      close();
+      if (option.value === getLocale()) return;
+      setLocale(option.value);
+      onChange?.(option.value);
+    });
+    menu.append(item);
+  }
+
+  picker.append(trigger, menu);
+  return picker;
 }
 
 applyDocumentLocale();
