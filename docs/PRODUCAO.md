@@ -240,13 +240,17 @@ evita que uma rajada artificial de 150 handshakes seja confundida com uso
 normal. Para reproduzir uma reconexão em massa, aumente deliberadamente
 `STRESS_BATCH` e `STRESS_VOICE_BATCH`; para uma entrada gradual, ajuste
 `STRESS_VOICE_RAMP_MS`.
-Para incluir no resumo as mesmas métricas do painel, informe um token
-master:
+Para incluir no resumo as mesmas métricas do painel, informe a senha master
+ou um token de sessão:
 
 ```powershell
-$env:STRESS_ADMIN_TOKEN = 'token-do-painel'
+$env:STRESS_ADMIN_PASSWORD = 'senha-do-painel'
 npm run stress -- --clients 100 --speakers 5 --duration 60 --voice-profile realistic
 ```
+
+`STRESS_ADMIN_PASSWORD` cria uma sessão nova para cada rodada e não expira no
+meio do teste. `STRESS_ADMIN_TOKEN` continua aceito para compatibilidade; se
+ele retornar 401/403, o runner tenta obter uma sessão nova usando a senha.
 
 Com o edge regional ativo, a rodada equivalente pelo QUIC é:
 
@@ -273,7 +277,7 @@ npm run stress:matrix -- --duration 30 --target contabo=wss://outro-host.v0x.onl
 
 É possível informar os dois alvos na mesma execução. Para a matriz remota,
 defina `STRESS_CONFIRM=1`; para CPU, RAM, banda e event loop, informe também
-`STRESS_ADMIN_TOKEN`. Em ambiente local, deixe `VOX_MAX_PER_IP=0` e um
+`STRESS_ADMIN_TOKEN` ou `STRESS_ADMIN_PASSWORD`. Em ambiente local, deixe `VOX_MAX_PER_IP=0` e um
 `VOX_MAX_CLIENTS` acima de 120. A primeira linha de planejamento deve usar o
 menor resultado entre as duas VPS, mantendo aproximadamente 30% de folga. Para
 separar o custo do processo de música, execute uma rodada com
@@ -292,7 +296,7 @@ npm run stress:capacity -- --target local=ws://127.0.0.1:9990/vox --provision --
 ```
 
 O relatório mostra clientes ativos, RTT, CPU, memória e saída de banda por
-cenário. Em uma VPS, informe `STRESS_ADMIN_TOKEN` e defina também
+cenário. Em uma VPS, informe `STRESS_ADMIN_TOKEN` ou `STRESS_ADMIN_PASSWORD` e defina também
 `STRESS_CONFIRM=1`; faça isso em uma janela combinada, porque os servidores são
 criados e apagados durante a medição. Rode com `VOX_JUKEBOX_ENABLED=0` para a
 linha de base e com `1` para medir o processo de música. A capacidade segura é
@@ -311,9 +315,12 @@ loop, RTT, descartes e transportes sem somar as cargas entre cenários.
 
 Antes de iniciar, confirme que a VPS aceita a quantidade de conexões por IP e
 combine a janela com quem opera a produção. Se quiser CPU, RAM e event loop no
-relatório, cadastre um `STRESS_ADMIN_TOKEN` de sessão vigente como Secret do
-repositório; ele é opcional e nunca deve ser colocado no workflow ou na URL.
-Sem ele, o painel master continua mostrando essas métricas em tempo real.
+relatório, cadastre `STRESS_ADMIN_PASSWORD` como Secret do repositório. O
+workflow também aceita o segredo antigo `STRESS_ADMIN_TOKEN` e o usa como
+senha quando não existe um segredo novo; assim a sessão é criada no começo de
+cada shard e não fica dependente de um token temporário. Esses segredos nunca
+devem ser colocados no workflow ou na URL. Sem eles, o painel master continua
+mostrando essas métricas em tempo real.
 Depois abra **Actions → Production voice stress → Run workflow**, informe a
 URL WSS, a duração, o transporte e digite `PRODUCAO` no campo de confirmação.
 O campo `voice_edges` pode ficar em `auto` para medir a seleção normal do

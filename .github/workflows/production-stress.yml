@@ -60,6 +60,7 @@ jobs:
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_EDGES: ${{ inputs.voice_edges }}
           ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          ADMIN_PASSWORD: ${{ secrets.STRESS_ADMIN_PASSWORD || secrets.STRESS_ADMIN_TOKEN }}
         run: |
           if [[ "$CONFIRMATION" != "PRODUCAO" ]]; then
             echo 'A carga nao foi confirmada. Digite PRODUCAO exatamente.' >&2
@@ -77,8 +78,8 @@ jobs:
             echo 'voice_edges precisa ser auto ou uma lista de seletores separados por virgula.' >&2
             exit 1
           fi
-          if [[ -z "$ADMIN_TOKEN" ]]; then
-            echo 'Aviso: STRESS_ADMIN_TOKEN nao foi informado; o relatorio nao tera CPU/RAM/event loop.'
+          if [[ -z "$ADMIN_TOKEN" && -z "$ADMIN_PASSWORD" ]]; then
+            echo 'Aviso: STRESS_ADMIN_TOKEN/STRESS_ADMIN_PASSWORD nao foi informado; o relatorio nao tera CPU/RAM/event loop.'
           fi
 
   stress_50:
@@ -111,6 +112,7 @@ jobs:
         env:
           STRESS_CONFIRM: '1'
           STRESS_ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          STRESS_ADMIN_PASSWORD: ${{ secrets.STRESS_ADMIN_PASSWORD || secrets.STRESS_ADMIN_TOKEN }}
           STRESS_JSON_OUT: report.json
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}
@@ -181,6 +183,7 @@ jobs:
         env:
           STRESS_CONFIRM: '1'
           STRESS_ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          STRESS_ADMIN_PASSWORD: ${{ secrets.STRESS_ADMIN_PASSWORD || secrets.STRESS_ADMIN_TOKEN }}
           STRESS_JSON_OUT: report.json
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}
@@ -257,6 +260,7 @@ jobs:
         env:
           STRESS_CONFIRM: '1'
           STRESS_ADMIN_TOKEN: ${{ secrets.STRESS_ADMIN_TOKEN }}
+          STRESS_ADMIN_PASSWORD: ${{ secrets.STRESS_ADMIN_PASSWORD || secrets.STRESS_ADMIN_TOKEN }}
           STRESS_JSON_OUT: report.json
           TARGET_URL: ${{ inputs.target_url }}
           DURATION_SEC: ${{ inputs.duration_sec }}

@@ -50,6 +50,8 @@ type Options = {
   channels: number;
   adminUrl: string;
   adminToken: string;
+  /** Senha master usada para obter um token de sessão novo a cada rodada. */
+  adminPassword: string;
   ignoreQualityFailures: boolean;
 };
 
@@ -498,18 +500,49 @@ async function main(): Promise<void> {
   const clients: StressClient[] = [];
   let adminRuntime: AdminRuntime | null = null;
   let adminWarningLogged = false;
+  let adminLoginAttempted = false;
+  const loginAdmin = async (): Promise<boolean> => {
+    if (!options.adminPassword || adminLoginAttempted) return false;
+    adminLoginAttempted = true;
+    const response = await fetch(adminLoginUrl(options.adminUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: options.adminPassword }),
+    });
+    if (!response.ok) {
+      if (!adminWarningLogged) {
+        console.log(`aviso: login administrativo rejeitado (HTTP ${response.status}); continuando sem metricas do servidor`);
+        adminWarningLogged = true;
+      }
+      return false;
+    }
+    const body = await response.json() as { token?: unknown };
+    if (typeof body.token !== 'string' || body.token.length === 0) {
+      if (!adminWarningLogged) {
+        console.log('aviso: login administrativo não retornou sessão; continuando sem métricas do servidor');
+        adminWarningLogged = true;
+      }
+      return false;
+    }
+    options.adminToken = body.token;
+    return true;
+  };
   const pollAdmin = async (): Promise<void> => {
-    if (!options.adminToken) return;
+    if (!options.adminToken && !(await loginAdmin())) return;
     try {
       const response = await fetch(options.adminUrl, {
         headers: { authorization: `Bearer ${options.adminToken}` },
       });
       if (response.status === 401 || response.status === 403) {
+        options.adminToken = '';
+        if (await loginAdmin()) {
+          await pollAdmin();
+          return;
+        }
         if (!adminWarningLogged) {
           console.log(`aviso: token administrativo rejeitado (HTTP ${response.status}); continuando sem metricas do servidor`);
           adminWarningLogged = true;
         }
-        options.adminToken = '';
         return;
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -522,7 +555,7 @@ async function main(): Promise<void> {
     }
   };
 
-  const adminTimer = options.adminToken
+  const adminTimer = options.adminToken || options.adminPassword
     ? setInterval(() => void pollAdmin(), 3000)
     : null;
   adminTimer?.unref?.();
@@ -753,7 +786,7 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
 function parseOptions(): Options {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     console.log('Uso: npm run stress -- [--clients N] [--speakers N] [--channels N] [--duration SEC] [--url WS_URL] [--voice-profile continuous|realistic] [--voice-transport ws|ws-dedicated|quic|auto] [--voice-edge EDGE]');
-    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_VOICE_EDGE, STRESS_BATCH, STRESS_VOICE_BATCH, STRESS_VOICE_RAMP_MS, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS, STRESS_IGNORE_QUALITY_FAILURES=1');
+    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_PASSWORD, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_VOICE_EDGE, STRESS_BATCH, STRESS_VOICE_BATCH, STRESS_VOICE_RAMP_MS, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS, STRESS_IGNORE_QUALITY_FAILURES=1');
     process.exit(0);
   }
   return {
@@ -776,6 +809,7 @@ function parseOptions(): Options {
       ?? process.env.STRESS_ADMIN_URL
       ?? adminUrlFor(argument('--url') ?? process.env.STRESS_URL ?? DEFAULT_URL),
     adminToken: argument('--admin-token') ?? process.env.STRESS_ADMIN_TOKEN ?? '',
+    adminPassword: process.env.STRESS_ADMIN_PASSWORD ?? '',
     ignoreQualityFailures: process.env.STRESS_IGNORE_QUALITY_FAILURES === '1',
   };
 }
@@ -809,6 +843,13 @@ function adminUrlFor(wsUrl: string): string {
   const url = new URL(wsUrl);
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
   url.pathname = '/api/overview';
+  url.search = '';
+  return url.toString();
+}
+
+function adminLoginUrl(adminUrl: string): string {
+  const url = new URL(adminUrl);
+  url.pathname = '/api/login';
   url.search = '';
   return url.toString();
 }
