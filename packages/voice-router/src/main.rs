@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -45,6 +45,13 @@ struct ClientState {
     channel_id: u32,
     muted: bool,
     edge_group: u32,
+}
+
+/// O controle precisa passar na frente da voz. Uma fila cheia de áudio velho
+/// não pode atrasar mudança de canal, mute ou a remoção de uma sessão.
+struct WorkerInbox {
+    control: Sender<Command>,
+    voice: SyncSender<Command>,
 }
 
 #[derive(Debug)]
@@ -92,94 +99,153 @@ fn main() -> io::Result<()> {
         }
         if let Some(command) = decode_command(&buffer[..length]) {
             let worker = worker_for(&command, worker_count);
-            match workers[worker].try_send(command) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => {
-                    // A fila cheia significa áudio velho. Descartar é melhor
-                    // que aumentar a latência de todos os participantes.
+            if matches!(&command, Command::Voice { .. }) {
+                match workers[worker].voice.try_send(command) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(command)) => {
+                        // A fila cheia significa áudio velho. Descartar é melhor
+                        // que aumentar a latência de todos os participantes.
+                        if let Command::Voice {
+                            key,
+                            channel_id,
+                            frame,
+                            ..
+                        } = command
+                        {
+                            let metric =
+                                encode_metric(key.server_id, channel_id, frame.len(), 0, 1);
+                            let _ = socket.send_to(&metric, target);
+                        }
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "worker de voz encerrado",
+                        ));
+                    }
                 }
-                Err(TrySendError::Disconnected(_)) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        "worker encerrado",
-                    ));
-                }
+            } else if workers[worker].control.send(command).is_err() {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "worker de controle encerrado",
+                ));
             }
         }
     }
 }
 
-fn spawn_workers(count: usize, output: UdpSocket, target: SocketAddr) -> Vec<SyncSender<Command>> {
+fn spawn_workers(count: usize, output: UdpSocket, target: SocketAddr) -> Vec<WorkerInbox> {
     let mut channels = Vec::with_capacity(count);
     for worker_id in 0..count {
-        let (sender, receiver) = mpsc::sync_channel(MAX_CHANNEL_QUEUE);
+        let (control_sender, control_receiver) = mpsc::channel();
+        let (voice_sender, voice_receiver) = mpsc::sync_channel(MAX_CHANNEL_QUEUE);
         let worker_output = output.try_clone().expect("socket UDP do worker");
         thread::Builder::new()
             .name(format!("vox-voice-{worker_id}"))
-            .spawn(move || worker_loop(receiver, worker_output, target))
+            .spawn(move || worker_loop(control_receiver, voice_receiver, worker_output, target))
             .expect("thread do worker de voz");
-        channels.push(sender);
+        channels.push(WorkerInbox {
+            control: control_sender,
+            voice: voice_sender,
+        });
     }
     channels
 }
 
-fn worker_loop(receiver: Receiver<Command>, socket: UdpSocket, target: SocketAddr) {
+fn worker_loop(
+    control_receiver: Receiver<Command>,
+    voice_receiver: Receiver<Command>,
+    socket: UdpSocket,
+    target: SocketAddr,
+) {
     let mut clients = HashMap::<ClientKey, ClientState>::new();
     // O worker pode atender vários canais que caíram no mesmo shard. Manter
     // o índice por canal evita varrer todos eles a cada frame de voz.
     let mut channel_members = HashMap::<(u32, u32), HashSet<ClientKey>>::new();
-    while let Ok(command) = receiver.recv() {
-        match command {
-            Command::Register {
-                key,
-                channel_id,
-                flags,
-                edge_group,
-            } => {
-                if let Some(previous) = clients.get(&key) {
-                    if previous.channel_id != channel_id {
-                        remove_channel_member(
-                            &mut channel_members,
-                            (key.server_id, previous.channel_id),
-                            key,
-                        );
-                    }
+    loop {
+        // Drena alterações baratas antes de aceitar outro bloco de áudio. Isso
+        // evita que mute, troca de canal ou unregister fiquem presos em pico.
+        let mut handled_control = false;
+        loop {
+            match control_receiver.try_recv() {
+                Ok(command) => {
+                    handle_command(command, &mut clients, &mut channel_members, &socket, target);
+                    handled_control = true;
                 }
-                clients.insert(
-                    key,
-                    ClientState {
-                        channel_id,
-                        muted: flags & 1 != 0,
-                        edge_group,
-                    },
-                );
-                channel_members
-                    .entry((key.server_id, channel_id))
-                    .or_default()
-                    .insert(key);
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
             }
-            Command::Unregister { key, channel_id } => {
-                clients.remove(&key);
-                remove_channel_member(&mut channel_members, (key.server_id, channel_id), key);
+        }
+        if handled_control {
+            continue;
+        }
+
+        let command = match voice_receiver.recv_timeout(Duration::from_millis(10)) {
+            Ok(command) => command,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        };
+        handle_command(command, &mut clients, &mut channel_members, &socket, target);
+    }
+}
+
+fn handle_command(
+    command: Command,
+    clients: &mut HashMap<ClientKey, ClientState>,
+    channel_members: &mut HashMap<(u32, u32), HashSet<ClientKey>>,
+    socket: &UdpSocket,
+    target: SocketAddr,
+) {
+    match command {
+        Command::Register {
+            key,
+            channel_id,
+            flags,
+            edge_group,
+        } => {
+            if let Some(previous) = clients.get(&key) {
+                if previous.channel_id != channel_id {
+                    remove_channel_member(
+                        channel_members,
+                        (key.server_id, previous.channel_id),
+                        key,
+                    );
+                }
             }
-            Command::Voice {
+            clients.insert(
                 key,
-                channel_id,
-                sent_at_ms,
-                frame,
-            } => route_voice(
-                &clients,
-                &channel_members,
-                &socket,
-                target,
-                key,
-                channel_id,
-                sent_at_ms,
-                frame,
-            ),
-            Command::Probe => {
-                let _ = announce_ready(&socket, target);
-            }
+                ClientState {
+                    channel_id,
+                    muted: flags & 1 != 0,
+                    edge_group,
+                },
+            );
+            channel_members
+                .entry((key.server_id, channel_id))
+                .or_default()
+                .insert(key);
+        }
+        Command::Unregister { key, channel_id } => {
+            clients.remove(&key);
+            remove_channel_member(channel_members, (key.server_id, channel_id), key);
+        }
+        Command::Voice {
+            key,
+            channel_id,
+            sent_at_ms,
+            frame,
+        } => route_voice(
+            &clients,
+            &channel_members,
+            &socket,
+            target,
+            key,
+            channel_id,
+            sent_at_ms,
+            frame,
+        ),
+        Command::Probe => {
+            let _ = announce_ready(&socket, target);
         }
     }
 }

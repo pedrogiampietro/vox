@@ -351,10 +351,20 @@ export class RuntimeMetricsCollector {
   }
 
   recordVoiceDrop(bytes: number, edgeId = ''): void {
-    if (!Number.isFinite(bytes) || bytes <= 0) return;
-    this.totals.voiceDroppedPackets++;
-    this.totals.voiceDroppedBytes += bytes;
-    if (edgeId) this.recordEdgeTraffic(edgeId, 'outbound', bytes, true);
+    this.recordVoiceDrops(bytes, 1, edgeId);
+  }
+
+  recordVoiceDrops(bytes: number, count: number, edgeId = ''): void {
+    if (!Number.isFinite(bytes) || bytes <= 0 || !Number.isFinite(count) || count <= 0) return;
+    const packets = Math.trunc(count);
+    if (packets <= 0) return;
+    this.totals.voiceDroppedPackets += packets;
+    this.totals.voiceDroppedBytes += bytes * packets;
+    if (edgeId) {
+      const edge = this.edge(edgeId);
+      edge.droppedPackets += packets;
+      edge.droppedBytes += bytes * packets;
+    }
   }
 
   snapshot(now = Date.now()): RuntimeMetricsSnapshot {

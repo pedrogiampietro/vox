@@ -45,6 +45,8 @@ type StressSummary = {
   voiceTransports?: { ws: number; wsDedicated?: number; quic: number };
   voiceEdges?: Record<string, number>;
   failures: string[];
+  capacity?: { pass: boolean; failures: string[] };
+  quality?: { pass: boolean; gateApplied: boolean; failures: string[] };
   adminRuntime: {
     processCpuPercent: number;
     hostCpuPercent: number;
@@ -143,7 +145,7 @@ function runCase(target: Target, item: Case, outputFile: string): Promise<number
 
 function printReport(report: { results: CaseResult[] }): void {
   console.log('\n=== resumo da matriz ===');
-  console.log('alvo | caso | ativos | RTT p95 | CPU processo | RSS | banda saida | edges | resultado');
+  console.log('alvo | caso | ativos | RTT p95 | CPU processo | RSS | banda saida | edges | capacidade | qualidade | resultado');
   for (const result of report.results) {
     const summary = result.summary;
     if (!summary) {
@@ -163,6 +165,8 @@ function printReport(report: { results: CaseResult[] }): void {
       runtime ? formatBytes(runtime.memory.rssBytes) : 'n/d',
       runtime ? `${runtime.traffic.outboundKbps.toFixed(1)}kbps` : 'n/d',
       edgeSummary || 'n/d',
+      summary.capacity ? (summary.capacity.pass ? 'PASS' : 'FAIL') : 'n/d',
+      summary.quality ? (summary.quality.pass ? 'PASS' : 'ATENÇÃO') : 'n/d',
       summary.pass && result.exitCode === 0 ? 'PASS' : 'FAIL',
     ].join(' | '));
   }

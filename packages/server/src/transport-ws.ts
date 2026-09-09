@@ -24,6 +24,8 @@ import type { PeerSocket, Session, VoiceSink } from './session.js';
 const ROUTE = /^\/vox(?:\/(\d+))?\/?$/;
 const VOICE_ROUTE = /^\/vox-voice(?:\/(\d+))?\/?$/;
 const EDGE_ROUTE = '/internal/edge';
+const MAX_VOICE_BUFFERED_BYTES = 2 * 1024 * 1024;
+const MAX_VOICE_QUEUE_BYTES = 64 * 1024;
 let nextVoiceQueueId = 1;
 
 export function attachWebSocket(
@@ -130,7 +132,24 @@ function serve(ws: WebSocket, hub: Hub, ip: string, hostname: string, queueId: s
 
   const queueVoice = (data: Uint8Array): void => {
     if (ws.readyState !== ws.OPEN) return;
-    if (ws.bufferedAmount > 2 * 1024 * 1024 || voiceQueueBytes + data.byteLength > 64 * 1024) {
+    // Quando o socket já está represando, manter frames pendentes só aumenta
+    // o atraso. Esvaziamos a fila local e deixamos o transporte se recuperar.
+    if (ws.bufferedAmount > MAX_VOICE_BUFFERED_BYTES) {
+      for (const queued of voiceQueue) serverMetrics.recordVoiceDrop(queued.byteLength);
+      voiceQueue.length = 0;
+      voiceQueueBytes = 0;
+      serverMetrics.recordVoiceQueue(queueId, 0);
+      serverMetrics.recordVoiceDrop(data.byteLength);
+      return;
+    }
+    // Voz atrasada vale menos que voz recente: remova o começo da fila até o
+    // novo frame caber, em vez de descartar sempre o áudio mais atual.
+    while (voiceQueue.length > 0 && voiceQueueBytes + data.byteLength > MAX_VOICE_QUEUE_BYTES) {
+      const queued = voiceQueue.shift()!;
+      voiceQueueBytes -= queued.byteLength;
+      serverMetrics.recordVoiceDrop(queued.byteLength);
+    }
+    if (voiceQueueBytes + data.byteLength > MAX_VOICE_QUEUE_BYTES) {
       serverMetrics.recordVoiceDrop(data.byteLength);
       return;
     }
@@ -244,7 +263,20 @@ class VoiceWsSink implements VoiceSink {
 
   send(frame: Uint8Array): void {
     if (this.closed || this.ws.readyState !== this.ws.OPEN) return;
-    if (this.ws.bufferedAmount > 2 * 1024 * 1024 || this.bytes + frame.byteLength > 64 * 1024) {
+    if (this.ws.bufferedAmount > MAX_VOICE_BUFFERED_BYTES) {
+      for (const queued of this.frames) serverMetrics.recordVoiceDrop(queued.byteLength);
+      this.frames.length = 0;
+      this.bytes = 0;
+      serverMetrics.recordVoiceQueue(this.queueId, 0);
+      serverMetrics.recordVoiceDrop(frame.byteLength);
+      return;
+    }
+    while (this.frames.length > 0 && this.bytes + frame.byteLength > MAX_VOICE_QUEUE_BYTES) {
+      const queued = this.frames.shift()!;
+      this.bytes -= queued.byteLength;
+      serverMetrics.recordVoiceDrop(queued.byteLength);
+    }
+    if (this.bytes + frame.byteLength > MAX_VOICE_QUEUE_BYTES) {
       serverMetrics.recordVoiceDrop(frame.byteLength);
       return;
     }

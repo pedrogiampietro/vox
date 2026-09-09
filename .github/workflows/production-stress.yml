@@ -27,6 +27,14 @@ on:
         required: true
         default: auto
         type: string
+      quality_gate:
+        description: 'Como tratar RTT/event loop dos runners hospedados'
+        required: true
+        default: report-only
+        type: choice
+        options:
+          - report-only
+          - enforce
       confirmation:
         description: 'Digite PRODUCAO para confirmar a janela de carga'
         required: true
@@ -108,6 +116,7 @@ jobs:
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_TRANSPORT: ${{ inputs.voice_transport }}
           VOICE_EDGE_LIST: ${{ inputs.voice_edges }}
+          STRESS_IGNORE_QUALITY_FAILURES: ${{ inputs.quality_gate == 'report-only' && '1' || '0' }}
           SHARD: ${{ matrix.shard }}
         run: |
           voice_edge=''
@@ -177,6 +186,7 @@ jobs:
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_TRANSPORT: ${{ inputs.voice_transport }}
           VOICE_EDGE_LIST: ${{ inputs.voice_edges }}
+          STRESS_IGNORE_QUALITY_FAILURES: ${{ inputs.quality_gate == 'report-only' && '1' || '0' }}
           SHARD: ${{ matrix.shard }}
         run: |
           voice_edge=''
@@ -252,6 +262,7 @@ jobs:
           DURATION_SEC: ${{ inputs.duration_sec }}
           VOICE_TRANSPORT: ${{ inputs.voice_transport }}
           VOICE_EDGE_LIST: ${{ inputs.voice_edges }}
+          STRESS_IGNORE_QUALITY_FAILURES: ${{ inputs.quality_gate == 'report-only' && '1' || '0' }}
           SHARD: ${{ matrix.shard }}
         run: |
           voice_edge=''
@@ -333,6 +344,8 @@ jobs:
               transport: { quic: 0, wsDedicated: 0, ws: 0 },
               edges: {},
               pass: true,
+              capacityPass: true,
+              qualityPass: true,
               reports: 0,
             };
             current.requested += report.clientsRequested ?? 0;
@@ -341,6 +354,8 @@ jobs:
             current.received += report.voiceReceived ?? 0;
             current.rttP95 = Math.max(current.rttP95, report.rttMs?.p95 ?? 0);
             current.pass = current.pass && report.pass === true;
+            current.capacityPass = current.capacityPass && (report.capacity?.pass ?? report.pass === true);
+            current.qualityPass = current.qualityPass && (report.quality?.pass ?? true);
             current.reports += 1;
             for (const key of ['quic', 'wsDedicated', 'ws']) {
               current.transport[key] += report.voiceTransports?.[key] ?? 0;
@@ -359,19 +374,32 @@ jobs:
           }
 
           const order = ['50 clientes', '100 clientes', '150 clientes'];
+          const expectedReports = { '50 clientes': 7, '100 clientes': 13, '150 clientes': 19 };
           const formatBytes = (bytes) => bytes == null ? 'n/d' : `${(bytes / 1024 / 1024).toFixed(0)} MB`;
           const formatNumber = (value, suffix = '') => value == null ? 'n/d' : `${Number(value).toFixed(1)}${suffix}`;
           let markdown = '# Resumo do stress de produção\n\n';
           markdown += `Alvo: \`${process.env.TARGET_URL ?? 'informado no workflow'}\`\n\n`;
-          markdown += '| Cenário | Ativos | Voz recebida | RTT p95 | CPU máx. | RSS máx. | Loop p95 máx. | Saída máx. | Transporte | Distribuição | Resultado |\n';
-          markdown += '|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|\n';
+          markdown += '| Cenário | Ativos | Voz recebida | RTT p95 | CPU máx. | RSS máx. | Loop p95 máx. | Saída máx. | Transporte | Distribuição | Capacidade | Qualidade |\n';
+          markdown += '|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|\n';
           for (const scenario of order) {
             const group = groups.get(scenario);
             if (!group) continue;
             const transport = `${group.transport.quic} QUIC / ${group.transport.wsDedicated} WS dedicado / ${group.transport.ws} WS controle`;
             const distribution = Object.entries(group.edges).map(([edge, count]) => `${edge}: ${count}`).join('<br>') || 'n/d';
-            markdown += `| ${scenario} (${group.reports} shards) | ${group.active}/${group.requested} | ${group.received}/${group.sent} | ${Math.round(group.rttP95)} ms | ${formatNumber(group.cpu, '%')} | ${formatBytes(group.rss)} | ${formatNumber(group.loop, ' ms')} | ${formatNumber(group.outboundKbps, ' kbps')} | ${transport} | ${distribution} | ${group.pass ? 'PASS' : 'FAIL'} |\n`;
+            const complete = group.reports === expectedReports[scenario];
+            const capacity = complete && group.capacityPass && group.active === group.requested ? 'PASS' : 'INCOMPLETO/FAIL';
+            const quality = group.qualityPass ? 'PASS' : 'ATENÇÃO';
+            markdown += `| ${scenario} (${group.reports}/${expectedReports[scenario]} shards) | ${group.active}/${group.requested} | ${group.received}/${group.sent} | ${Math.round(group.rttP95)} ms | ${formatNumber(group.cpu, '%')} | ${formatBytes(group.rss)} | ${formatNumber(group.loop, ' ms')} | ${formatNumber(group.outboundKbps, ' kbps')} | ${transport} | ${distribution} | ${capacity} | ${quality} |\n`;
           }
-          if (groups.size === 0) markdown += '| Nenhum relatório foi gerado | — | — | — | — | — | — | — | — | — | — |\n';
+          if (groups.size === 0) markdown += '| Nenhum relatório foi gerado | — | — | — | — | — | — | — | — | — | — | — |\n';
+          markdown += '\n`Capacidade` considera conexão, transporte e completude dos shards. `Qualidade` mostra RTT/event loop; em modo report-only, RTT alto do runner não reprova a capacidade.\n';
           fs.appendFileSync(output, markdown);
+          const incomplete = order.some((scenario) => {
+            const group = groups.get(scenario);
+            return !group
+              || group.reports !== expectedReports[scenario]
+              || group.active !== group.requested
+              || !group.capacityPass;
+          });
+          if (incomplete) process.exitCode = 1;
           NODE

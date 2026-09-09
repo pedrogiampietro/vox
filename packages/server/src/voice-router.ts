@@ -409,7 +409,12 @@ export class VoiceRouter {
     const recipients = packet.readUInt16LE(15);
     const dropped = packet.readUInt16LE(17);
     if (recipients > 0) serverMetrics.recordVoiceFanout(frameLength, recipients, `${serverId}:${channelId}`);
-    if (dropped > 0) this.droppedCommands += dropped;
+    if (dropped > 0) {
+      this.droppedCommands += dropped;
+      // O roteador só envia esta métrica quando a fila de voz ficou cheia.
+      // Contabilizar o lote inteiro evita perder o sinal de saturação no painel.
+      serverMetrics.recordVoiceDrops(frameLength, dropped);
+    }
   }
 
   private sendRegister(client: RouterClient): void {

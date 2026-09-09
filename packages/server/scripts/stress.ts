@@ -50,6 +50,7 @@ type Options = {
   channels: number;
   adminUrl: string;
   adminToken: string;
+  ignoreQualityFailures: boolean;
 };
 
 type AdminRuntime = {
@@ -76,6 +77,8 @@ type StressSummary = {
   voiceEdges: Record<string, number>;
   rttMs: { p50: number; p95: number; p99: number; samples: number };
   failures: string[];
+  capacity: { pass: boolean; failures: string[] };
+  quality: { pass: boolean; gateApplied: boolean; failures: string[] };
   adminRuntime: AdminRuntime | null;
   pass: boolean;
 };
@@ -679,7 +682,12 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
   if (adminRuntime && adminRuntime.eventLoopLagP95Ms > maxEventLoopP95Ms) {
     performanceFailures.push(`event loop p95 acima do limite (${formatMs(adminRuntime.eventLoopLagP95Ms)} > ${maxEventLoopP95Ms}ms)`);
   }
-  const summaryFailures = [...failures, ...performanceFailures];
+  const capacityFailures = [...failures];
+  if (live !== clients.length) {
+    capacityFailures.push(`clientes ativos abaixo do solicitado (${live}/${clients.length})`);
+  }
+  const qualityGateApplied = !options.ignoreQualityFailures;
+  const summaryFailures = [...capacityFailures, ...performanceFailures];
   const summary: StressSummary = {
     target: options.url,
     clientsRequested: clients.length,
@@ -697,8 +705,17 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
       samples: latencies.length,
     },
     failures: summaryFailures,
+    capacity: { pass: capacityFailures.length === 0, failures: capacityFailures },
+    quality: {
+      pass: performanceFailures.length === 0,
+      gateApplied: qualityGateApplied,
+      failures: performanceFailures,
+    },
     adminRuntime,
-    pass: summaryFailures.length === 0 && live === clients.length,
+    // Em runner hospedado, RTT depende também do caminho do próprio runner.
+    // Em modo report-only ele continua visível, mas não mascara a capacidade
+    // de conexões e fan-out que estamos medindo.
+    pass: capacityFailures.length === 0 && (!qualityGateApplied || performanceFailures.length === 0),
   };
   console.log('\nresultado');
   console.log(`  clientes: ${live}/${clients.length} ativos (${connected} sockets abertos)`);
@@ -713,6 +730,7 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
   } else {
     console.log('  servidor: passe STRESS_ADMIN_TOKEN para incluir CPU, RAM, banda e event loop');
   }
+  console.log(`  capacidade: ${summary.capacity.pass ? 'PASS' : 'FAIL'} · qualidade: ${summary.quality.pass ? 'PASS' : 'ATENÇÃO'}${summary.quality.gateApplied ? '' : ' (somente relatório)'}`);
   for (const failure of summaryFailures.slice(0, 12)) console.log(`  falha: ${failure}`);
   if (summaryFailures.length > 12) console.log(`  ... mais ${summaryFailures.length - 12} falhas`);
   console.log(summary.pass ? '\nPASS' : '\nFAIL');
@@ -725,7 +743,7 @@ function printSummary(clients: StressClient[], adminRuntime: AdminRuntime | null
 function parseOptions(): Options {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     console.log('Uso: npm run stress -- [--clients N] [--speakers N] [--channels N] [--duration SEC] [--url WS_URL] [--voice-profile continuous|realistic] [--voice-transport ws|ws-dedicated|quic|auto] [--voice-edge EDGE]');
-    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_VOICE_EDGE, STRESS_BATCH, STRESS_VOICE_BATCH, STRESS_VOICE_RAMP_MS, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS');
+    console.log('Env: STRESS_ADMIN_TOKEN, STRESS_ADMIN_URL, STRESS_CONFIRM=1, STRESS_VOICE_EDGE, STRESS_BATCH, STRESS_VOICE_BATCH, STRESS_VOICE_RAMP_MS, STRESS_VOICE_BYTES, STRESS_VOICE_INTERVAL_MS, STRESS_VOICE_PROFILE, STRESS_VOICE_TRANSPORT, STRESS_MAX_RTT_P95_MS, STRESS_MAX_EVENT_LOOP_P95_MS, STRESS_IGNORE_QUALITY_FAILURES=1');
     process.exit(0);
   }
   return {
@@ -748,6 +766,7 @@ function parseOptions(): Options {
       ?? process.env.STRESS_ADMIN_URL
       ?? adminUrlFor(argument('--url') ?? process.env.STRESS_URL ?? DEFAULT_URL),
     adminToken: argument('--admin-token') ?? process.env.STRESS_ADMIN_TOKEN ?? '',
+    ignoreQualityFailures: process.env.STRESS_IGNORE_QUALITY_FAILURES === '1',
   };
 }
 

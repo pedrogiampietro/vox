@@ -251,7 +251,7 @@ npm run stress -- --clients 100 --speakers 5 --duration 60 --voice-profile reali
 Com o edge regional ativo, a rodada equivalente pelo QUIC é:
 
 ```powershell
-npm run stress -- --url wss://server-1.v0x.online/vox --clients 30 --speakers 30 --duration 60 --voice-profile realistic --voice-transport quic
+npm run stress -- --url wss://server-1.v0x.online/vox/5 --clients 30 --speakers 30 --duration 60 --voice-profile realistic --voice-transport quic
 ```
 
 O teste remoto exige a confirmação explícita `STRESS_CONFIRM=1`. Comece com
@@ -318,9 +318,23 @@ Depois abra **Actions → Production voice stress → Run workflow**, informe a
 URL WSS, a duração, o transporte e digite `PRODUCAO` no campo de confirmação.
 O campo `voice_edges` pode ficar em `auto` para medir a seleção normal do
 cliente. Para distribuir os shards entre as duas VPS, informe os IDs estáveis
-dos edges separados por vírgula, por exemplo `voice-sp,voice-eu`; o seletor
-deve ser o nome da região ou um trecho do hostname anunciado. Cada shard será
-fixado em um edge e o resumo final mostrará a quantidade de conexões por edge.
+dos edges separados por vírgula, por exemplo `voice-sp,edge-eu`; o seletor deve
+ser o nome da região ou um trecho do hostname anunciado. Cada shard será fixado
+em um edge e o resumo final mostrará a quantidade de conexões por edge.
+
+Por padrão, a Action usa `quality_gate=report-only`: capacidade (conexões,
+transporte, voz e shards completos) reprova a rodada, enquanto RTT e event loop
+ficam como alerta. Isso evita confundir a rota do runner hospedado pelo GitHub
+com a experiência de um jogador. Para uma meta de latência rígida, escolha
+`enforce`. Para medir regiões de forma comparável, rode os mesmos shards em
+probes fixos no Brasil e na Europa (self-hosted runners ou VPS); runners
+hospedados não têm região de origem fixa garantida.
+
+O roteador Rust mantém as alterações de controle (mute, troca de canal e saída)
+em uma fila prioritária, separada da fila limitada de voz. Frames que chegam
+atrasados ou quando a fila está cheia são descartados de propósito e aparecem
+em `voiceDroppedPacketsTotal`, porque aumentar a fila faria o áudio chegar
+velho e prejudicaria todo o canal.
 
 Em uma instalação atrás de Caddy ou outro proxy confiável, valide primeiro
 `VOX_TRUST_PROXY=1`. Sem essa opção, o servidor enxerga o endereço do proxy em

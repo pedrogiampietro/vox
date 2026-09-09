@@ -83,6 +83,9 @@ const EDGE_FAILURE_COOLDOWN_MS = 30_000;
 const VOICE_RETRY_BASE_MS = 750;
 const VOICE_RETRY_MAX_MS = 15_000;
 const VOICE_FALLBACK_RETRY_MS = 2000;
+/** Três amostras ruins consecutivas justificam trocar o edge automaticamente. */
+const VOICE_RECONNECT_RTT_MS = 180;
+const VOICE_RECONNECT_BAD_PROBES = 3;
 
 type EdgeHealthState = VoiceEdgeHealth & { handshakeSamples: number[] };
 
@@ -132,6 +135,7 @@ export class Connection {
   private voiceWsReady = false;
   private voiceUpgradeInFlight = false;
   private readonly edgeHealth = new Map<string, EdgeHealthState>();
+  private badVoiceProbes = 0;
 
   /** WebSocket ate o WebTransport subir; 'quic' quando a voz migrou. */
   voiceTransport: VoiceTransport = 'ws';
@@ -748,6 +752,17 @@ export class Connection {
         this.voiceRtt = Math.max(1, Math.round(sample));
         this.voiceQuality = this.qualityFromMetrics();
         this.handlers.onVoiceStats?.();
+        if (sample >= VOICE_RECONNECT_RTT_MS) this.badVoiceProbes++;
+        else this.badVoiceProbes = 0;
+        if (this.badVoiceProbes >= VOICE_RECONNECT_BAD_PROBES && !this.voiceUpgradeInFlight) {
+          const activeEdge = this.voiceEdges.find((edge) => edge.host === this.voiceHost);
+          if (activeEdge) {
+            this.noteEdgeFailure(activeEdge, new Error(`RTT de voz instável (${Math.round(sample)}ms)`));
+          }
+          this.badVoiceProbes = 0;
+          this.dropVoiceChannel(generation, true);
+          return;
+        }
       } catch {
         return;
       }
@@ -800,6 +815,7 @@ export class Connection {
     this.closeVoiceFallback();
     this.voiceRtt = 0;
     this.voiceQuality = 'unknown';
+    this.badVoiceProbes = 0;
     this.voiceHost = '';
     this.voiceRegion = '';
     this.voicePacketsSent = 0;
@@ -839,6 +855,7 @@ export class Connection {
     this.voiceTransport = 'ws';
     this.voiceRtt = 0;
     this.voiceQuality = 'unknown';
+    this.badVoiceProbes = 0;
     this.voiceHost = '';
     this.voiceRegion = '';
     if (this.wtProbeTimer !== null) {

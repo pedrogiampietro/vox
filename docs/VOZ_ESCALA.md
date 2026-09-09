@@ -43,7 +43,7 @@ medir regiões de verdade, cada rodada ainda deve ser disparada a partir de
 origens geográficas diferentes; um único runner não representa vários IPs.
 
 Quando houver dois edges configurados, o workflow aceita `voice_edges` como
-uma lista de seletores separados por vírgula, por exemplo `voice-sp,voice-eu`.
+uma lista de seletores separados por vírgula, por exemplo `voice-sp,manowar`.
 Os shards são distribuídos em round-robin e cada relatório registra o host
 QUIC que realmente recebeu as conexões. Com `auto`, o cliente volta a medir os
 candidatos anunciados normalmente; com um seletor, a rodada confirma a
@@ -87,16 +87,16 @@ número de usuários de uma mesma região.
 
 ### 3. Separar o plano de voz do plano de controle
 
-O cliente e o servidor agora já separam a voz em um WebSocket próprio quando o
-QUIC não está disponível. Isso tira a fila de áudio do socket de controle sem
-duplicar autenticação ou sessão. A próxima camada é mover esse hot path para
-um processo/worker dedicado, enquanto autenticação, canais, chat e
-persistência ficam no processo de controle.
+Esta etapa já está ativa: o cliente e o servidor separam a voz em um
+WebSocket próprio quando o QUIC não está disponível, e o Hub Node publica os
+frames uma vez para o roteador Rust. O roteador mantém workers por servidor e
+canal, calcula o fan-out fora do event loop e preserva uma fila prioritária
+para controle.
 
-Essa é a próxima mudança estrutural. O primeiro passo recomendado é extrair
-somente o hot path de voz para um worker/serviço com contrato binário estável,
-mantendo o Hub Node como autoridade. Assim comparamos a mesma carga em Node,
-uWebSockets.js e Go/Rust sem reescrever autenticação, canais ou cobrança.
+O próximo ganho não é reescrever autenticação em outra linguagem. É medir a
+capacidade do roteador em produção, ajustar o número de workers por CPU e só
+então ativar o gateway QUIC Rust público onde houver certificado, UDP e um
+edge regional independente.
 
 ### 4. Só então avaliar outra linguagem
 
