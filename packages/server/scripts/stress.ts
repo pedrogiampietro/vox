@@ -123,7 +123,7 @@ class VoiceLink {
   }
 
   close(): void {
-    this.transport.close();
+    closeVoiceTransport(this.transport);
   }
 
   private async read(): Promise<void> {
@@ -369,6 +369,7 @@ class StressClient {
   }
 
   async openVoiceLink(): Promise<boolean> {
+    try {
     const welcome = this.welcome;
     if (!welcome) return false;
     const candidates = welcome.voiceEdges.filter((edge) => edge.host && edge.port > 0);
@@ -414,7 +415,7 @@ class StressClient {
         this.activeVoiceEdge = candidate.host;
         return true;
       } catch (error) {
-        transport?.close();
+        closeVoiceTransport(transport);
         if (this.requestedVoiceTransport === 'quic' || this.requestedVoiceEdge) {
           this.protocolFailures.push({
             code: FailureCode.Malformed,
@@ -424,6 +425,15 @@ class StressClient {
       }
     }
     return false;
+    } catch (error) {
+      if (this.requestedVoiceTransport === 'quic' || this.requestedVoiceEdge) {
+        this.protocolFailures.push({
+          code: FailureCode.Malformed,
+          message: `QUIC automático: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      }
+      return false;
+    }
   }
 
   async openDedicatedVoiceLink(): Promise<boolean> {
@@ -843,6 +853,14 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+function closeVoiceTransport(transport: VoiceTransportLike | null): void {
+  try {
+    transport?.close();
+  } catch {
+    // O fechamento de um handshake QUIC que expirou não pode abortar o shard.
   }
 }
 
