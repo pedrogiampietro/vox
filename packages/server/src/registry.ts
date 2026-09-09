@@ -12,11 +12,12 @@
  */
 
 import { DEFAULT_PRESET_ID, findPreset, presetGroups, Group, type VoiceEdge } from '@vox/protocol';
-import { Hub, type ServerSettings } from './hub.js';
+import { Hub, type HubDeps, type ServerSettings } from './hub.js';
 import { loadServers, saveServers, channelsForPreset, DEFAULT_BOT_CONFIG, type StoredServer } from './persistence.js';
 import type { Session, VoiceSink } from './session.js';
 import { clean, clamp } from './util.js';
 import { config } from './config.js';
+import type { VoiceRouter } from './voice-router.js';
 
 /** Gravacao adiada: uma rajada de mudancas vira uma escrita so. */
 const SAVE_DEBOUNCE_MS = 2000;
@@ -25,6 +26,7 @@ export class Registry {
   private readonly hubs = new Map<number, Hub>();
   /** Segredo de voz -> sessao, atravessando todos os servidores virtuais. */
   private readonly byVoiceKey = new Map<string, Session>();
+  private readonly voiceRouter: VoiceRouter | undefined;
 
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private nextServerId = 1;
@@ -45,7 +47,8 @@ export class Registry {
     this.voiceEndpoint = provider;
   }
 
-  constructor() {
+  constructor(voiceRouter?: VoiceRouter) {
+    this.voiceRouter = voiceRouter;
     let migrated = false;
     for (const stored of loadServers()) {
       if (this.migrateLegacyProvision(stored)) migrated = true;
@@ -82,13 +85,15 @@ export class Registry {
       maxClients: stored.maxClients,
       adminPassword: config.adminPassword,
     };
-    const hub = new Hub(settings, stored, {
+    const deps: HubDeps = {
       onChanged: () => this.scheduleSave(),
       forceSave: () => this.saveNow(),
       claimVoiceKey: (key, session) => this.byVoiceKey.set(key, session),
       releaseVoiceKey: (key) => this.byVoiceKey.delete(key),
       voiceEndpoint: (hostname) => this.voiceEndpoint(hostname),
-    });
+      ...(this.voiceRouter ? { voiceRouter: this.voiceRouter } : {}),
+    };
+    const hub = new Hub(settings, stored, deps);
     this.hubs.set(stored.id, hub);
     if (stored.id >= this.nextServerId) this.nextServerId = stored.id + 1;
     return hub;
@@ -230,12 +235,20 @@ export class Registry {
     if (!session || !session.live) return null;
     session.voice?.close();
     session.voice = sink;
+    const hub = this.hubOf(session);
+    if (hub) this.voiceRouter?.update(session, hub.voiceState(session));
     return session;
   }
 
   /** Encontra o Hub de uma sessao, para o transporte de voz entregar o frame. */
   hubOf(session: Session): Hub | undefined {
     return this.hubs.get(session.serverId);
+  }
+
+  /** Reenvia ao plano de mídia o estado depois que um sink público fechou. */
+  syncVoiceState(session: Session): void {
+    const hub = this.hubOf(session);
+    if (hub) this.voiceRouter?.update(session, hub.voiceState(session));
   }
 
   /** Liga o link privado de um edge a uma sessao autenticada. */

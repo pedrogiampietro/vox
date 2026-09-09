@@ -1,0 +1,24 @@
+[Unit]
+Description=v0x Rust WebTransport QUIC gateway
+After=network-online.target
+Wants=network-online.target
+
+# A unidade fica instalada, mas só é ativada quando o administrador criar
+# /etc/vox-voice-quic.env com certificado e porta pública.
+ConditionPathExists=/etc/vox-voice-quic.env
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/vox-voice-quic.env
+ExecStart=/usr/local/bin/vox-voice-quic
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,6 @@
 [Unit]
 Description=Vox voice server
-After=network-online.target
+After=network-online.target vox-voice.service
 Wants=network-online.target
 
 [Service]

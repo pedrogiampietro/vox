@@ -204,7 +204,10 @@ function serveVoice(
     if (released) return;
     released = true;
     serverMetrics.releaseVoiceQueue(queueId);
-    if (owner && sink && owner.voice === sink) owner.voice = null;
+    if (owner && sink && owner.voice === sink) {
+      owner.voice = null;
+      registry.syncVoiceState(owner);
+    }
     onClose();
   };
 

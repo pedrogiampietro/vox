@@ -53,6 +53,7 @@ import type { BotConfig } from '../../bot/src/bot.js';
 import { Session, type PeerSocket, type VoiceSink, type VoiceState } from './session.js';
 import { serverMetrics } from './metrics.js';
 import { clean, clamp } from './util.js';
+import type { VoiceRouter } from './voice-router.js';
 
 export interface ServerSettings {
   id: number;
@@ -73,6 +74,7 @@ export interface HubDeps {
   claimVoiceKey(key: string, session: Session): void;
   releaseVoiceKey(key: string): void;
   voiceEndpoint(hostname: string): { host: string; port: number; certHash: Uint8Array; edges?: VoiceEdge[] };
+  voiceRouter?: VoiceRouter;
 }
 
 interface Channel {
@@ -593,6 +595,7 @@ export class Hub {
     if (!this.isLive(s)) return;
 
     const previousChannelId = s.channelId;
+    this.deps.voiceRouter?.unregister(s);
     this.leaveChannel(s);
     this.sessions.delete(s.id);
     this.nicknames.delete(s.nickname.toLowerCase());
@@ -726,6 +729,7 @@ export class Hub {
     }
 
     stampSender(frame, s.id);
+    if (this.deps.voiceRouter?.route(s, channel.info.id, frame)) return;
     // O edge ja entregou este frame aos clientes da mesma regiao. Reenviar
     // para eles pela origem so cria trafego e trabalho que o edge descarta ao
     // reconhecer o proprio eco. Clientes sem edgeId continuam no caminho
@@ -1130,6 +1134,7 @@ export class Hub {
       this.addMember(home, s);
       s.channelId = home.info.id;
     }
+    this.deps.voiceRouter?.register(s, this.voiceState(s));
 
     const voice = this.deps.voiceEndpoint(s.hostname);
     s.send(
@@ -1368,6 +1373,7 @@ export class Hub {
 
   private syncVoiceState(s: Session): void {
     s.voice?.updateState?.(this.voiceState(s));
+    this.deps.voiceRouter?.update(s, this.voiceState(s));
   }
 
   /** Usado pelo painel, que ja se autenticou por fora. */

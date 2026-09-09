@@ -70,7 +70,10 @@ function serve(ws: WebSocket, registry: Registry, edgeId: string): void {
   const release = (): void => {
     if (released) return;
     released = true;
-    if (owner && sink && owner.voice === sink) owner.voice = null;
+    if (owner && sink && owner.voice === sink) {
+      owner.voice = null;
+      registry.syncVoiceState(owner);
+    }
     if (owner) {
       serverMetrics.recordEdgeSession(edgeId, -1);
       serverMetrics.recordVoiceTransport('quic', -1);
@@ -125,7 +128,10 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
     const entry = sessions.get(clientId);
     if (!entry) return;
     sessions.delete(clientId);
-    if (entry.owner.voice === entry.sink) entry.owner.voice = null;
+    if (entry.owner.voice === entry.sink) {
+      entry.owner.voice = null;
+      registry.syncVoiceState(entry.owner);
+    }
     entry.sink.markDetached();
     serverMetrics.recordEdgeSession(edgeId, -1);
     serverMetrics.recordVoiceTransport('quic', -1);
@@ -192,7 +198,10 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
     if (closed) return;
     closed = true;
     for (const { owner, sink } of sessions.values()) {
-      if (owner.voice === sink) owner.voice = null;
+      if (owner.voice === sink) {
+        owner.voice = null;
+        registry.syncVoiceState(owner);
+      }
       sink.markDetached();
       serverMetrics.recordEdgeSession(edgeId, -1);
       serverMetrics.recordVoiceTransport('quic', -1);

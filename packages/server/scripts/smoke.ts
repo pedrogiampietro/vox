@@ -27,6 +27,7 @@ import {
   PROTOCOL_VERSION,
   decodeServerMessage,
   decodeVoice,
+  decodeVoiceBatch,
   encodeClientMessage,
   encodeVoice,
 } from '@vox/protocol';
@@ -70,6 +71,22 @@ interface HeardVoice {
   payload: number[];
 }
 
+function collectVoice(frame: Uint8Array, target: HeardVoice[]): boolean {
+  if (frame[0] === FrameKind.Voice) {
+    const packet = decodeVoice(frame);
+    if (packet) target.push({ clientId: packet.clientId, seq: packet.seq, payload: [...packet.payload] });
+    return true;
+  }
+  if (frame[0] === FrameKind.VoiceBatch) {
+    for (const voice of decodeVoiceBatch(frame) ?? []) {
+      const packet = decodeVoice(voice);
+      if (packet) target.push({ clientId: packet.clientId, seq: packet.seq, payload: [...packet.payload] });
+    }
+    return true;
+  }
+  return false;
+}
+
 class TestClient {
   private readonly ws: WebSocket;
 
@@ -93,11 +110,7 @@ class TestClient {
     this.ws.binaryType = 'nodebuffer';
     this.ws.on('message', (data: Buffer) => {
       const frame = new Uint8Array(data);
-      if (frame[0] === FrameKind.Voice) {
-        const p = decodeVoice(frame);
-        if (p) this.voice.push({ clientId: p.clientId, seq: p.seq, payload: [...p.payload] });
-        return;
-      }
+      if (collectVoice(frame, this.voice)) return;
       this.apply(decodeServerMessage(frame));
     });
   }
@@ -319,8 +332,7 @@ async function openDedicatedVoiceLink(
       if (frame.length === 1 && frame[0] === 1) authenticated = true;
       return;
     }
-    const packet = decodeVoice(frame);
-    if (packet) received.push({ clientId: packet.clientId, seq: packet.seq, payload: [...packet.payload] });
+    collectVoice(frame, received);
   });
 
   try {

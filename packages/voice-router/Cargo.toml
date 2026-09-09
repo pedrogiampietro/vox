@@ -1,0 +1,12 @@
+[package]
+name = "vox-voice-router"
+version = "0.1.0"
+edition = "2021"
+description = "Roteador de mídia UDP do v0x"
+license = "UNLICENSED"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"

@@ -422,7 +422,7 @@ async function serve(session: WTSession, registry: Registry, edgeId: string): Pr
       released = true;
       serverMetrics.recordVoiceTransport('quic', -1);
       serverMetrics.recordVoiceTransport('ws', 1);
-      release(owner, sink);
+      release(registry, owner, sink);
     };
     // A partir daqui a sessao pertence a um cliente autenticado.
     void session.closed.then(releaseOnce, releaseOnce);
@@ -568,8 +568,11 @@ function makeSink(session: WTSession, edgeId: string): VoiceSink {
 }
 
 /** So limpa se a sessao ainda for a atual - o cliente pode ter reaberto. */
-function release(owner: Session, sink: VoiceSink): void {
-  if (owner.voice === sink) owner.voice = null;
+function release(registry: Registry, owner: Session, sink: VoiceSink): void {
+  if (owner.voice === sink) {
+    owner.voice = null;
+    registry.syncVoiceState(owner);
+  }
 }
 
 function closeQuietly(session: WTSession): void {

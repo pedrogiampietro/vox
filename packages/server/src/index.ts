@@ -26,10 +26,14 @@ import { closeDeusotBrowser } from '../../bot/src/scrapers/deusot.js';
 import { closeDeusoldBrowser } from '../../bot/src/scrapers/deusold.js';
 import { providerFor } from './bot-ctrl.js';
 import { spawnAllJukeboxes, spawnJukebox, stopAllJukeboxes, stopJukebox } from './jukebox-spawn.js';
+import { VoiceRouter } from './voice-router.js';
 
 // --------------------------------------------------------------- estado --
 
-const registry = new Registry();
+const voiceRouter = new VoiceRouter();
+voiceRouter.start();
+const registry = new Registry(voiceRouter);
+voiceRouter.attachRegistry(registry);
 const admin = new AdminApi(registry);
 
 // ------------------------------------------------------------- arquivos --
@@ -213,7 +217,18 @@ function voiceEndpointWithOrigin(hostname: string): {
         certHash: local.certHash,
       }
     : null;
-  const edges = [...config.voiceEdges];
+  const gatewayHost = config.voiceQuicGatewayHost || hostname;
+  const gatewayEdge: VoiceEdge | null = config.voiceQuicGatewayEnabled
+    && gatewayHost
+    && config.voiceQuicGatewayPort > 0
+    ? {
+        host: gatewayHost,
+        port: config.voiceQuicGatewayPort,
+        region: config.voiceQuicGatewayRegion,
+        certHash: new Uint8Array(0),
+      }
+    : null;
+  const edges = gatewayEdge ? [gatewayEdge, ...config.voiceEdges] : [...config.voiceEdges];
   if (originEdge && !edges.some((edge) => edge.host === originEdge.host && edge.port === originEdge.port)) {
     edges.push(originEdge);
   }
@@ -226,7 +241,7 @@ function voiceEndpointWithOrigin(hostname: string): {
   };
 }
 
-if (config.voiceEdges.length > 0) {
+if (config.voiceEdges.length > 0 || config.voiceQuicGatewayEnabled) {
   // Disponibiliza o edge regional desde o primeiro instante, enquanto o
   // listener QUIC da origem termina de carregar o certificado.
   registry.setVoiceEndpointProvider((hostname) => voiceEndpointWithOrigin(hostname));
@@ -246,14 +261,7 @@ startVoiceTransport(registry)
       return;
     }
 
-    registry.setVoiceEndpointProvider((hostname) => {
-      if (config.voiceEdges.length > 0) return voiceEndpointWithOrigin(hostname);
-      const local = endpoint.endpointFor(hostname);
-      const edges: VoiceEdge[] = local.host && local.port > 0
-        ? [{ host: local.host, port: local.port, region: config.voiceOriginRegion, certHash: local.certHash }]
-        : [];
-      return { ...local, edges };
-    });
+    registry.setVoiceEndpointProvider((hostname) => voiceEndpointWithOrigin(hostname));
 
     if (config.voiceEdges.length > 0) {
       console.log(`[vox] ${config.voiceEdges.length + 1} edge(s) de voz anunciados; origem direta em ${config.voiceOriginRegion}`);
@@ -321,6 +329,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(sweeper);
     clearInterval(pulse);
     stopBackups();
+    voiceRouter.close();
     void voice?.stop();
     registry.saveNow();
     void Promise.all([closeDeusotBrowser(), closeDeusoldBrowser()]).then(() => closeBrowserRuntime()).finally(() => {

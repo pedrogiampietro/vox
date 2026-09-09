@@ -25,6 +25,13 @@ Para distribuir a voz por uma região diferente da origem, consulte o
 [runbook do edge regional](VOX_EDGE.md). O edge é opcional: sem
 `VOX_VOICE_EDGE_HOST`, o processo usa o WebTransport da própria VPS.
 
+O terminador QUIC Rust separado é uma etapa opcional de migração. Quando
+`VOX_VOICE_QUIC_GATEWAY_ENABLED=1`, o cliente tenta primeiro o
+`vox-voice-quic` em `VOX_VOICE_QUIC_GATEWAY_PORT` e mantém o WebTransport do
+Node como fallback. O gateway precisa do certificado do hostname anunciado,
+da porta UDP pública liberada e do arquivo `/etc/vox-voice-quic.env`; o canal
+de controle `127.0.0.1:19878` não deve ser exposto à internet.
+
 ## Requisitos da nova máquina
 
 - Debian/Ubuntu 64-bit com Node.js 22 ou superior;
@@ -34,6 +41,7 @@ Para distribuir a voz por uma região diferente da origem, consulte o
   - `443/udp` para HTTP/3 do Caddy, opcional;
   - `9987-10086/udp` para voz QUIC (ou o intervalo definido por
     `VOX_WT_PORT`/`VOX_WT_PORT_MAX`);
+  - `9988/udp` se o gateway QUIC Rust estiver ativado;
   - `22/tcp` somente para administração;
 - Caddy instalado e com renovação automática do Let's Encrypt;
 - repositório clonado em `/opt/vox`;
@@ -415,7 +423,7 @@ copie uma chave privada para o repositório.
 ```bash
 systemctl is-active caddy
 systemctl is-active vox.service
-ss -ltnup | grep -E ':(80|443|9987)\b'
+ss -ltnup | grep -E ':(80|443|9987|9988)\b'
 journalctl -u vox.service -n 50 --no-pager | grep -Ei 'WebTransport|QUIC|certificado|WebSocket'
 ```
 
@@ -424,6 +432,15 @@ O resultado necessário para voz QUIC é parecido com:
 ```text
 [vox] voz por WebTransport em udp/9987 (0.0.0.0)
 UNCONN 0 0 0.0.0.0:9987 0.0.0.0:* users:(('node',...))
+```
+
+Se o gateway separado estiver ativado, confirme também:
+
+```bash
+systemctl is-active vox-voice.service
+systemctl is-active vox-voice-quic.service
+ss -lunp | grep -E ':(9988|19878)\b'
+journalctl -u vox-voice-quic.service -n 50 --no-pager
 ```
 
 ### 4. Trocar o DNS
@@ -651,6 +668,8 @@ mesmo IP e os baldes por IP passam a punir o conjunto.
 | Listener aparece em `127.0.0.1:9987` | `VOX_WT_HOST` herdou o `VOX_HOST` local | definir `VOX_WT_HOST=0.0.0.0` |
 | Listener UDP existe, mas cliente mostra `WS` | UDP bloqueada, porta fora do intervalo liberado ou certificado não corresponde ao hostname | firewall, DNS, `VOX_WT_CERT_DIR` e certificado |
 | WebSocket funciona, mas QUIC não | Caddy está ativo, mas a UDP anunciada no Welcome não chega ao Node | `tcpdump -ni any udp portrange 9987-10086` |
+| Gateway Rust não inicia | `/etc/vox-voice-quic.env` ausente, certificado inválido ou `9988/udp` ocupado | `systemctl status vox-voice-quic.service` e `journalctl -u vox-voice-quic.service` |
+| Gateway aparece no Welcome, mas volta ao Node | Node e gateway usam portas de controle diferentes ou o certificado não corresponde ao hostname | conferir `VOX_VOICE_QUIC_GATEWAY_CONTROL`, `VOX_VOICE_QUIC_NODE` e o `.env` da unidade |
 | Módulo WebTransport ausente | `npm ci` incompleto ou plataforma incompatível | `node -e "import('@fails-components/webtransport').then(() => console.log('ok'))"` |
 | Só alguns subdomínios usam QUIC | certificado novo ainda não foi encontrado ou o intervalo UDP não está liberado | confira o log do hostname, `VOX_WT_CERT_DIR` e o firewall |
 

@@ -88,6 +88,17 @@ function regionFromHost(host: string): string {
 const voiceEdgeHost = str('VOX_VOICE_EDGE_HOST', '');
 const voiceEdgePort = num('VOX_VOICE_EDGE_PORT', 9987);
 const voiceEdges = parseVoiceEdges(str('VOX_VOICE_EDGES', ''), voiceEdgeHost, voiceEdgePort);
+const wtCert = str('VOX_WT_CERT', '') || str('VOX_TLS_CERT', '');
+const wtKey = str('VOX_WT_KEY', '') || str('VOX_TLS_KEY', '');
+const defaultVoiceRouterBin = process.platform === 'win32'
+  ? join(process.cwd(), 'packages', 'voice-router', 'target', 'release', 'vox-voice-router.exe')
+  : '/usr/local/bin/vox-voice-router';
+const voiceRouterListen = str('VOX_VOICE_ROUTER_LISTEN', '127.0.0.1:19876');
+const voiceRouterTarget = str('VOX_VOICE_ROUTER_TARGET', '127.0.0.1:19877');
+const [voiceRouterWorkerHost = '127.0.0.1', voiceRouterWorkerPortRaw = '19876'] = voiceRouterListen.split(':');
+const [voiceRouterNodeHost = '127.0.0.1', voiceRouterNodePortRaw = '19877'] = voiceRouterTarget.split(':');
+const voiceQuicGatewayControl = str('VOX_VOICE_QUIC_GATEWAY_CONTROL', '127.0.0.1:19878');
+const [voiceQuicGatewayControlHost = '127.0.0.1', voiceQuicGatewayControlPortRaw = '19878'] = voiceQuicGatewayControl.split(':');
 
 export const config = {
   host: str('VOX_HOST', '0.0.0.0'),
@@ -157,8 +168,8 @@ export const config = {
     ? '::'
     : str('VOX_HOST', '0.0.0.0')),
   /** Certificado do QUIC. Vazio herda o do TLS; sem nenhum, sem WebTransport. */
-  wtCert: str('VOX_WT_CERT', '') || str('VOX_TLS_CERT', ''),
-  wtKey: str('VOX_WT_KEY', '') || str('VOX_TLS_KEY', ''),
+  wtCert,
+  wtKey,
   /**
    * Raiz do armazenamento de certificados do Caddy. Quando vazio, o Vox
    * tenta descobrir esta raiz a partir do caminho de VOX_WT_CERT.
@@ -181,6 +192,30 @@ export const config = {
   voiceEdges,
   /** Nome exibido quando o cliente escolhe o WebTransport da própria origem. */
   voiceOriginRegion: str('VOX_VOICE_ORIGIN_REGION', 'Origem'),
+
+  /**
+   * Roteador de mídia opcional. A ausência do binário mantém o caminho atual,
+   * permitindo deploy gradual e rollback sem alterar o plano de controle.
+   */
+  voiceRouterEnabled: bool('VOX_VOICE_ROUTER_ENABLED', true),
+  voiceRouterBin: str('VOX_VOICE_ROUTER_BIN', defaultVoiceRouterBin),
+  voiceRouterListen,
+  voiceRouterTarget,
+  voiceRouterWorkerHost,
+  voiceRouterWorkerPort: num('VOX_VOICE_ROUTER_WORKER_PORT', Number(voiceRouterWorkerPortRaw) || 19876),
+  voiceRouterNodeHost,
+  voiceRouterNodePort: num('VOX_VOICE_ROUTER_NODE_PORT', Number(voiceRouterNodePortRaw) || 19877),
+  voiceRouterManagedExternally: bool('VOX_VOICE_ROUTER_MANAGED_EXTERNALLY', true),
+  voiceRouterWorkers: num('VOX_VOICE_ROUTER_WORKERS', 4),
+
+  /** Terminador WebTransport opcional no serviço Rust, ainda desligado por padrão. */
+  voiceQuicGatewayEnabled: bool('VOX_VOICE_QUIC_GATEWAY_ENABLED', false),
+  voiceQuicGatewayHost: str('VOX_VOICE_QUIC_GATEWAY_HOST', ''),
+  voiceQuicGatewayPort: num('VOX_VOICE_QUIC_GATEWAY_PORT', 0),
+  voiceQuicGatewayRegion: str('VOX_VOICE_QUIC_GATEWAY_REGION', 'Origem Rust'),
+  voiceQuicGatewayControl,
+  voiceQuicGatewayControlHost,
+  voiceQuicGatewayControlPort: num('VOX_VOICE_QUIC_GATEWAY_CONTROL_PORT', Number(voiceQuicGatewayControlPortRaw) || 19878),
 
   /**
    * Senha do painel de administracao. Vazia desliga o painel inteiro - e o

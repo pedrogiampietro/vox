@@ -38,6 +38,10 @@ jobs:
         run: echo 'Dependências restauradas do cache; npm ci ignorado.'
       - run: npm run typecheck
       - run: npm run build
+      - name: Build Rust voice router
+        run: npm run build:voice-router
+      - name: Build Rust QUIC gateway
+        run: npm run build:voice-quic
       - name: Package regional edge
         run: |
           mkdir -p edge-deploy
@@ -47,6 +51,18 @@ jobs:
         with:
           name: v0x-edge-deploy
           path: edge-deploy
+          if-no-files-found: error
+      - name: Package voice router
+        run: |
+          mkdir -p voice-router-deploy
+          cp packages/voice-router/target/release/vox-voice-router voice-router-deploy/vox-voice-router
+          cp docs/vox-voice.service voice-router-deploy/vox-voice.service
+          cp packages/voice-quic/target/release/vox-voice-quic voice-router-deploy/vox-voice-quic
+          cp docs/vox-voice-quic.service voice-router-deploy/vox-voice-quic.service
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v0x-voice-router-deploy
+          path: voice-router-deploy
           if-no-files-found: error
 
   desktop:
@@ -119,6 +135,10 @@ jobs:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: v0x-voice-router-deploy
+          path: voice-router-deploy
       - name: Configure SSH
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -128,6 +148,27 @@ jobs:
           printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
           ssh-keyscan -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+      - name: Install Rust voice router
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          scp voice-router-deploy/vox-voice-router voice-router-deploy/vox-voice.service voice-router-deploy/vox-voice-quic voice-router-deploy/vox-voice-quic.service "$VPS_USER@$VPS_HOST:/tmp/"
+          ssh "$VPS_USER@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -e
+          install -m 755 /tmp/vox-voice-router /usr/local/bin/vox-voice-router
+          install -m 644 /tmp/vox-voice.service /etc/systemd/system/vox-voice.service
+          install -m 755 /tmp/vox-voice-quic /usr/local/bin/vox-voice-quic
+          install -m 644 /tmp/vox-voice-quic.service /etc/systemd/system/vox-voice-quic.service
+          rm -f /tmp/vox-voice-router /tmp/vox-voice.service /tmp/vox-voice-quic /tmp/vox-voice-quic.service
+          systemctl daemon-reload
+          systemctl enable --now vox-voice.service
+          if [ -f /etc/vox-voice-quic.env ]; then
+            systemctl enable --now vox-voice-quic.service
+          else
+            echo 'Gateway QUIC Rust aguardando /etc/vox-voice-quic.env; listener atual permanece ativo.'
+          fi
+          REMOTE
       - name: Update Vox on VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}

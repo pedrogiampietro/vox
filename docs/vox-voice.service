@@ -1,0 +1,22 @@
+[Unit]
+Description=v0x Rust voice media router
+After=network-online.target
+Wants=network-online.target
+Before=vox.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vox
+EnvironmentFile=-/etc/vox-voice-router.env
+ExecStart=/usr/local/bin/vox-voice-router
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run
+
+[Install]
+WantedBy=multi-user.target
