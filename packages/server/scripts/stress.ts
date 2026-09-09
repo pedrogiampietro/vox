@@ -458,12 +458,21 @@ async function main(): Promise<void> {
   // expirar no servidor, medindo o gerador e nao a capacidade do Vox.
   const clients: StressClient[] = [];
   let adminRuntime: AdminRuntime | null = null;
+  let adminWarningLogged = false;
   const pollAdmin = async (): Promise<void> => {
     if (!options.adminToken) return;
     try {
       const response = await fetch(options.adminUrl, {
         headers: { authorization: `Bearer ${options.adminToken}` },
       });
+      if (response.status === 401 || response.status === 403) {
+        if (!adminWarningLogged) {
+          console.log(`aviso: token administrativo rejeitado (HTTP ${response.status}); continuando sem metricas do servidor`);
+          adminWarningLogged = true;
+        }
+        options.adminToken = '';
+        return;
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json() as { runtime?: AdminRuntime | null };
       adminRuntime = body.runtime ?? null;
