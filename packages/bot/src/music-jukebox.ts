@@ -138,8 +138,20 @@ async function onControllerMessage(msg: ServerMessage): Promise<void> {
     return;
   }
   if (lower === 'skip' || lower === 'pular') {
-    if (!existingSession?.activePlayer) reply('nada tocando agora');
-    else existingSession.activePlayer.stop(true);
+    if (existingSession?.activePlayer) {
+      // O player da sessão permanece conectado; só a faixa atual é encerrada.
+      // A próxima faixa da fila reutiliza a mesma conexão e o mesmo canal.
+      existingSession.activePlayer.stop(true);
+    } else if (existingSession?.current) {
+      // A faixa ainda pode estar sendo resolvida pelo extrator. Invalida essa
+      // resolução para que o próximo item da fila assuma sem criar outro bot.
+      existingSession.cancelVersion++;
+      existingSession.current = null;
+      void pumpQueue(existingSession);
+      reply('pulando...');
+    } else {
+      reply('nada tocando agora');
+    }
     return;
   }
   if (lower === 'stop' || lower === 'parar') {
@@ -244,39 +256,47 @@ async function pumpQueue(session: ChannelSession): Promise<void> {
     return;
   }
 
-  let player: VoxConnection;
-  player = new VoxConnection(`music-${session.channelId}`, () => {}, () => {
-    if (session.player !== player) return;
-    console.error(`[jukebox] player do canal ${session.channelId} perdeu a conexão`);
-    session.player = null;
-    session.activePlayer?.stop(false);
-    if (!session.activePlayer) {
+  let player = session.player;
+  if (!player) {
+    player = new VoxConnection(`music-${session.channelId}`, () => {}, () => {
+      if (session.player !== player) return;
+      console.error(`[jukebox] player do canal ${session.channelId} perdeu a conexão`);
+      session.player = null;
+      session.activePlayer?.stop(false);
+      if (!session.activePlayer) {
+        session.current = null;
+        void pumpQueue(session);
+      }
+    });
+    session.player = player;
+    try {
+      await player.connect();
+    } catch (err) {
+      session.player = null;
       session.current = null;
-      void pumpQueue(session);
+      if (session.cancelVersion === cancelVersion && !session.cancelled) {
+        announce(`nao consegui conectar o player do canal: ${trimError(err)}`);
+      }
+      if (!session.cancelled) void pumpQueue(session);
+      else releaseEmptySession(session);
+      return;
     }
-  });
-  session.player = player;
-  try {
-    await player.connect();
-  } catch (err) {
-    session.player = null;
-    session.current = null;
-    if (session.cancelVersion === cancelVersion && !session.cancelled) {
-      announce(`nao consegui conectar o player do canal: ${trimError(err)}`);
-    }
-    if (!session.cancelled) void pumpQueue(session);
-    else releaseEmptySession(session);
-    return;
   }
   if (session.cancelVersion !== cancelVersion || session.cancelled || session.current !== current) {
-    player.close('cancelado');
-    session.player = null;
+    if (session.player === player && !session.activePlayer) {
+      player.close('cancelado');
+      session.player = null;
+    }
     session.current = null;
     if (!session.cancelled) void pumpQueue(session);
     else releaseEmptySession(session);
     return;
   }
-  player.send({ t: Op.JoinChannel, channelId: current.channelId, password: '' });
+  // A conexão já está no canal quando a sessão troca de faixa. Só envia o
+  // comando novamente se ela tiver sido movida enquanto ficou ociosa.
+  if (player.self?.channelId !== current.channelId) {
+    player.send({ t: Op.JoinChannel, channelId: current.channelId, password: '' });
+  }
 
   // Anuncia o que esta tocando: DM para quem pediu por DM, senao no canal `bot`.
   // NUNCA no canal de voz — ninguem quer ver metadados no chat do canal.
@@ -289,11 +309,18 @@ async function pumpQueue(session: ChannelSession): Promise<void> {
 
   session.activePlayer = new MusicPlayer(track, player, session, () => {
     session.activePlayer = null;
-    player?.close('fim');
-    if (session.player === player) session.player = null;
     session.current = null;
-    if (!session.cancelled && session.queue.length > 0) void pumpQueue(session);
-    else releaseEmptySession(session);
+    if (!session.cancelled && session.queue.length > 0 && session.player === player) {
+      // Troca de faixa sem leave/join: a presença do bot fica estável no
+      // canal e a fila continua dentro da mesma sessão de voz.
+      void pumpQueue(session);
+      return;
+    }
+    if (session.player === player) {
+      player.close('fim');
+      session.player = null;
+    }
+    releaseEmptySession(session);
   });
   session.activePlayer.start();
 }

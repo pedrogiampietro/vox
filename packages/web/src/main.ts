@@ -101,6 +101,12 @@ let dragChannelStartY = 0;
 let dragChannelPointerId = 0;
 let inputDevices: MediaDeviceInfo[] = [];
 let outputDevices: MediaDeviceInfo[] = [];
+let audioDevicesLoading = false;
+let audioDevicesMessage = '';
+
+interface AudioOutputPicker {
+  selectAudioOutput?: () => Promise<MediaDeviceInfo>;
+}
 
 /**
  * Edicoes pendentes de grupos, mantidas fora do closure para sobreviver
@@ -2869,17 +2875,99 @@ function renderScreenVideo(label: string, stream: MediaStream, muted: boolean): 
 
 // ----------------------------------------------------------------- settings --
 
-async function enumerateDevices(): Promise<void> {
-  try {
-    // Need permission first — ask for mic access briefly
-    const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    for (const track of tempStream.getTracks()) track.stop();
-  } catch {
-    // no permission, list what we can
+async function enumerateDevices(options: {
+  requestMicrophonePermission?: boolean;
+  requestOutputPermission?: boolean;
+} = {}): Promise<void> {
+  const media = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
+  if (!media?.enumerateDevices) {
+    inputDevices = [];
+    outputDevices = [];
+    audioDevicesMessage = 'seu navegador não disponibiliza a lista de dispositivos de áudio';
+    refreshVisibleSettings?.();
+    return;
   }
-  const all = await navigator.mediaDevices.enumerateDevices();
-  inputDevices = all.filter((d) => d.kind === 'audioinput');
-  outputDevices = all.filter((d) => d.kind === 'audiooutput');
+
+  if (audioDevicesLoading) return;
+  audioDevicesLoading = true;
+  audioDevicesMessage = '';
+  refreshVisibleSettings?.();
+
+  try {
+    if (options.requestMicrophonePermission) {
+      try {
+        // Os nomes dos dispositivos ficam ocultos até uma permissão de captura
+        // ser concedida. O stream é temporário; a captura real continua sob
+        // controle do VoxClient.
+        const tempStream = await media.getUserMedia({ audio: true, video: false });
+        for (const track of tempStream.getTracks()) track.stop();
+      } catch {
+        audioDevicesMessage = 'permita o acesso ao microfone para listar suas entradas de áudio';
+      }
+    }
+
+    if (options.requestOutputPermission) {
+      // Chromium pode exigir uma permissão separada para revelar as saídas.
+      // A chamada só acontece pelo botão da tela de configurações, portanto
+      // continua dentro de um gesto explícito do usuário.
+      const picker = media as MediaDevices & AudioOutputPicker;
+      if (typeof picker.selectAudioOutput === 'function') {
+        try {
+          await picker.selectAudioOutput();
+        } catch {
+          // Cancelar o seletor não é erro: ainda listamos o que já está liberado.
+        }
+      }
+    }
+
+    const all = await media.enumerateDevices();
+    const unique = (kind: MediaDeviceKind): MediaDeviceInfo[] => {
+      const seen = new Set<string>();
+      return all.filter((device) => {
+        if (device.kind !== kind || !device.deviceId || seen.has(device.deviceId)) return false;
+        seen.add(device.deviceId);
+        return true;
+      });
+    };
+    inputDevices = unique('audioinput');
+    outputDevices = unique('audiooutput');
+    if (inputDevices.length === 0 && outputDevices.length === 0 && !audioDevicesMessage) {
+      audioDevicesMessage = 'nenhum dispositivo adicional foi disponibilizado pelo sistema';
+    }
+  } catch {
+    inputDevices = [];
+    outputDevices = [];
+    audioDevicesMessage = 'não foi possível consultar os dispositivos de áudio';
+  } finally {
+    audioDevicesLoading = false;
+    refreshVisibleSettings?.();
+  }
+}
+
+function deviceOptionLabel(device: MediaDeviceInfo, fallback: string): string {
+  const label = device.label.trim();
+  if (label) return label;
+  return `${fallback} ${device.deviceId.slice(0, 8)}`.trim();
+}
+
+function appendAudioDeviceRefresh(
+  body: HTMLElement,
+  kind: 'input' | 'output',
+): void {
+  const actions = $('div', 'settings-test');
+  const refresh = $('button', 'ghost');
+  refresh.type = 'button';
+  refresh.textContent = audioDevicesLoading ? 'atualizando…' : 'atualizar dispositivos';
+  refresh.disabled = audioDevicesLoading;
+  refresh.addEventListener('click', () => {
+    void enumerateDevices({
+      requestMicrophonePermission: kind === 'input',
+      requestOutputPermission: kind === 'output',
+    });
+  });
+  actions.append(refresh);
+  body.append(actions);
+  if (audioDevicesMessage) body.append(text('span', 'settings-note', audioDevicesMessage));
 }
 
 function renderSettings(): HTMLElement {
@@ -2945,6 +3033,8 @@ function renderSettings(): HTMLElement {
         activeSection = s.id;
         buildNav();
         buildBody();
+        if (s.id === 'capture') void enumerateDevices();
+        if (s.id === 'playback') void enumerateDevices();
       });
       nav.append(btn);
     }
@@ -3486,18 +3576,17 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
   const devLabel = $('label');
   devLabel.append(text('span', '', 'Dispositivo de captura'));
   const devSelect = $('select') as HTMLSelectElement;
+  const hasSelectedInput = inputDevices.some((device) => device.deviceId === client.mic.deviceId);
+  const defaultOpt = $('option') as HTMLOptionElement;
+  defaultOpt.value = '';
+  defaultOpt.textContent = 'padrão do sistema';
+  defaultOpt.selected = client.mic.deviceId === '' || !hasSelectedInput;
+  devSelect.append(defaultOpt);
   for (const d of inputDevices) {
     const opt = $('option') as HTMLOptionElement;
     opt.value = d.deviceId;
-    opt.textContent = d.label || `microfone ${d.deviceId.slice(0, 8)}`;
+    opt.textContent = deviceOptionLabel(d, 'microfone');
     if (d.deviceId === client.mic.deviceId) opt.selected = true;
-    devSelect.append(opt);
-  }
-  if (inputDevices.length === 0) {
-    const opt = $('option') as HTMLOptionElement;
-    opt.value = '';
-    opt.textContent = 'padrão do sistema';
-    opt.selected = true;
     devSelect.append(opt);
   }
   devSelect.addEventListener('change', () => {
@@ -3506,6 +3595,7 @@ function buildCaptureSection(body: HTMLElement, rebuild: () => void): void {
   devLabel.append(devSelect);
   devRow.append(devLabel);
   body.append(devRow);
+  appendAudioDeviceRefresh(body, 'input');
 
   // Activation mode
   body.append($('hr'));
@@ -3751,26 +3841,29 @@ function buildPlaybackSection(body: HTMLElement): void {
   const devLabel = $('label');
   devLabel.append(text('span', '', 'Dispositivo de reprodução'));
   const devSelect = $('select') as HTMLSelectElement;
+  const hasSelectedOutput = outputDevices.some((device) => device.deviceId === client.outputDeviceId);
+  const defaultOpt = $('option') as HTMLOptionElement;
+  defaultOpt.value = '';
+  defaultOpt.textContent = 'padrão do sistema';
+  defaultOpt.selected = client.outputDeviceId === '' || !hasSelectedOutput;
+  devSelect.append(defaultOpt);
   for (const d of outputDevices) {
     const opt = $('option') as HTMLOptionElement;
     opt.value = d.deviceId;
-    opt.textContent = d.label || `saída ${d.deviceId.slice(0, 8)}`;
+    opt.textContent = deviceOptionLabel(d, 'saída');
     if (d.deviceId === client.outputDeviceId) opt.selected = true;
     devSelect.append(opt);
   }
-  if (outputDevices.length === 0) {
-    const opt = $('option') as HTMLOptionElement;
-    opt.value = '';
-    opt.textContent = 'padrão do sistema';
-    opt.selected = true;
-    devSelect.append(opt);
-  }
   devSelect.addEventListener('change', () => {
-    client.setOutputDevice(devSelect.value);
+    void client.setOutputDevice(devSelect.value).catch(() => {
+      audioDevicesMessage = 'não foi possível selecionar essa saída de áudio';
+      refreshVisibleSettings?.();
+    });
   });
   devLabel.append(devSelect);
   devRow.append(devLabel);
   body.append(devRow);
+  appendAudioDeviceRefresh(body, 'output');
 
   // Output volume
   const volRow = $('div', 'settings-row');
@@ -5764,8 +5857,20 @@ if (directServer) {
 // Probe known servers for occupancy
 if (!directServer) void refreshServers();
 
-// Enumerate audio devices (needs mic permission first)
-void enumerateDevices();
+// A lista pode mudar quando o usuário conecta um headset ou troca o dispositivo
+// padrão no Windows. O botão nas configurações também força uma atualização
+// com a permissão apropriada.
+if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+  let deviceChangeTimer: ReturnType<typeof setTimeout> | null = null;
+  navigator.mediaDevices.addEventListener?.('devicechange', () => {
+    if (deviceChangeTimer) clearTimeout(deviceChangeTimer);
+    deviceChangeTimer = setTimeout(() => {
+      deviceChangeTimer = null;
+      void enumerateDevices();
+    }, 250);
+  });
+  void enumerateDevices();
+}
 
 // ------------------------------------------------- animation loop --
 
