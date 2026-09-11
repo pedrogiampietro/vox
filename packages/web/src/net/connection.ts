@@ -86,6 +86,16 @@ const VOICE_FALLBACK_RETRY_MS = 2000;
 /** Três amostras ruins consecutivas justificam trocar o edge automaticamente. */
 const VOICE_RECONNECT_RTT_MS = 180;
 const VOICE_RECONNECT_BAD_PROBES = 3;
+/**
+ * Perda de voz e mais importante que RTT: uma rota rapida que perde quadros
+ * deixa a conversa picotada. Duas janelas ruins evitam trocar por um espirro
+ * isolado, mas mantem o WS como caminho seguro quando a perda persiste.
+ */
+const VOICE_FAILOVER_LOSS_PCT = 8;
+const VOICE_FAILOVER_BAD_WINDOWS = 2;
+const VOICE_FAILOVER_RECOVER_LOSS_PCT = 5;
+const VOICE_FAILOVER_EDGE_COOLDOWN_MS = 30_000;
+const VOICE_FAILOVER_EDGE_MAX_COOLDOWN_MS = 5 * 60_000;
 
 type EdgeHealthState = VoiceEdgeHealth & { handshakeSamples: number[] };
 
@@ -136,6 +146,7 @@ export class Connection {
   private voiceUpgradeInFlight = false;
   private readonly edgeHealth = new Map<string, EdgeHealthState>();
   private badVoiceProbes = 0;
+  private badVoiceLossWindows = 0;
 
   /** WebSocket ate o WebTransport subir; 'quic' quando a voz migrou. */
   voiceTransport: VoiceTransport = 'ws';
@@ -783,6 +794,26 @@ export class Connection {
     this.droppedVoicePrior = this.droppedVoice;
     this.voiceQuality = this.qualityFromMetrics();
     this.handlers.onVoiceStats?.();
+
+    // RTT baixo nao significa que o caminho esta bom: datagramas podem estar
+    // sendo perdidos sem aumentar o RTT. Depois de duas janelas ruins, troca
+    // o edge e deixa o WS dedicado segurar a conversa enquanto isso acontece.
+    if (this.voiceTransport === 'quic') {
+      if (lossPct >= VOICE_FAILOVER_LOSS_PCT) {
+        this.badVoiceLossWindows++;
+      } else if (lossPct <= VOICE_FAILOVER_RECOVER_LOSS_PCT) {
+        this.badVoiceLossWindows = 0;
+      }
+
+      if (this.badVoiceLossWindows >= VOICE_FAILOVER_BAD_WINDOWS && !this.voiceUpgradeInFlight) {
+        const activeEdge = this.voiceEdges.find((edge) => edge.host === this.voiceHost);
+        if (activeEdge) this.quarantineEdge(activeEdge, lossPct);
+        this.badVoiceLossWindows = 0;
+        this.dropVoiceChannel(this.generation, true);
+      }
+    } else {
+      this.badVoiceLossWindows = 0;
+    }
   }
 
   /**
@@ -816,6 +847,7 @@ export class Connection {
     this.voiceRtt = 0;
     this.voiceQuality = 'unknown';
     this.badVoiceProbes = 0;
+    this.badVoiceLossWindows = 0;
     this.voiceHost = '';
     this.voiceRegion = '';
     this.voicePacketsSent = 0;
@@ -856,6 +888,7 @@ export class Connection {
     this.voiceRtt = 0;
     this.voiceQuality = 'unknown';
     this.badVoiceProbes = 0;
+    this.badVoiceLossWindows = 0;
     this.voiceHost = '';
     this.voiceRegion = '';
     if (this.wtProbeTimer !== null) {
@@ -884,16 +917,36 @@ export class Connection {
   private scheduleVoiceRetry(generation: number): void {
     if (this.voiceRetryTimer !== null || !this.voiceToken || this.voiceEdges.length === 0) return;
     if (!this.online || typeof WebTransport === 'undefined') return;
-    const delay = Math.min(
+    const backoff = Math.min(
       VOICE_RETRY_MAX_MS,
       VOICE_RETRY_BASE_MS * 2 ** Math.min(this.voiceRetryAttempt, 5),
     );
+    // Se nao existe outro edge disponivel, fica no WS ate o edge ruim sair do
+    // cooldown. Sem isso a aplicacao voltaria ao mesmo QUIC em 750 ms e
+    // alternaria transporte enquanto a rede ainda estivesse ruim.
+    const delay = Math.max(backoff, this.delayUntilEdgeAvailable());
     this.voiceRetryAttempt++;
     this.voiceRetryTimer = setTimeout(() => {
       this.voiceRetryTimer = null;
       if (generation !== this.generation || !this.voiceToken || !this.online) return;
       void this.upgradeVoice(this.voiceToken, this.voiceEdges);
     }, delay);
+  }
+
+  private delayUntilEdgeAvailable(): number {
+    const now = Date.now();
+    let earliest = Number.POSITIVE_INFINITY;
+    let available = false;
+    for (const edge of this.voiceEdges) {
+      const cooldownUntil = this.edgeHealth.get(edgeKey(edge))?.cooldownUntil ?? 0;
+      if (cooldownUntil <= now) {
+        available = true;
+        break;
+      }
+      earliest = Math.min(earliest, cooldownUntil);
+    }
+    if (available || !Number.isFinite(earliest)) return 0;
+    return Math.max(0, earliest - now);
   }
 
   private edgeState(edge: VoiceEdge): EdgeHealthState {
@@ -944,6 +997,19 @@ export class Connection {
     state.consecutiveFailures++;
     state.lastError = (error instanceof Error ? error.message : String(error)).slice(0, 160);
     if (state.consecutiveFailures >= 2) state.cooldownUntil = Date.now() + EDGE_FAILURE_COOLDOWN_MS;
+    this.handlers.onVoiceStats?.();
+  }
+
+  private quarantineEdge(edge: VoiceEdge, lossPct: number): void {
+    const state = this.edgeState(edge);
+    state.failures++;
+    state.consecutiveFailures++;
+    const cooldown = Math.min(
+      VOICE_FAILOVER_EDGE_MAX_COOLDOWN_MS,
+      VOICE_FAILOVER_EDGE_COOLDOWN_MS * 2 ** Math.min(state.consecutiveFailures - 1, 3),
+    );
+    state.cooldownUntil = Date.now() + cooldown;
+    state.lastError = `perda de voz alta (${lossPct.toFixed(1)}%)`;
     this.handlers.onVoiceStats?.();
   }
 
