@@ -1,4 +1,5 @@
 import type { ProfileBorder, UserProfile } from '@vox/protocol';
+import { MAX_PROFILE_BANNER, profileBannerStyle, validProfileImage } from '@vox/protocol';
 
 const STORAGE_PREFIX = 'vox.profile.';
 export const DEFAULT_PROFILE_ACCENT = '#e8a33d';
@@ -26,6 +27,8 @@ export function emptyProfile(fingerprint = ''): UserProfile {
     accent: DEFAULT_PROFILE_ACCENT,
     statusText: '',
     updatedAt: 0,
+    banner: '',
+    bannerStyle: 'signature',
   };
 }
 
@@ -66,6 +69,8 @@ export function normalizeProfile(profile: Partial<UserProfile> & { fingerprint: 
     accent,
     statusText: typeof profile.statusText === 'string' ? profile.statusText.trim().slice(0, 64) : '',
     updatedAt: Number(profile.updatedAt) || 0,
+    banner: validProfileImage(profile.banner, MAX_PROFILE_BANNER) ? profile.banner : '',
+    bannerStyle: profileBannerStyle(profile.bannerStyle),
   };
 }
 
@@ -74,28 +79,35 @@ export function normalizeProfile(profile: Partial<UserProfile> & { fingerprint: 
  * WebP é tentado primeiro; JPEG funciona como fallback em WebViews antigos.
  */
 export function encodeProfileAvatar(source: HTMLCanvasElement): string {
-  const sizes = [192, 160, 128, 112, 96];
+  return encodeProfileImage(source, [256, 192, 160, 128, 96], 1, MAX_PROFILE_AVATAR_CHARS);
+}
+
+export function encodeProfileBanner(source: HTMLCanvasElement): string {
+  return encodeProfileImage(source, [960, 768, 600, 480, 360], 3, MAX_PROFILE_BANNER);
+}
+
+function encodeProfileImage(source: HTMLCanvasElement, sizes: number[], aspect: number, limit: number): string {
   const qualities = [0.88, 0.8, 0.72, 0.64];
   let smallest = '';
 
   for (const size of sizes) {
     const output = document.createElement('canvas');
     output.width = size;
-    output.height = size;
+    output.height = Math.round(size / aspect);
     const ctx = output.getContext('2d');
     if (!ctx) throw new Error('Seu navegador não conseguiu processar a imagem.');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(source, 0, 0, size, size);
+    ctx.drawImage(source, 0, 0, output.width, output.height);
 
     for (const quality of qualities) {
       let encoded = output.toDataURL('image/webp', quality);
       if (!encoded.startsWith('data:image/webp')) encoded = output.toDataURL('image/jpeg', quality);
       if (!smallest || encoded.length < smallest.length) smallest = encoded;
-      if (encoded.length <= MAX_PROFILE_AVATAR_CHARS) return encoded;
+      if (encoded.length <= limit) return encoded;
     }
   }
 
-  if (smallest && smallest.length <= MAX_PROFILE_AVATAR_CHARS) return smallest;
+  if (smallest && smallest.length <= limit) return smallest;
   throw new Error('A imagem ficou grande demais. Escolha uma foto com menos detalhes.');
 }

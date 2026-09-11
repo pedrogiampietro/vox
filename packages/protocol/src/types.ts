@@ -289,6 +289,21 @@ export interface ClientInfo {
 /** Molduras de avatar disponíveis no cliente oficial. */
 export type ProfileBorder = 'none' | 'ember' | 'royal' | 'signal' | 'frost';
 
+export const PROFILE_BANNER_STYLES = ['signature', 'aurora', 'sunset', 'orbit', 'grid', 'solid'] as const;
+export type ProfileBannerStyle = typeof PROFILE_BANNER_STYLES[number];
+/** Avatar + banner + metadados precisam caber no frame de controle de 64 KiB. */
+export const MAX_PROFILE_AVATAR = 40 * 1024;
+export const MAX_PROFILE_BANNER = 22 * 1024;
+
+export function validProfileImage(value: unknown, maxChars: number): value is string {
+  return typeof value === 'string' && value.length <= maxChars
+    && (!value || /^data:image\/(?:webp|jpeg|png);base64,[a-z0-9+/=]+$/i.test(value));
+}
+
+export function profileBannerStyle(value: unknown): ProfileBannerStyle {
+  return PROFILE_BANNER_STYLES.includes(value as ProfileBannerStyle) ? value as ProfileBannerStyle : 'signature';
+}
+
 /**
  * Perfil visual persistido pela identidade. O avatar já chega recortado e
  * comprimido pelo cliente; mantê-lo em uma mensagem separada evita que o
@@ -304,6 +319,9 @@ export interface UserProfile {
   /** Recado curto mostrado junto da presença. */
   statusText: string;
   updatedAt: number;
+  /** Extensão opcional no fim de ProfileUpdate, compatível com clientes v19. */
+  banner?: string;
+  bannerStyle?: ProfileBannerStyle;
 }
 
 /** Definicao visual de um grupo. */

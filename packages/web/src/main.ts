@@ -32,7 +32,7 @@ import {
   canonicalRespawnIn,
   parsePreset,
 } from '@vox/protocol';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, ProfileBorder, RespClaimInfo, RespawnCatalogItem, TemplateCategory, UserProfile } from '@vox/protocol';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PlayerInfo, RespClaimInfo, RespawnCatalogItem, TemplateCategory, UserProfile } from '@vox/protocol';
 import {
   listFavorites,
   probe,
@@ -51,7 +51,8 @@ import { isDesktopShell } from './net/connection.js';
 import { createPwaInstallCard, registerPwaServiceWorker } from './pwa.js';
 import { SOUND_EVENT_LABELS, SOUND_PACK_LABELS, type SoundName, type SoundPackId } from './audio/sounds.js';
 import { createLocaleSelect, t, translateTree } from './i18n.js';
-import { DEFAULT_PROFILE_ACCENT, PROFILE_FRAMES, encodeProfileAvatar } from './profile.js';
+import { DEFAULT_PROFILE_ACCENT } from './profile.js';
+import { buildProfileEditor, renderProfileCover } from './profile-editor.js';
 
 registerPwaServiceWorker();
 
@@ -926,8 +927,7 @@ function renderUserProfileCard(
   card.style.setProperty('--profile-accent', profile.accent || DEFAULT_PROFILE_ACCENT);
   card.setAttribute('aria-label', `${t('Perfil de')} ${c.nickname}`);
 
-  const cover = $('div', 'user-profile-cover');
-  cover.append(text('span', 'user-profile-monogram', 'v0x'));
+  const cover = renderProfileCover(profile);
 
   const content = $('div', 'user-profile-content');
   const hero = $('div', 'user-profile-hero');
@@ -943,11 +943,11 @@ function renderUserProfileCard(
     text('span', '', t(away ? 'Ausente' : 'Online agora')),
   );
   if (profile.statusText) {
-    const statusCopy = text('span', 'profile-status-copy', `· ${profile.statusText}`);
+    const statusCopy = text('span', 'profile-status-copy', profile.statusText);
     statusCopy.dataset.i18nSkip = '';
-    presence.append(statusCopy);
-  } else if (preview) presence.append(text('span', 'profile-status-empty', t('· seu recado aparece aqui')));
-  identity.append(name, presence);
+    identity.append(statusCopy);
+  }
+  identity.prepend(name, presence);
   hero.append(identity);
 
   const badges = $('div', 'user-profile-badges');
@@ -3083,385 +3083,24 @@ function renderSettings(): HTMLElement {
 }
 
 function buildProfileSection(body: HTMLElement): void {
-  body.append(text('h3', '', t('MEU PERFIL')));
-  body.append(text('span', 'settings-note', t('Personalize como você aparece para as pessoas deste servidor.')));
-
   const me = client.self;
   const fingerprint = client.identity?.fingerprint ?? '';
   if (!me || !fingerprint) {
-    const empty = $('div', 'profile-settings-state empty');
-    empty.setAttribute('role', 'status');
-    empty.append(
-      text('strong', '', t('Perfil indisponível')),
-      text('span', '', t('Entre em um servidor com sua identidade carregada para editar o perfil.')),
-    );
-    body.append(empty);
+    body.append(text('h3', '', t('MEU PERFIL')), text('p', 'settings-note', t('Entre em um servidor com sua identidade carregada para editar o perfil.')));
     return;
   }
-
-  const draft: UserProfile = { ...client.profileFor(me), fingerprint };
-  const layout = $('div', 'profile-settings-layout');
-  const editor = $('div', 'profile-editor');
-  const previewColumn = $('aside', 'profile-preview-column');
-  previewColumn.append(text('span', 'user-profile-kicker', t('PRÉVIA AO VIVO')));
-  const previewHost = $('div', 'profile-preview-host');
-  previewColumn.append(previewHost);
-
-  const nameInput = $('input') as HTMLInputElement;
-  nameInput.type = 'text';
-  nameInput.maxLength = 32;
-  nameInput.value = me.nickname;
-  nameInput.setAttribute('autocomplete', 'nickname');
-
-  const statusInput = $('input') as HTMLInputElement;
-  statusInput.type = 'text';
-  statusInput.maxLength = 64;
-  statusInput.value = draft.statusText;
-  statusInput.placeholder = t('ex: organizando a próxima hunt');
-
-  const descriptionInput = $('textarea') as HTMLTextAreaElement;
-  descriptionInput.rows = 4;
-  descriptionInput.maxLength = 200;
-  descriptionInput.value = me.description ?? '';
-  descriptionInput.placeholder = t('Conte sobre você. Para integrar o personagem, use Main: Nome do Char.');
-
-  const accentInput = $('input') as HTMLInputElement;
-  accentInput.type = 'color';
-  accentInput.value = draft.accent || DEFAULT_PROFILE_ACCENT;
-  accentInput.setAttribute('aria-label', t('Cor de destaque do perfil'));
-
-  const refreshPreview = (): void => {
-    draft.accent = accentInput.value;
-    draft.statusText = statusInput.value.slice(0, 64);
-    const previewClient: ClientInfo = {
-      ...me,
-      nickname: nameInput.value.trim() || me.nickname,
-      description: descriptionInput.value.trim(),
-    };
-    previewHost.replaceChildren(renderUserProfileCard(previewClient, draft, previewClient.description, true));
-  };
-
-  const avatarSection = $('section', 'profile-editor-section avatar-editor-section');
-  const avatarHeading = $('div', 'profile-editor-heading');
-  avatarHeading.append(
-    text('span', 'user-profile-kicker', t('AVATAR')),
-    text('span', 'settings-note', t('JPG, PNG ou WebP · até 10 MB')),
-  );
-
-  const avatarActions = $('div', 'profile-avatar-actions');
-  const currentAvatar = $('div', 'profile-current-avatar');
-  currentAvatar.append(renderProfileAvatar(me, 'profile-avatar-editor', true, draft));
-  const file = $('input') as HTMLInputElement;
-  file.type = 'file';
-  file.accept = 'image/png,image/jpeg,image/webp';
-  file.hidden = true;
-  file.setAttribute('aria-label', t('Escolher uma imagem para o avatar'));
-  const chooseAvatar = $('button', 'ghost');
-  chooseAvatar.textContent = draft.avatar ? t('trocar imagem') : t('escolher imagem');
-  chooseAvatar.addEventListener('click', () => file.click());
-  const removeAvatar = $('button', 'ghost danger');
-  removeAvatar.textContent = t('remover');
-  removeAvatar.disabled = !draft.avatar;
-  removeAvatar.addEventListener('click', () => {
-    draft.avatar = '';
-    removeAvatar.disabled = true;
-    chooseAvatar.textContent = t('escolher imagem');
-    currentAvatar.replaceChildren(renderProfileAvatar(me, 'profile-avatar-editor', true, draft));
-    refreshPreview();
+  buildProfileEditor(body, {
+    me,
+    profile: { ...client.profileFor(me), fingerprint },
+    renderCard: (person, profile) => renderUserProfileCard(person, profile, person.description, true),
+    renderAvatar: (person, profile, className) => renderProfileAvatar(person, className, false, profile),
+    publish: async (profile, nickname, description) => {
+      if (client.link !== 'online') throw new Error('Você está offline. Reconecte para publicar o perfil.');
+      if (nickname !== client.self?.nickname) client.setNickname(nickname);
+      if (description !== client.self?.description) client.setClientDescription(fingerprint, description);
+      await client.publishProfile(profile);
+    },
   });
-  const avatarButtons = $('div', 'profile-avatar-buttons');
-  avatarButtons.append(chooseAvatar, removeAvatar, file);
-  avatarActions.append(currentAvatar, avatarButtons);
-
-  const imageState = $('div', 'profile-image-state');
-  imageState.setAttribute('role', 'status');
-  imageState.setAttribute('aria-live', 'polite');
-  const cropHost = $('div', 'profile-crop-host');
-  avatarSection.append(avatarHeading, avatarActions, imageState, cropHost);
-
-  file.addEventListener('change', async () => {
-    const selected = file.files?.[0];
-    file.value = '';
-    if (!selected) return;
-    imageState.className = 'profile-image-state';
-    if (!selected.type.startsWith('image/')) {
-      imageState.classList.add('error');
-      imageState.textContent = t('Escolha um arquivo de imagem válido.');
-      return;
-    }
-    if (selected.size > 10 * 1024 * 1024) {
-      imageState.classList.add('error');
-      imageState.textContent = t('A imagem ultrapassa o limite de 10 MB.');
-      return;
-    }
-
-    imageState.classList.add('loading');
-    imageState.textContent = t('Preparando recorte…');
-    cropHost.replaceChildren();
-    try {
-      const image = await loadProfileImage(selected);
-      imageState.textContent = '';
-      buildAvatarCropper(cropHost, image, (avatar) => {
-        draft.avatar = avatar;
-        chooseAvatar.textContent = t('trocar imagem');
-        removeAvatar.disabled = false;
-        currentAvatar.replaceChildren(renderProfileAvatar(me, 'profile-avatar-editor', true, draft));
-        refreshPreview();
-        cropHost.replaceChildren();
-        imageState.className = 'profile-image-state success';
-        imageState.textContent = t('Recorte aplicado. Salve o perfil para publicar.');
-      }, (message) => {
-        imageState.className = 'profile-image-state error';
-        imageState.textContent = message;
-      });
-    } catch {
-      imageState.className = 'profile-image-state error';
-      imageState.textContent = t('Não foi possível abrir essa imagem.');
-    }
-  });
-
-  const identitySection = $('section', 'profile-editor-section');
-  identitySection.append(text('span', 'user-profile-kicker', t('APRESENTAÇÃO')));
-  identitySection.append(
-    profileField(t('Nome exibido'), nameInput, t('O mesmo nome usado na lista de canais.')),
-    profileField(t('Recado de status'), statusInput, t('Uma frase curta visível abaixo do seu nome.')),
-    profileField(t('Sobre você'), descriptionInput, t('Até 200 caracteres.')),
-  );
-
-  const styleSection = $('section', 'profile-editor-section');
-  styleSection.append(text('span', 'user-profile-kicker', t('ESTILO')));
-  const accentRow = $('div', 'profile-accent-row');
-  const accentCopy = $('div');
-  accentCopy.append(text('strong', '', t('Cor de destaque')), text('span', 'settings-note', t('Usada no banner, foco e moldura.')));
-  const resetAccent = $('button', 'ghost profile-accent-reset');
-  resetAccent.textContent = t('restaurar');
-  resetAccent.addEventListener('click', () => {
-    accentInput.value = DEFAULT_PROFILE_ACCENT;
-    refreshPreview();
-  });
-  accentRow.append(accentCopy, accentInput, resetAccent);
-  styleSection.append(accentRow);
-
-  const frameGrid = $('div', 'profile-frame-grid');
-  frameGrid.setAttribute('role', 'radiogroup');
-  frameGrid.setAttribute('aria-label', t('Moldura do avatar'));
-  for (const frame of PROFILE_FRAMES) {
-    const option = $('label', `profile-frame-option profile-border-${frame.id}`);
-    const radio = $('input') as HTMLInputElement;
-    radio.type = 'radio';
-    radio.name = 'profile-border';
-    radio.value = frame.id;
-    radio.checked = draft.border === frame.id;
-    const sample = $('span', 'profile-frame-sample');
-    sample.style.setProperty('--profile-accent', draft.accent);
-    sample.textContent = me.nickname.charAt(0).toUpperCase() || '?';
-    const copy = $('span', 'profile-frame-copy');
-    copy.append(text('strong', '', t(frame.label)), text('small', '', t(frame.hint)));
-    option.append(radio, sample, copy);
-    option.classList.toggle('selected', radio.checked);
-    radio.addEventListener('change', () => {
-      draft.border = radio.value as ProfileBorder;
-      for (const item of frameGrid.querySelectorAll('.profile-frame-option')) item.classList.remove('selected');
-      option.classList.add('selected');
-      refreshPreview();
-    });
-    frameGrid.append(option);
-  }
-  styleSection.append(frameGrid);
-
-  const saveState = $('span', 'profile-save-state');
-  saveState.setAttribute('role', 'status');
-  saveState.setAttribute('aria-live', 'polite');
-  const save = $('button', 'primary profile-save');
-  save.textContent = t('salvar perfil');
-  save.addEventListener('click', () => {
-    const nextName = nameInput.value.trim();
-    if (!nextName) {
-      saveState.className = 'profile-save-state error';
-      saveState.textContent = t('Informe um nome para salvar.');
-      nameInput.focus();
-      return;
-    }
-    if (client.link !== 'online') {
-      saveState.className = 'profile-save-state error';
-      saveState.textContent = t('Você está offline. Reconecte para publicar o perfil.');
-      return;
-    }
-    save.disabled = true;
-    save.textContent = t('salvando…');
-    saveState.className = 'profile-save-state loading';
-    saveState.textContent = t('Sincronizando com o servidor…');
-    try {
-      if (nextName !== me.nickname) client.setNickname(nextName);
-      const description = descriptionInput.value.trim();
-      if (description !== me.description) client.setClientDescription(fingerprint, description);
-      client.setProfile({
-        ...draft,
-        accent: accentInput.value,
-        statusText: statusInput.value.trim(),
-        updatedAt: Date.now(),
-      });
-      saveState.className = 'profile-save-state success';
-      saveState.textContent = t('Perfil salvo e publicado.');
-      save.textContent = t('salvo');
-      setTimeout(() => {
-        save.disabled = false;
-        save.textContent = t('salvar perfil');
-      }, 900);
-    } catch {
-      save.disabled = false;
-      save.textContent = t('salvar perfil');
-      saveState.className = 'profile-save-state error';
-      saveState.textContent = t('Não foi possível salvar o perfil. Tente novamente.');
-    }
-  });
-  const saveRow = $('div', 'profile-save-row');
-  saveRow.append(saveState, save);
-
-  for (const input of [nameInput, statusInput, descriptionInput, accentInput]) {
-    input.addEventListener('input', refreshPreview);
-  }
-
-  editor.append(avatarSection, identitySection, styleSection, saveRow);
-  layout.append(editor, previewColumn);
-  body.append(layout);
-  refreshPreview();
-}
-
-function profileField(label: string, control: HTMLInputElement | HTMLTextAreaElement, hint: string): HTMLElement {
-  const field = $('label', 'profile-field');
-  field.append(text('span', 'profile-field-label', label), control, text('small', '', hint));
-  return field;
-}
-
-async function loadProfileImage(file: File): Promise<HTMLImageElement> {
-  const url = URL.createObjectURL(file);
-  const image = new Image();
-  image.decoding = 'async';
-  image.src = url;
-  try {
-    await image.decode();
-    return image;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-function buildAvatarCropper(
-  host: HTMLElement,
-  image: HTMLImageElement,
-  onApply: (avatar: string) => void,
-  onError: (message: string) => void,
-): void {
-  const panel = $('div', 'profile-cropper');
-  const heading = $('div', 'profile-cropper-heading');
-  heading.append(text('strong', '', t('Ajustar avatar')), text('span', 'settings-note', t('Arraste para reposicionar e use o zoom.')));
-  const canvas = $('canvas', 'profile-crop-canvas') as HTMLCanvasElement;
-  canvas.width = 320;
-  canvas.height = 320;
-  canvas.tabIndex = 0;
-  canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', t('Área de recorte do avatar. Use as setas para reposicionar.'));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    onError(t('Seu navegador não conseguiu processar a imagem.'));
-    return;
-  }
-
-  let zoom = 1;
-  let offsetX = 0;
-  let offsetY = 0;
-  let pointer = 0;
-  let startX = 0;
-  let startY = 0;
-  let startOffsetX = 0;
-  let startOffsetY = 0;
-
-  const draw = (): void => {
-    const base = Math.max(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
-    const scale = base * zoom;
-    const width = image.naturalWidth * scale;
-    const height = image.naturalHeight * scale;
-    const limitX = Math.max(0, (width - canvas.width) / 2);
-    const limitY = Math.max(0, (height - canvas.height) / 2);
-    offsetX = Math.max(-limitX, Math.min(limitX, offsetX));
-    offsetY = Math.max(-limitY, Math.min(limitY, offsetY));
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, (canvas.width - width) / 2 + offsetX, (canvas.height - height) / 2 + offsetY, width, height);
-  };
-
-  canvas.addEventListener('pointerdown', (event) => {
-    pointer = event.pointerId;
-    startX = event.clientX;
-    startY = event.clientY;
-    startOffsetX = offsetX;
-    startOffsetY = offsetY;
-    canvas.setPointerCapture(pointer);
-    canvas.classList.add('dragging');
-  });
-  canvas.addEventListener('pointermove', (event) => {
-    if (pointer !== event.pointerId) return;
-    const ratio = canvas.width / canvas.getBoundingClientRect().width;
-    offsetX = startOffsetX + (event.clientX - startX) * ratio;
-    offsetY = startOffsetY + (event.clientY - startY) * ratio;
-    draw();
-  });
-  const release = (event: PointerEvent): void => {
-    if (pointer !== event.pointerId) return;
-    pointer = 0;
-    canvas.classList.remove('dragging');
-  };
-  canvas.addEventListener('pointerup', release);
-  canvas.addEventListener('pointercancel', release);
-  canvas.addEventListener('keydown', (event) => {
-    const step = event.shiftKey ? 12 : 4;
-    if (event.key === 'ArrowLeft') offsetX -= step;
-    else if (event.key === 'ArrowRight') offsetX += step;
-    else if (event.key === 'ArrowUp') offsetY -= step;
-    else if (event.key === 'ArrowDown') offsetY += step;
-    else return;
-    event.preventDefault();
-    draw();
-  });
-
-  const zoomRow = $('label', 'profile-zoom-row');
-  zoomRow.append(text('span', '', t('Zoom')));
-  const zoomInput = $('input') as HTMLInputElement;
-  zoomInput.type = 'range';
-  zoomInput.min = '100';
-  zoomInput.max = '300';
-  zoomInput.value = '100';
-  zoomInput.setAttribute('aria-label', t('Zoom do avatar'));
-  const zoomValue = text('span', '', '100%');
-  zoomInput.addEventListener('input', () => {
-    zoom = Number(zoomInput.value) / 100;
-    zoomValue.textContent = `${zoomInput.value}%`;
-    draw();
-  });
-  zoomRow.append(zoomInput, zoomValue);
-
-  const actions = $('div', 'profile-crop-actions');
-  const cancel = $('button', 'ghost');
-  cancel.textContent = t('cancelar');
-  cancel.addEventListener('click', () => host.replaceChildren());
-  const apply = $('button', 'primary');
-  apply.textContent = t('usar este recorte');
-  apply.addEventListener('click', () => {
-    apply.disabled = true;
-    apply.textContent = t('processando…');
-    try {
-      onApply(encodeProfileAvatar(canvas));
-    } catch (error) {
-      apply.disabled = false;
-      apply.textContent = t('usar este recorte');
-      onError(error instanceof Error ? t(error.message) : t('Não foi possível processar a imagem.'));
-    }
-  });
-  actions.append(cancel, apply);
-  panel.append(heading, canvas, zoomRow, actions);
-  host.append(panel);
-  draw();
-  canvas.focus();
 }
 
 function buildIdentitySection(body: HTMLElement, rebuild: () => void): void {

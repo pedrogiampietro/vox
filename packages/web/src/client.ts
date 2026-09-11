@@ -147,6 +147,7 @@ export class VoxClient {
   lastRecording: VoiceRecordingResult | null = null;
 
   readonly connection: Connection;
+  private pendingProfile: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; expected: UserProfile } | null = null;
   readonly microphone: Microphone;
   readonly screen: ScreenShare;
 
@@ -159,6 +160,7 @@ export class VoxClient {
       onState: (link, detail) => {
         const wasOnline = this.link === 'online';
         this.link = link;
+        if (link !== 'online') this.finishProfileSave(new Error('Você está offline. Reconecte para publicar o perfil.'));
         this.detail = detail;
         if (link === 'offline') this.reset();
         // Reconectando: cala o audio mas deixa a arvore na tela, senao a
@@ -866,8 +868,31 @@ export class VoxClient {
       border: profile.border,
       accent: profile.accent,
       statusText: profile.statusText,
+      banner: profile.banner ?? '',
+      bannerStyle: profile.bannerStyle ?? 'signature',
     });
     this.onChange();
+  }
+
+  /** ProfileUpdate é a confirmação de que a origem persistiu a alteração. */
+  publishProfile(input: UserProfile): Promise<void> {
+    if (this.link !== 'online' || !this.identity) return Promise.reject(new Error('Você está offline. Reconecte para publicar o perfil.'));
+    if (this.pendingProfile) return Promise.reject(new Error('Sincronizando com o servidor…'));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => this.finishProfileSave(new Error('O servidor não confirmou o perfil. Tente novamente.')), 10_000);
+      this.pendingProfile = { resolve, reject, timer, expected: normalizeProfile(input) };
+      try { this.setProfile(input); }
+      catch { this.finishProfileSave(new Error('Não foi possível salvar o perfil. Tente novamente.')); }
+    });
+  }
+
+  private finishProfileSave(error?: Error): void {
+    const pending = this.pendingProfile;
+    if (!pending) return;
+    this.pendingProfile = null;
+    clearTimeout(pending.timer);
+    if (error) pending.reject(error);
+    else pending.resolve();
   }
 
   setPermission(action: PermissionAction, minGroup: Group): void {
@@ -1203,6 +1228,12 @@ export class VoxClient {
         if (profile.fingerprint === this.identity?.fingerprint) {
           this.profileReceivedForConnection = true;
           saveLocalProfile(profile);
+          if (this.pendingProfile) {
+            const expected = this.pendingProfile.expected;
+            const matches = (['avatar', 'border', 'accent', 'statusText', 'banner', 'bannerStyle'] as const)
+              .every((key) => profile[key] === expected[key]);
+            this.finishProfileSave(matches ? undefined : new Error('O servidor não confirmou todas as alterações. Atualize o servidor e tente novamente.'));
+          }
         }
         break;
       }
@@ -1242,6 +1273,7 @@ export class VoxClient {
         break;
 
       case Op.Failure:
+        this.finishProfileSave(new Error(m.message));
         // Notificacao para kick/ban
         if (this.notificationsEnabled) {
           if (m.code === FailureCode.Banned) {

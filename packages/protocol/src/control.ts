@@ -7,7 +7,7 @@
  */
 
 import { Reader, Writer } from './codec.js';
-import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, ProfileBorder, RespClaimInfo, RespQueueEntry, UserProfile, VoiceEdge } from './types.js';
+import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, ProfileBannerStyle, ProfileBorder, RespClaimInfo, RespQueueEntry, UserProfile, VoiceEdge } from './types.js';
 import { BotControlAction, ChatScope, FailureCode, FrameKind, Group, Op, PermissionAction, RemoveReason } from './types.js';
 
 export type ClientMessage =
@@ -75,7 +75,7 @@ export type ClientMessage =
   */
   | { t: Op.SetPreset; presetId: string; custom: string }
   | { t: Op.EditServer; name: string; motd: string; maxClients: number }
-  | { t: Op.SetProfile; avatar: string; border: ProfileBorder; accent: string; statusText: string };
+  | { t: Op.SetProfile; avatar: string; border: ProfileBorder; accent: string; statusText: string; banner?: string; bannerStyle?: ProfileBannerStyle };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -186,6 +186,7 @@ function writeProfile(w: Writer, p: UserProfile): void {
     .str(p.accent)
     .str(p.statusText)
     .f64(p.updatedAt);
+  if (p.banner !== undefined || p.bannerStyle !== undefined) w.str(p.banner ?? '').str(p.bannerStyle ?? 'signature');
 }
 
 function readProfile(r: Reader): UserProfile {
@@ -196,6 +197,7 @@ function readProfile(r: Reader): UserProfile {
     accent: r.str(),
     statusText: r.str(),
     updatedAt: r.f64(),
+    ...(r.remaining > 0 ? { banner: r.str(), bannerStyle: r.str() as ProfileBannerStyle } : {}),
   };
 }
 
@@ -446,6 +448,7 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
       break;
     case Op.SetProfile:
       w.str(m.avatar).str(m.border).str(m.accent).str(m.statusText);
+      if (m.banner !== undefined || m.bannerStyle !== undefined) w.str(m.banner ?? '').str(m.bannerStyle ?? 'signature');
       break;
   }
   return w.finish();
@@ -548,7 +551,10 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
     case Op.EditServer:
       return { t, name: r.str(), motd: r.str(), maxClients: r.u16() };
     case Op.SetProfile:
-      return { t, avatar: r.str(), border: r.str() as ProfileBorder, accent: r.str(), statusText: r.str() };
+      return {
+        t, avatar: r.str(), border: r.str() as ProfileBorder, accent: r.str(), statusText: r.str(),
+        ...(r.remaining > 0 ? { banner: r.str(), bannerStyle: r.str() as ProfileBannerStyle } : {}),
+      };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }

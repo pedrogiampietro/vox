@@ -1,5 +1,6 @@
 /** Persistencia permanente dos servidores em SQLite, com export JSON legivel. */
 import { readFileSync } from 'node:fs';
+import { MAX_PROFILE_BANNER, profileBannerStyle, validProfileImage } from '@vox/protocol';
 import { ChannelFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, DEFAULT_PRESET_ID, Group, PermissionAction, findPreset, parsePreset } from '@vox/protocol';
 import type { ChannelInfo, GroupDef, ServerPreset, UserProfile } from '@vox/protocol';
 import { config } from './config.js';
@@ -270,7 +271,8 @@ function normalizeProfiles(raw: unknown): Record<string, UserProfile> {
     const border = typeof p.border === 'string' && borders.has(p.border) ? p.border as UserProfile['border'] : 'none';
     const accent = typeof p.accent === 'string' && /^#[0-9a-f]{6}$/i.test(p.accent) ? p.accent : '#e8a33d';
     const statusText = typeof p.statusText === 'string' ? p.statusText.slice(0, 64) : '';
-    out[fingerprint] = { fingerprint, avatar, border, accent, statusText, updatedAt: Number(p.updatedAt) || 0 };
+    const banner = validProfileImage(p.banner, MAX_PROFILE_BANNER) ? p.banner : '';
+    out[fingerprint] = { fingerprint, avatar, border, accent, statusText, banner, bannerStyle: profileBannerStyle(p.bannerStyle), updatedAt: Number(p.updatedAt) || 0 };
   }
   return out;
 }

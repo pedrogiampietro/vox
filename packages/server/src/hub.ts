@@ -41,6 +41,9 @@ import {
   findPreset,
   parsePreset,
   serializePreset,
+  MAX_PROFILE_BANNER,
+  profileBannerStyle,
+  validProfileImage,
 } from '@vox/protocol';
 import type { BotProvider, BotStateInfo, ChannelInfo, ClientInfo, ClientMessage, GroupDef, PermissionEntry, PlayerInfo, ProfileBorder, RespClaimInfo, PresetBotConfig, ServerMessage, ServerPreset, UserProfile, VoiceEdge } from '@vox/protocol';
 import { applyBotConfig, startBot, stopBot, testBot } from './bot-ctrl.js';
@@ -1032,6 +1035,10 @@ export class Hub {
         if (!s.fingerprint) return this.fail(s, FailureCode.NotPermitted, 'identidade obrigatoria para editar o perfil');
         const avatar = validProfileAvatar(m.avatar) ? m.avatar : '';
         if (m.avatar && !avatar) return this.fail(s, FailureCode.Malformed, 'avatar invalido ou muito grande');
+        const previous = this.profiles.get(s.fingerprint);
+        // Um cliente v19 antigo não envia a extensão; preservar a capa já salva.
+        const banner = m.banner ?? previous?.banner ?? '';
+        if (!validProfileImage(banner, MAX_PROFILE_BANNER)) return this.fail(s, FailureCode.Malformed, 'banner invalido ou muito grande');
         const profile: UserProfile = {
           fingerprint: s.fingerprint,
           avatar,
@@ -1039,6 +1046,8 @@ export class Hub {
           accent: /^#[0-9a-f]{6}$/i.test(m.accent) ? m.accent.toLowerCase() : '#e8a33d',
           statusText: clean(m.statusText, 64),
           updatedAt: Date.now(),
+          banner,
+          bannerStyle: profileBannerStyle(m.bannerStyle ?? previous?.bannerStyle),
         };
         this.profiles.set(s.fingerprint, profile);
         this.deps.forceSave();
