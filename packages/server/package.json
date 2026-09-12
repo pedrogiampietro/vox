@@ -10,13 +10,14 @@
   },
   "dependencies": {
     "@vox/protocol": "*",
+    "livekit-server-sdk": "^2.19.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@peculiar/x509": "^1.12.3",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
-    "tsx": "^4.19.2",
-    "@peculiar/x509": "^1.12.3"
+    "tsx": "^4.19.2"
   },
   "optionalDependencies": {
     "@fails-components/webtransport": "^1.6.7",

@@ -29,6 +29,7 @@ import { spawnAllJukeboxes, spawnJukebox, stopAllJukeboxes, stopJukebox } from '
 import { VoiceRouter } from './voice-router.js';
 import { orderVoiceEdges } from './voice-edge-selection.js';
 import { serverMetrics } from './metrics.js';
+import { issueLiveKitToken } from './livekit.js';
 
 // --------------------------------------------------------------- estado --
 
@@ -85,8 +86,75 @@ function clientIp(req: IncomingMessage): string {
   return req.socket.remoteAddress ?? '?';
 }
 
+function liveKitCorsHeaders(): Record<string, string> {
+  return {
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'Authorization, Content-Type',
+    'access-control-allow-methods': 'GET, OPTIONS',
+    'cache-control': 'no-store',
+  };
+}
+
+function handleLiveKitToken(req: IncomingMessage, res: ServerResponse): void {
+  const headers = liveKitCorsHeaders();
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, headers).end();
+    return;
+  }
+  if (req.method !== 'GET') {
+    res.writeHead(405, { ...headers, allow: 'GET, OPTIONS' }).end();
+    return;
+  }
+
+  const auth = req.headers.authorization ?? '';
+  const match = /^VoxVoice ([0-9a-f]{32})$/i.exec(auth);
+  if (!match) {
+    res.writeHead(401, headers).end(JSON.stringify({ error: 'sessao Vox ausente' }));
+    return;
+  }
+  const encodedToken = match[1];
+  if (!encodedToken) {
+    res.writeHead(401, headers).end(JSON.stringify({ error: 'sessao Vox ausente' }));
+    return;
+  }
+
+  const channelId = Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('channelId'));
+  if (!Number.isInteger(channelId) || channelId <= 0) {
+    res.writeHead(400, { ...headers, 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'canal invalido' }));
+    return;
+  }
+
+  const session = registry.findVoiceSession(Uint8Array.from(Buffer.from(encodedToken, 'hex')));
+  if (!session || session.channelId !== channelId) {
+    res.writeHead(403, { ...headers, 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: 'sessao ou canal invalido' }));
+    return;
+  }
+
+  void issueLiveKitToken(session).then((credentials) => {
+    if (!credentials) {
+      res.writeHead(503, { ...headers, 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'LiveKit nao configurado no servidor' }));
+      return;
+    }
+    res.writeHead(200, { ...headers, 'content-type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(credentials));
+  }).catch((error) => {
+    console.error('[livekit] falha ao emitir token:', error);
+    if (!res.headersSent) {
+      res.writeHead(503, { ...headers, 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'nao foi possivel preparar o compartilhamento' }));
+    }
+  });
+}
+
 function handle(req: IncomingMessage, res: ServerResponse): void {
   const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+
+  if (path === '/api/livekit/token') {
+    return handleLiveKitToken(req, res);
+  }
 
   // A raiz do dominio principal e a vitrine publica. Subdominios de servidores
   // continuam abrindo o cliente Vox normalmente.

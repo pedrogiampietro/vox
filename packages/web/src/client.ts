@@ -186,6 +186,7 @@ export class VoxClient {
         selfId: () => this.selfId,
         selfChannelId: () => this.self?.channelId ?? 0,
         membersOf: (channelId) => this.membersOf(channelId),
+        requestLiveKitToken: (channelId) => this.connection.requestLiveKitToken(channelId),
       },
       (m) => this.connection.send(m),
       this.onChange,

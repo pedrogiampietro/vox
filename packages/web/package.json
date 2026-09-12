@@ -9,7 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@vox/protocol": "*"
+    "@vox/protocol": "*",
+    "livekit-client": "^2.22.3"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

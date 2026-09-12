@@ -48,6 +48,12 @@ export interface ConnectionHandlers {
   onVoiceStats?(): void;
 }
 
+export interface LiveKitCredentials {
+  url: string;
+  token: string;
+  room: string;
+}
+
 /**
  * Acima disso o socket ja esta represando: descartar voz nova e melhor do que
  * entregar audio de tres segundos atras.
@@ -410,6 +416,36 @@ export class Connection {
   send(m: ClientMessage): void {
     if (!this.online) return;
     this.ws!.send(encodeClientMessage(m));
+  }
+
+  /** Pede ao backend um token efemero; o segredo LiveKit nunca chega ao web. */
+  async requestLiveKitToken(channelId: number): Promise<LiveKitCredentials> {
+    const token = this.voiceToken;
+    const target = this.target;
+    if (!token || !target || !this.online) throw new Error('sessao Vox ainda nao esta pronta');
+    if (!Number.isInteger(channelId) || channelId <= 0) throw new Error('canal de tela invalido');
+
+    const endpoint = new URL(resolveUrl(target.address, target.serverId));
+    endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:';
+    endpoint.pathname = '/api/livekit/token';
+    endpoint.search = `?channelId=${encodeURIComponent(String(channelId))}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const response = await fetch(endpoint, {
+        headers: { Authorization: `VoxVoice ${hexOf(token)}` },
+        signal: controller.signal,
+      });
+      const body = await response.json().catch(() => ({})) as { url?: unknown; token?: unknown; room?: unknown; error?: unknown };
+      if (!response.ok) throw new Error(typeof body.error === 'string' ? body.error : 'LiveKit recusou a sessao');
+      if (typeof body.url !== 'string' || typeof body.token !== 'string' || typeof body.room !== 'string') {
+        throw new Error('resposta LiveKit invalida');
+      }
+      return { url: body.url, token: body.token, room: body.room };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /** Caminho quente: sem alocacao alem do proprio frame. */
@@ -1107,6 +1143,12 @@ function regionFromHost(host: string): string {
 
 function edgeKey(edge: VoiceEdge): string {
   return `${edge.host}:${edge.port}`.toLowerCase();
+}
+
+function hexOf(value: Uint8Array): string {
+  let result = '';
+  for (const byte of value) result += byte.toString(16).padStart(2, '0');
+  return result;
 }
 
 function percentile(values: number[], rank: number): number {

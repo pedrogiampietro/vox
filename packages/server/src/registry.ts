@@ -240,6 +240,13 @@ export class Registry {
     return session;
   }
 
+  /** Sessao autenticada que apresentou o segredo de voz no endpoint interno. */
+  findVoiceSession(token: Uint8Array): Session | null {
+    const key = Buffer.from(token).toString('hex');
+    const session = this.byVoiceKey.get(key);
+    return session?.live ? session : null;
+  }
+
   /** Encontra o Hub de uma sessao, para o transporte de voz entregar o frame. */
   hubOf(session: Session): Hub | undefined {
     return this.hubs.get(session.serverId);

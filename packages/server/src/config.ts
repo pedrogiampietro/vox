@@ -193,6 +193,12 @@ export const config = {
   /** Nome exibido quando o cliente escolhe o WebTransport da própria origem. */
   voiceOriginRegion: str('VOX_VOICE_ORIGIN_REGION', 'Origem'),
 
+  /** LiveKit Cloud para distribuição de compartilhamento de tela. */
+  livekitUrl: str('LIVEKIT_URL', '').replace(/\/$/, ''),
+  livekitApiKey: str('LIVEKIT_API_KEY', ''),
+  /** Nunca sai do backend nem entra no bundle web. */
+  livekitApiSecret: str('LIVEKIT_API_SECRET', ''),
+
   /**
    * Roteador de mídia opcional. A ausência do binário mantém o caminho atual,
    * permitindo deploy gradual e rollback sem alterar o plano de controle.
