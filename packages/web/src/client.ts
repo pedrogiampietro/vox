@@ -1031,6 +1031,9 @@ export class VoxClient {
         for (const claim of m.claims) this.claims.set(claim.id, claim);
         void this.startMic();
         this.syncMicMute();
+        // Pede aos compartilhadores já presentes que reenviem seu estado de
+        // transmissão para quem acabou de entrar.
+        this.screen.syncPresence();
         if (!this.profileSentForConnection && this.identity) {
           this.profileSentForConnection = true;
           const local = loadLocalProfile(this.identity.fingerprint);
@@ -1091,7 +1094,7 @@ export class VoxClient {
         }
         this.clients.delete(m.clientId);
         this.mixer?.remove(m.clientId);
-        this.screen.handleSignal(m.clientId, 0, 'stop', '').catch(() => {});
+        this.screen.onPeerLeft(m.clientId);
         this.play('leave');
         break;
       }

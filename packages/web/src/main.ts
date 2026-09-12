@@ -868,10 +868,10 @@ function playerInfoFor(c: ClientInfo): PlayerInfo | undefined {
 }
 
 function isScreenSharedBy(clientId: number): boolean {
-  return (clientId === client.selfId && client.screen.sharing) || client.screen.remotes.has(clientId);
+  return client.screen.isLive(clientId);
 }
 
-function appendScreenIndicator(parent: HTMLElement, title = 'compartilhando tela'): void {
+function appendScreenIndicator(parent: HTMLElement, title = 'transmissão de tela ao vivo'): void {
   const dot = text('span', 'screen-live-dot', '●');
   dot.title = title;
   dot.setAttribute('aria-label', title);
@@ -2718,8 +2718,14 @@ interface ScreenTile {
 }
 
 function renderScreenDock(): HTMLElement | null {
+  const liveIds = [...client.screen.live];
+  if (client.screen.sharing) liveIds.unshift(client.selfId);
   const remotes = [...client.screen.remotes.values()];
-  if (!client.screen.sharing && remotes.length === 0 && !client.screen.error) return null;
+  if (liveIds.length === 0 && !client.screen.sharing && remotes.length === 0 && !client.screen.error && !client.screen.starting) return null;
+
+  // Um espectador continua assinado enquanto o dock estiver visível; ao
+  // minimizar, a assinatura é retirada e ele deixa de contar como audiência.
+  client.screen.setVisibleScreens(screenDockMinimized && !screenDockExpanded ? [] : [...client.screen.watching]);
 
   const tiles: ScreenTile[] = [];
   if (client.screen.sharing && client.screen.localStream) {
@@ -2751,7 +2757,7 @@ function renderScreenDock(): HTMLElement | null {
       ? 'sua tela'
       : focused.label
     : 'compartilhamento';
-  head.append(text('span', 'screen-title', title));
+  head.append(text('span', 'screen-title', title || 'transmissões ao vivo'));
 
   // Botao minimizar/restaurar — recolhe o dock para so o header.
   const minBtn = $('button', 'ghost');
@@ -2798,6 +2804,49 @@ function renderScreenDock(): HTMLElement | null {
   }
   dock.append(head);
 
+  if (liveIds.length > 0) {
+    const presence = $('div', 'screen-live-presence');
+    presence.append(text('div', 'screen-live-heading', 'transmissões ao vivo'));
+    for (const clientId of liveIds) {
+      const row = $('div', 'screen-live-row');
+      const name = clientId === client.selfId
+        ? 'Você'
+        : client.clients.get(clientId)?.nickname ?? `#${clientId}`;
+      const identity = $('div', 'screen-live-identity');
+      identity.append(text('span', 'screen-live-badge', 'AO VIVO'), text('strong', '', name));
+      const viewers = client.screen.viewersOf(clientId);
+      if (viewers.length > 0) {
+        const viewerNames = viewers.map((viewer) => viewer.nickname).join(', ');
+        const viewerCopy = text('span', 'screen-viewers', `👁 ${viewers.length} · ${viewerNames}`);
+        viewerCopy.title = `espectadores: ${viewerNames}`;
+        identity.append(viewerCopy);
+      } else {
+        identity.append(text('span', 'screen-viewers', '👁 0 espectadores'));
+      }
+      row.append(identity);
+
+      if (clientId === client.selfId) {
+        row.append(text('span', 'screen-live-state', 'você está compartilhando'));
+      } else if (client.screen.watching.has(clientId)) {
+        row.append(text('span', 'screen-live-state', 'assistindo'));
+        const stopWatching = $('button', 'ghost');
+        stopWatching.type = 'button';
+        stopWatching.textContent = 'parar de assistir';
+        stopWatching.addEventListener('click', () => client.screen.stopWatching(clientId));
+        row.append(stopWatching);
+      } else {
+        const watch = $('button', 'primary');
+        watch.type = 'button';
+        watch.textContent = 'assistir';
+        watch.title = `assistir à transmissão de ${name}`;
+        watch.addEventListener('click', () => void client.screen.watch(clientId));
+        row.append(watch);
+      }
+      presence.append(row);
+    }
+    dock.append(presence);
+  }
+
   if (client.screen.error) {
     const err = text('div', 'screen-error', client.screen.error);
     dock.append(err);
@@ -2808,7 +2857,7 @@ function renderScreenDock(): HTMLElement | null {
     if (showGrid) {
       const grid = $('div', 'screen-grid');
       for (const t of tiles) {
-        const tile = renderScreenVideo(t.label, t.stream, t.muted);
+        const tile = renderScreenVideo(t.id, t.label, t.stream, t.muted);
         tile.classList.add('screen-tile-thumb');
         tile.addEventListener('click', (e) => {
           if ((e.target as HTMLElement).closest('.screen-full')) return;
@@ -2820,12 +2869,12 @@ function renderScreenDock(): HTMLElement | null {
       }
       dock.append(grid);
     } else if (focused) {
-      dock.append(renderScreenVideo(focused.label, focused.stream, focused.muted));
+      dock.append(renderScreenVideo(focused.id, focused.label, focused.stream, focused.muted));
       if (tiles.length > 1) {
         const strip = $('div', 'screen-thumbs');
         for (const t of tiles) {
           if (t.id === focusedScreenId) continue;
-          const thumb = renderScreenVideo(t.label, t.stream, t.muted);
+          const thumb = renderScreenVideo(t.id, t.label, t.stream, t.muted);
           thumb.classList.add('screen-tile-thumb');
           thumb.addEventListener('click', (e) => {
             if ((e.target as HTMLElement).closest('.screen-full')) return;
@@ -2844,13 +2893,16 @@ function renderScreenDock(): HTMLElement | null {
 
 let forceGridMode = false;
 
-function renderScreenVideo(label: string, stream: MediaStream, muted: boolean): HTMLElement {
+function renderScreenVideo(id: 'self' | number, label: string, stream: MediaStream, muted: boolean): HTMLElement {
   const tile = $('div', 'screen-tile');
   const video = $('video') as HTMLVideoElement;
   video.autoplay = true;
   video.playsInline = true;
   video.muted = muted;
   video.srcObject = stream;
+  if (typeof id === 'number') {
+    video.addEventListener('playing', () => client.screen.markPlaying(id, stream));
+  }
 
   const fullBtn = $('button', 'screen-full');
   fullBtn.type = 'button';

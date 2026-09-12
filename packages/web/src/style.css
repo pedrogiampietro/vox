@@ -2878,6 +2878,68 @@ label.field {
   font-size: 11px;
 }
 
+.screen-live-presence {
+  display: grid;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.screen-live-heading {
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.screen-live-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.screen-live-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.screen-live-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.screen-live-badge {
+  flex-shrink: 0;
+  color: #ff6b63;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.screen-viewers,
+.screen-live-state {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.screen-live-row button {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
 .screen-tile {
   position: relative;
   overflow: hidden;
