@@ -21,7 +21,11 @@ ssh_options=(
   -i "$HOME/.ssh/id_ed25519"
   -o IdentitiesOnly=yes
   -o BatchMode=yes
-  -o StrictHostKeyChecking=yes
+  # Aceita a chave no primeiro contato e rejeita mudancas depois disso.
+  # Isso permite que o proprio SSH negocie o KEX compativel; ssh-keyscan
+  # falha em alguns OpenSSH recentes antes mesmo de retornar a host key.
+  -o StrictHostKeyChecking=accept-new
+  -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
   -o ConnectTimeout=15
   -o ServerAliveInterval=10
   -o ServerAliveCountMax=3
@@ -47,8 +51,10 @@ while IFS='|' read -r edge_id edge_host edge_user edge_port extra; do
 
   target="$edge_user@$edge_host"
   echo "Atualizando edge $edge_id ($target:$edge_port)..."
-  ssh-keyscan -p "$edge_port" -H "$edge_host" >> "$HOME/.ssh/known_hosts" 2>/dev/null
-  sort -u "$HOME/.ssh/known_hosts" -o "$HOME/.ssh/known_hosts"
+  if ! ssh "${ssh_options[@]}" -p "$edge_port" "$target" true >/dev/null; then
+    echo "Falha ao autenticar ou negociar SSH com o edge $edge_id ($target:$edge_port)." >&2
+    exit 1
+  fi
 
   scp "${ssh_options[@]}" -P "$edge_port" \
     "$artifact_dir/edge.mjs" "$target:/tmp/vox-edge.mjs" >/dev/null
