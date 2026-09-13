@@ -1,0 +1,127 @@
+/* Channel navigation stays compact; full profile artwork lives in member cards. */
+/* Never let the grid shrink the card underneath its cover and clip its identity. */
+.talk > .channel-info.profile-panel {
+  display: block; flex: 0 1 auto; min-height: 0; max-height: min(45%, 300px);
+  padding: 8px 12px; overflow-y: auto; overscroll-behavior: contain;
+}
+.profile-panel > .profile-panel-toolbar { margin-bottom: 6px; }
+.profile-panel > .user-profile-card.profile-compact {
+  display: grid; grid-template-columns: 76px minmax(0, 1fr); width: 100%;
+  min-height: min-content; border-radius: 9px; box-shadow: none;
+}
+.profile-compact > .user-profile-cover { height: 100%; aspect-ratio: auto; min-height: 100px; }
+.profile-compact .user-profile-monogram { font-size: 19px; right: 10px; top: 10px; }
+.profile-compact .user-profile-content { padding: 10px 12px; gap: 8px; min-width: 0; }
+.profile-compact .user-profile-hero { flex-direction: row; align-items: center; margin: 0; gap: 10px; }
+.profile-compact .user-profile-hero .profile-avatar-large { width: 42px; height: 42px; font-size: 17px; outline-width: 2px; }
+.profile-compact .user-profile-identity { width: auto; flex: 1; gap: 3px; }
+.profile-compact .user-profile-name { font-size: 16px; }
+.profile-compact .user-profile-presence { font-size: 10px; }
+.profile-compact .profile-status-copy { white-space: nowrap; font-size: 10px; margin: 0; }
+.profile-compact .user-profile-badges { gap: 4px; }
+.profile-compact .profile-badge { font-size: 9px; min-height: 20px; }
+.profile-compact .profile-badge.game { order: -1; flex-basis: 100%; width: fit-content; border: 0; border-radius: 0; padding: 0; overflow-wrap: anywhere; }
+.profile-compact .profile-badge.group { color: var(--text); }
+.profile-session-details { margin-top: 7px; font-size: 11px; color: var(--text-dim); }
+.profile-session-details > summary { cursor: pointer; padding: 5px 0; width: fit-content; }
+.profile-session-details > summary:focus-visible { outline: 1px solid var(--amber); outline-offset: 2px; }
+.profile-session-about { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; line-height: 1.5; }
+.profile-panel .profile-session-details .client-info-rows { width: 100%; }
+.profile-panel > .client-controls { flex-direction: row; align-items: center; gap: 10px; padding: 6px 0 0; }
+.profile-panel > .client-controls .client-vol-row { flex: 1; min-width: 0; }
+.profile-panel > .client-controls .client-vol-row input { min-width: 0; }
+.profile-panel > .client-controls .client-actions-row { flex: none; }
+@media (max-width: 640px) {
+  .profile-panel > .user-profile-card.profile-compact { grid-template-columns: 38px minmax(0, 1fr); }
+  .profile-compact .user-profile-content { padding: 8px; }
+  .profile-compact .user-profile-monogram { display: none; }
+}
+
+.channel-row { margin-top: 3px; border-radius: 8px; }
+.channel-row .room-leading { flex-basis: 42px; min-width: 42px; }
+.channel-row .idx {
+  display: grid; place-items: center; width: 25px; height: 25px;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--ink-800); font-size: 12px;
+}
+.channel-row.occupied .idx { color: var(--text-dim); }
+.channel-row.here .idx { color: var(--amber); border-color: var(--amber-dim); background: #e8a33d0c; }
+.room-title { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.room-title .name { min-width: 0; }
+.channel-row .topic { padding-top: 2px; }
+.channel-row.occupied .cap { color: var(--text-dim); }
+.channel-row.here .cap { color: var(--amber); }
+
+.peer {
+  --channel-depth: 0;
+  position: relative; min-height: 53px; margin: 2px 0;
+  padding: 7px 8px 7px calc(28px + min(var(--channel-depth), 5) * 14px);
+  gap: 10px; border: 1px solid transparent; border-radius: 8px;
+}
+.peer::before {
+  content: ''; position: absolute; top: -3px; bottom: -3px;
+  left: calc(18px + min(var(--channel-depth), 5) * 14px); width: 1px; background: var(--line);
+}
+.peer.selected {
+  background: color-mix(in srgb, var(--profile-accent) 8%, var(--ink-800));
+  border-color: color-mix(in srgb, var(--profile-accent) 28%, var(--line));
+  box-shadow: none;
+}
+.peer .peer-avatar.user-avatar { width: 33px; height: 33px; font-size: 12px; }
+.peer .peer-avatar.muted { opacity: .8; }
+.peer-identity { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.peer-headline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.peer-headline .nick { flex: 0 1 auto; min-width: 0; font-size: 12px; font-weight: 600; }
+.peer-headline .rank { flex: none; font-size: 11px; }
+.member-detail { display: flex; align-items: center; gap: 5px; min-width: 0; font-size: 10px; color: var(--text-faint); line-height: 1.4; }
+.member-detail-copy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.member-detail .peer-voc { width: 14px; height: 14px; object-fit: contain; flex: none; }
+.member-detail .peer-level { padding: 0; background: none; border: 0; color: var(--text-dim); font-size: 9px; white-space: nowrap; flex: none; }
+.member-detail .peer-online { width: 5px; height: 5px; flex: none; }
+.peer-badges { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; max-width: 62px; flex: 0 0 auto; }
+.peer-badges .vu { width: 16px; }
+.peer-badges .flag { margin: 0; font-size: 10px; }
+.peer-badges .peer-away { color: var(--amber); font-size: 8px; }
+.member-live {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  border: 1px solid #fa7f8740; border-radius: 4px; padding: 2px 4px;
+  background: #381f25; color: #ffb0b5; font: 700 8px var(--mono); letter-spacing: .04em; white-space: nowrap;
+}
+.member-live::before { content: ''; width: 4px; height: 4px; background: currentColor; border-radius: 50%; }
+
+.channel-overview { background: linear-gradient(135deg, #e8a33d06, transparent 45%), var(--ink-900); }
+.channel-overview .channel-info-header { flex-wrap: wrap; }
+.channel-overview .channel-name { overflow-wrap: anywhere; white-space: normal; min-width: 0; }
+.channel-overview .channel-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--ink-700); }
+.channel-overview .channel-members { gap: 12px; }
+.channel-member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 205px), 1fr)); gap: 12px; padding: 2px; }
+.channel-member-card {
+  position: relative; display: flex; flex-direction: column; gap: 0; min-width: 0;
+  padding: 0; overflow: hidden; text-align: left; white-space: normal; font: inherit;
+  color: var(--text); background: var(--ink-800); border: 1px solid var(--line-strong); border-radius: 12px;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.channel-member-card:hover { border-color: color-mix(in srgb, var(--profile-accent) 65%, var(--line)); background: var(--ink-700); }
+.channel-member-card:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.channel-member-card > .user-profile-cover { width: 100%; height: 54px; min-height: 54px; aspect-ratio: auto; border-radius: 0; border: 0; }
+.channel-member-card .user-profile-monogram { display: none; }
+.channel-member-content { position: relative; display: grid; gap: 6px; width: 100%; padding: 0 13px 13px; }
+.channel-member-head { display: flex; align-items: flex-end; gap: 10px; margin: -20px 0 2px; min-width: 0; }
+.channel-member-avatar { width: 46px; height: 46px; font-size: 17px; outline: 3px solid var(--ink-800); }
+.channel-member-avatar.talking { box-shadow: 0 0 0 4px var(--signal), 0 0 12px #5ee08a40; outline: none; }
+.channel-member-group { margin: 0 0 3px auto; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: var(--text-dim); padding: 3px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--ink-800); }
+.channel-member-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; }
+.channel-member-card .member-detail { color: var(--text-dim); min-height: 16px; }
+.channel-member-state { font-size: 9px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-member-status { border-top: 1px solid var(--line); padding-top: 7px; color: var(--text-dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-member-card > .member-live { position: absolute; top: 9px; right: 9px; }
+.channel-members-empty { display: grid; gap: 6px; border: 1px dashed var(--line-strong); border-radius: 10px; padding: 22px; color: var(--text-faint); font-size: 12px; }
+.channel-members-empty strong { color: var(--text-dim); font-size: 13px; }
+@media (max-width: 640px) {
+  .peer { gap: 7px; padding-left: calc(21px + min(var(--channel-depth), 3) * 10px); }
+  .peer::before { left: calc(12px + min(var(--channel-depth), 3) * 10px); }
+  .peer .peer-avatar.user-avatar { width: 29px; height: 29px; }
+  .channel-row .room-leading { flex-basis: 34px; min-width: 34px; gap: 2px; }
+  .channel-row .idx { width: 20px; height: 23px; }
+}
+@media (prefers-reduced-motion: reduce) { .channel-member-card { transition: none; } }

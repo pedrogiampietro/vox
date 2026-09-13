@@ -57,6 +57,16 @@ const PAGE_TITLES: Record<Locale, Record<string, string>> = {
 type Translation = readonly [string, string, string];
 
 const TRANSLATIONS: readonly Translation[] = [
+  ['Sobre e detalhes da sessão', 'About and session details', 'Acerca de y detalles de la sesión'],
+  ['Minha descrição', 'My description', 'Mi descripción'],
+  ['Descrição do membro', 'Member description', 'Descripción del miembro'],
+  ['Ver perfil', 'View profile', 'Ver perfil'],
+  ['online no v0x', 'online in v0x', 'en línea en v0x'],
+  ['microfone silenciado', 'microphone muted', 'micrófono silenciado'],
+  ['AO VIVO', 'LIVE', 'EN VIVO'],
+  ['Fechar detalhes do canal', 'Close channel details', 'Cerrar detalles del canal'],
+  ['O canal está livre.', 'The channel is empty.', 'El canal está libre.'],
+  ['Entre e comece a conversa.', 'Join and start the conversation.', 'Entra y comienza la conversación.'],
   ['servidores', 'servers', 'servidores'],
   ['identidade', 'identity', 'identidad'],
   ['Identidade', 'Identity', 'Identidad'],

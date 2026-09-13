@@ -631,6 +631,7 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
   if (moderated) row.classList.add('moderated');
   if (voiceDisabled) row.classList.add('voice-disabled');
   if (full) row.classList.add('full');
+  if (members.length > 0) row.classList.add('occupied');
   row.style.paddingLeft = `${8 + depth * 14}px`;
   row.dataset.channelId = String(ch.id);
   row.setAttribute('role', 'button');
@@ -662,10 +663,14 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
   leading.append(text('span', 'idx', glyph));
 
   const info = $('div', 'room-info');
-  info.append(text('span', 'name', ch.name));
+  const title = $('div', 'room-title');
+  const channelName = text('span', 'name', ch.name);
+  channelName.title = ch.name;
+  title.append(channelName);
   if (members.some((member) => isScreenSharedBy(member.id))) {
-    appendScreenIndicator(info, 'alguém está compartilhando a tela neste canal');
+    appendScreenIndicator(title, 'alguém está compartilhando a tela neste canal');
   }
+  info.append(title);
   const details: string[] = [];
   if (voiceDisabled) details.push('sem voz');
   else if (moderated) details.push('moderado');
@@ -764,7 +769,11 @@ function renderChannelBranch(parent: HTMLElement, ch: ChannelInfo, depth: number
 
   parent.append(row);
   if (!expanded) return;
-  for (const member of members) parent.append(renderPeer(member));
+  for (const member of members) {
+    const peer = renderPeer(member);
+    peer.style.setProperty('--channel-depth', String(depth));
+    parent.append(peer);
+  }
   renderChannelTree(parent, ch.id, depth + 1);
 }
 
@@ -922,8 +931,9 @@ function renderUserProfileCard(
   profile = client.profileFor(c),
   description = c.description,
   preview = false,
+  compact = false,
 ): HTMLElement {
-  const card = $('article', `user-profile-card${preview ? ' preview' : ''}`);
+  const card = $('article', `user-profile-card${preview ? ' preview' : ''}${compact ? ' profile-compact' : ''}`);
   card.style.setProperty('--profile-accent', profile.accent || DEFAULT_PROFILE_ACCENT);
   card.setAttribute('aria-label', `${t('Perfil de')} ${c.nickname}`);
 
@@ -1007,13 +1017,58 @@ function renderUserProfileCard(
   );
   facts.append(channelFact, timeFact);
 
-  content.append(hero, badges, about, facts);
+  content.append(hero, badges);
+  if (!compact) content.append(about, facts);
   card.append(cover, content);
   return card;
 }
 
+/** Shared character line: never confuse presence in v0x with presence in Tibia. */
+function renderMemberDetail(c: ClientInfo): HTMLElement {
+  const detail = $('span', 'member-detail');
+  const player = playerInfoFor(c);
+  if (player) {
+    if (player.vocation) {
+      const icon = $('img') as HTMLImageElement;
+      icon.className = 'peer-voc';
+      icon.src = serverAssetUrl(`/icons/${player.vocation.toLowerCase()}.png`);
+      icon.alt = player.vocation;
+      icon.addEventListener('error', () => icon.remove(), { once: true });
+      detail.append(icon);
+    }
+    const name = text('span', 'member-detail-copy', player.name);
+    detail.append(name);
+    if (player.level > 0) detail.append(text('span', 'peer-level', `Lv. ${player.level}`));
+    const presence = $('span', `peer-online ${player.online ? 'on' : 'off'}`);
+    presence.title = t(player.online ? 'online no Tibia' : 'offline no Tibia');
+    presence.setAttribute('aria-label', presence.title);
+    detail.append(presence);
+    detail.title = `${player.name} · ${player.vocation} · Lv. ${player.level} · ${presence.title}`;
+  } else {
+    const status = client.profileFor(c).statusText || t((c.flags & ClientFlags.Away) !== 0 ? 'ausente' : 'online no v0x');
+    detail.append(text('span', 'member-detail-copy', status));
+    detail.title = status;
+  }
+  return detail;
+}
+
+function selectMember(c: ClientInfo): void {
+  selectedClientId = c.id;
+  selectedChannelId = 0;
+  selectedTool = null;
+  render();
+}
+
 function renderPeer(c: ClientInfo): HTMLElement {
   const row = $('div', 'peer');
+  row.style.setProperty('--profile-accent', client.profileFor(c).accent || DEFAULT_PROFILE_ACCENT);
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-label', `${t('Ver perfil')}: ${c.nickname}`);
+  row.addEventListener('keydown', (e) => {
+    if (e.target !== row) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectMember(c); }
+  });
   if (c.id === client.selfId) row.classList.add('me');
   if (c.id === selectedClientId) row.classList.add('selected');
 
@@ -1024,7 +1079,8 @@ function renderPeer(c: ClientInfo): HTMLElement {
   if (!talking && (muted || away || noInput)) row.classList.add('quiet');
 
   // avatar
-  const avatar = renderProfileAvatar(c, 'peer-avatar');
+  const avatar = renderProfileAvatar(c, 'peer-avatar', true);
+  avatar.dataset.speakingAvatar = String(c.id);
   if (talking) avatar.classList.add('talking');
   if (muted || noInput) avatar.classList.add('muted');
 
@@ -1034,6 +1090,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
   vu.append($('i'), $('i'), $('i'), $('i'));
 
   const nick = text('span', 'nick', c.nickname);
+  nick.title = c.nickname;
   if (c.id === client.selfId) {
     nick.style.cursor = 'text';
     nick.addEventListener('dblclick', (e) => {
@@ -1066,8 +1123,18 @@ function renderPeer(c: ClientInfo): HTMLElement {
   const gdef = client.groupDef(c.group);
   if (gdef.color) nick.style.color = gdef.color;
   else if (c.group >= Group.Owner) nick.style.color = 'var(--amber)';
-  row.append(avatar, vu, nick);
-  if (isScreenSharedBy(c.id)) appendScreenIndicator(row);
+  const identity = $('div', 'peer-identity');
+  const headline = $('div', 'peer-headline');
+  headline.append(nick);
+  const badges = $('div', 'peer-badges');
+  badges.append(vu);
+  if (isScreenSharedBy(c.id)) {
+    const live = text('span', 'member-live', t('AO VIVO'));
+    live.title = t('transmissão de tela ao vivo');
+    badges.append(live);
+  }
+  identity.append(headline, renderMemberDetail(c));
+  row.append(avatar, identity, badges);
 
   // rank badge — mostra se o grupo tem icone ou se nao e guest
   if (gdef.icon) {
@@ -1076,7 +1143,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
     iconImg.onerror = () => iconImg.remove();
     iconImg.title = gdef.name;
     iconImg.style.cssText = 'width:14px;height:14px;object-fit:contain;flex-shrink:0;';
-    row.append(iconImg);
+    headline.append(iconImg);
   } else if (c.group > Group.Guest) {
     const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '♛' };
     const badge = text('span', 'rank', icons[c.group] || gdef.name.charAt(0).toUpperCase());
@@ -1085,29 +1152,7 @@ function renderPeer(c: ClientInfo): HTMLElement {
     else if (c.group === Group.Owner || c.group === Group.Dono) badge.style.color = 'var(--amber)';
     else if (c.group === Group.Admin) badge.style.color = '#e0a040';
     else badge.style.color = 'var(--text-dim)';
-    row.append(badge);
-  }
-
-  // Char do Tibia (Main: ...) — icone da vocacao + level + online dot.
-  const pInfo = playerInfoFor(c);
-  if (pInfo && (pInfo.vocation || pInfo.level > 0 || pInfo.name)) {
-    if (pInfo.vocation) {
-      const vocIcon = $('img') as HTMLImageElement;
-      vocIcon.src = serverAssetUrl(`/icons/${pInfo.vocation.toLowerCase()}.png`);
-      vocIcon.alt = pInfo.vocation;
-      vocIcon.title = `${pInfo.name} (${pInfo.vocation})`;
-      vocIcon.className = 'peer-voc';
-      vocIcon.onerror = () => vocIcon.remove();
-      row.append(vocIcon);
-    }
-    if (pInfo.level > 0) {
-      const lvl = text('span', 'peer-level', String(pInfo.level));
-      lvl.title = `level ${pInfo.level}`;
-      row.append(lvl);
-    }
-    const status = text('span', `peer-online ${pInfo.online ? 'on' : 'off'}`, '');
-    status.title = pInfo.online ? 'online no Tibia' : 'offline no Tibia';
-    row.append(status);
+    headline.append(badge);
   }
 
   // flags
@@ -1120,32 +1165,36 @@ function renderPeer(c: ClientInfo): HTMLElement {
     const vf = text('span', 'flag', '🎤');
     vf.title = 'voice';
     vf.style.color = 'var(--signal)';
-    row.append(vf);
+    badges.append(vf);
   }
   if (silencedByMod) {
     const sf = text('span', 'flag', '🚫');
     sf.title = 'silenciado pela moderação';
     sf.style.opacity = '0.7';
-    row.append(sf);
+    badges.append(sf);
   }
-  if (muted) row.append(text('span', 'flag', '🔇'));
+  if (muted) {
+    const flag = text('span', 'flag', '🔇');
+    flag.title = t('microfone silenciado');
+    badges.append(flag);
+  }
   if (away) {
-    const awayFlag = text('span', 'flag', 'Away');
+    const awayFlag = text('span', 'flag peer-away', t('ausente'));
     if (c.id === client.selfId && client.awayMessage) {
-      awayFlag.textContent = `Away: ${client.awayMessage}`;
       awayFlag.title = client.awayMessage;
     }
-    row.append(awayFlag);
+    badges.append(awayFlag);
   }
-  if (noInput) row.append(text('span', 'flag', '⚠'));
+  if (noInput) {
+    const flag = text('span', 'flag', '⚠');
+    flag.title = t('microfone indisponível');
+    badges.append(flag);
+  }
 
   row.addEventListener('click', (e) => {
     if (c.id === client.selfId && (e.target as HTMLElement).closest('.nick')) return;
     if (selectedClientId === c.id && selectedChannelId === 0) return;
-    selectedClientId = c.id;
-    selectedChannelId = 0;
-    selectedTool = null;
-    render();
+    selectMember(c);
   });
 
   row.addEventListener('contextmenu', (e) => {
@@ -1533,7 +1582,7 @@ function appendChannelTopic(target: HTMLElement, topic: string): void {
 }
 
 function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
-  const panel = $('div', 'channel-info');
+  const panel = $('div', 'channel-info channel-overview');
   const members = client.membersOf(ch.id);
   const isHere = ch.id === client.self?.channelId;
 
@@ -1559,6 +1608,7 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
 
   const dismiss = $('button', 'ghost');
   dismiss.textContent = '✕';
+  dismiss.setAttribute('aria-label', t('Fechar detalhes do canal'));
   dismiss.style.cssText = 'padding:2px 6px;font-size:12px;min-width:unset;margin-left:auto;';
   dismiss.addEventListener('click', () => { selectedChannelId = 0; render(); });
   top.append(dismiss);
@@ -1599,43 +1649,86 @@ function renderChannelInfoPanel(ch: ChannelInfo): HTMLElement {
   if (members.length > 0) {
     const list = $('div', 'channel-members');
     list.append(text('span', 'label', 'membros'));
-    const grid = $('div', 'member-grid');
+    const grid = $('div', 'member-grid channel-member-grid');
     for (const m of members) {
-      const item = $('div', 'member-item');
+      const profile = client.profileFor(m);
+      const item = $('button', 'channel-member-card');
+      item.type = 'button';
+      item.dataset.i18nSkip = '';
+      item.style.setProperty('--profile-accent', profile.accent || DEFAULT_PROFILE_ACCENT);
+      item.setAttribute('aria-label', `${t('Ver perfil')}: ${m.nickname}`);
+      item.addEventListener('click', () => selectMember(m));
+      item.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        showUserMenu(item, m);
+      });
+      const cover = renderProfileCover(profile);
+      const content = $('div', 'channel-member-content');
+      const avatar = renderProfileAvatar(m, 'channel-member-avatar', true);
+      avatar.dataset.speakingAvatar = String(m.id);
+      avatar.classList.toggle('talking', client.isTalking(m.id));
       const muted = (m.flags & ClientFlags.MutedMic) !== 0;
       const away = (m.flags & ClientFlags.Away) !== 0;
-
-      const statusDot = $('span', 'member-dot');
-      if (away) statusDot.classList.add('away');
-      else if (muted) statusDot.classList.add('muted');
-      else statusDot.classList.add('online');
-
+      const noInput = (m.flags & ClientFlags.NoInput) !== 0;
+      const state = text('span', 'channel-member-state', t(away ? 'ausente' : muted ? 'microfone silenciado' : noInput ? 'microfone indisponível' : 'online no v0x'));
+      state.title = state.textContent || '';
       const mgdef = client.groupDef(m.group);
-      const mNick = text('span', '', m.nickname);
+      const mNick = text('span', 'channel-member-name', m.nickname);
+      mNick.title = m.nickname;
       if (mgdef.color) mNick.style.color = mgdef.color;
       else if (m.group >= Group.Owner) mNick.style.color = 'var(--amber)';
-      item.append(statusDot, mNick);
-      if (isScreenSharedBy(m.id)) appendScreenIndicator(item);
-
-      if (mgdef.icon) {
-        const mIcon = $('img') as HTMLImageElement;
-        mIcon.src = serverAssetUrl(mgdef.icon);
-        mIcon.onerror = () => mIcon.remove();
-        mIcon.style.cssText = 'width:12px;height:12px;object-fit:contain;';
-        item.append(mIcon);
-      } else if (m.group > Group.Guest) {
-        const icons: Record<number, string> = { [Group.Moderator]: '⚔', [Group.Admin]: '★', [Group.Owner]: '♛', [Group.Dono]: '♛' };
-        const badge = text('span', 'rank', icons[m.group] || '');
-        badge.style.fontSize = '8px';
-        item.append(badge);
+      const head = $('div', 'channel-member-head');
+      const group = text('span', 'channel-member-group', mgdef.name);
+      group.title = mgdef.name;
+      head.append(avatar, group);
+      content.append(head, mNick);
+      if (playerInfoFor(m) || profile.statusText) content.append(renderMemberDetail(m));
+      content.append(state);
+      if (profile.statusText && playerInfoFor(m)) {
+        const status = text('span', 'channel-member-status', profile.statusText);
+        status.title = profile.statusText;
+        content.append(status);
       }
+      item.append(cover, content);
+      if (isScreenSharedBy(m.id)) item.append(text('span', 'member-live', t('AO VIVO')));
       grid.append(item);
     }
     list.append(grid);
     panel.append(list);
+  } else {
+    const empty = $('div', 'channel-members-empty');
+    empty.append(text('strong', '', 'O canal está livre.'), text('span', '', 'Entre e comece a conversa.'));
+    panel.append(empty);
   }
 
   return panel;
+}
+
+function renderClientDescriptionEditor(c: ClientInfo): HTMLElement | null {
+  const isSelf = c.id === client.selfId;
+  if (!c.fingerprint || (!isSelf && client.myGroup < client.permissionFor(PermissionAction.SetOtherDescription))) return null;
+
+  const row = $('div', 'client-desc-edit');
+  const input = $('input') as HTMLInputElement;
+  input.placeholder = t('ex: Main: Pedrao Warsz');
+  input.setAttribute('aria-label', t(isSelf ? 'Minha descrição' : 'Descrição do membro'));
+  input.value = c.description ?? '';
+  input.maxLength = 200;
+  const save = $('button', 'ghost');
+  save.type = 'button';
+  save.textContent = t('salvar descrição');
+  save.style.cssText = 'font-size:11px;padding:3px 8px;';
+  save.addEventListener('click', () => {
+    client.setClientDescription(c.fingerprint, input.value.trim());
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      save.click();
+    }
+  });
+  row.append(input, save);
+  return row;
 }
 
 function renderClientInfoPanel(c: ClientInfo): HTMLElement {
@@ -1661,7 +1754,14 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
   dismiss.setAttribute('aria-label', 'Fechar perfil');
   dismiss.addEventListener('click', () => { selectedClientId = 0; render(); });
   top.append(dismiss);
-  panel.append(top, renderUserProfileCard(c));
+  panel.append(top, renderUserProfileCard(c, client.profileFor(c), c.description, false, true));
+
+  const details = $('details', 'profile-session-details');
+  details.append(text('summary', '', t('Sobre e detalhes da sessão')));
+  const about = $('p', 'profile-session-about');
+  about.textContent = c.description || t('Este usuário ainda não adicionou uma apresentação.');
+  about.dataset.i18nSkip = '';
+  details.append(about);
 
   // Detalhes técnicos da sessão ficam separados do cartão público.
   const info = $('div', 'client-info-rows');
@@ -1709,29 +1809,12 @@ function renderClientInfoPanel(c: ClientInfo): HTMLElement {
     addRow('ID:', c.fingerprint);
   }
 
-  panel.append(info);
+  details.append(info);
+  panel.append(details);
 
-  // Moderadores ainda podem corrigir a descrição de terceiros. O próprio
-  // usuário edita tudo pela experiência completa de Perfil.
-  const canEditDesc = c.fingerprint !== '' && !isSelf && client.myGroup >= Group.Moderator;
-  if (canEditDesc) {
-    const descRow = $('div', 'client-desc-edit');
-    const descInput = $('input') as HTMLInputElement;
-    descInput.placeholder = 'ex: Main: Pedrao Warsz';
-    descInput.value = c.description ?? '';
-    descInput.maxLength = 200;
-    const saveBtn = $('button', 'ghost');
-    saveBtn.textContent = 'salvar descrição';
-    saveBtn.style.cssText = 'font-size:11px;padding:3px 8px;';
-    saveBtn.addEventListener('click', () => {
-      client.setClientDescription(c.fingerprint, descInput.value.trim());
-    });
-    descInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') saveBtn.click();
-    });
-    descRow.append(descInput, saveBtn);
-    panel.append(descRow);
-  }
+  // A própria descrição independe de cargo; terceiros seguem a permissão do servidor.
+  const descriptionEditor = renderClientDescriptionEditor(c);
+  if (descriptionEditor) panel.append(descriptionEditor);
 
   // volume + mute controls (only for other users); botoes do bot musica caem
   // na mesma barra pra ficar tudo em uma linha compacta.
@@ -5565,6 +5648,15 @@ if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
 
 // ------------------------------------------------- animation loop --
 
+function updateMemberSpeakingIndicators(): void {
+  for (const el of document.querySelectorAll<HTMLElement>('[data-vu]')) {
+    el.classList.toggle('live', client.isTalking(Number(el.dataset.vu)));
+  }
+  for (const el of document.querySelectorAll<HTMLElement>('[data-speaking-avatar]')) {
+    el.classList.toggle('talking', client.isTalking(Number(el.dataset.speakingAvatar)));
+  }
+}
+
 function tick(): void {
   const recordingTimer = document.querySelector('[data-recording-timer]') as HTMLElement | null;
   if (recordingTimer && client.isVoiceRecording) {
@@ -5584,13 +5676,7 @@ function tick(): void {
     }
   }
 
-  // peer VU meters
-  const vuMeters = document.querySelectorAll('[data-vu]');
-  for (const el of vuMeters) {
-    const clientId = Number((el as HTMLElement).dataset.vu);
-    const talking = client.isTalking(clientId);
-    el.classList.toggle('live', talking);
-  }
+  updateMemberSpeakingIndicators();
 
   requestAnimationFrame(tick);
 }
