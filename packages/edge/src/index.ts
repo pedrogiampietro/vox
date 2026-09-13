@@ -20,6 +20,7 @@ import {
   NO_CHANNEL,
   VOICE_PROBE_MAGIC,
   VOICE_TOKEN_BYTES,
+  VoiceFlags,
   decodeVoice,
   stampSender,
 } from '@vox/protocol';
@@ -113,6 +114,7 @@ class EdgeRouter {
     for (const peer of peers) {
       if (peer === sender) continue;
       if (peer.clientFlags & ClientFlags.MutedSpeakers) continue;
+      if (isLiveKitSource(frame) && (peer.clientFlags & ClientFlags.LiveKitVoice)) continue;
       peer.sendToBrowser(frame);
     }
   }
@@ -122,6 +124,7 @@ class EdgeRouter {
     if (!peers) return;
     for (const peer of peers) {
       if (peer.clientFlags & ClientFlags.MutedSpeakers) continue;
+      if (isLiveKitSource(frame) && (peer.clientFlags & ClientFlags.LiveKitVoice)) continue;
       peer.sendToBrowser(frame);
     }
   }
@@ -131,6 +134,11 @@ class EdgeRouter {
       if (expires < now) this.localEchoes.delete(key);
     }
   }
+}
+
+function isLiveKitSource(frame: Uint8Array): boolean {
+  const packet = decodeVoice(frame);
+  return Boolean(packet && (packet.flags & VoiceFlags.LiveKitSource));
 }
 
 const Http3Server = (await import('@fails-components/webtransport')).Http3Server;

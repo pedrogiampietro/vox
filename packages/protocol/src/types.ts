@@ -172,6 +172,8 @@ export const ClientFlags = {
   NoInput: 1 << 3,
   /** Permissao de voz em canal moderado, concedida por moderador. */
   HasVoice: 1 << 4,
+  /** Cliente tambem esta publicado na sala LiveKit de voz. */
+  LiveKitVoice: 1 << 5,
 } as const;
 
 export const ChannelFlags = {
@@ -193,6 +195,8 @@ export const VoiceFlags = {
   None: 0,
   /** Ultimo pacote de uma rajada de fala; o receptor pode encerrar o buffer. */
   EndOfTalk: 1 << 0,
+  /** O remetente tambem esta na sala LiveKit; evita duplicar nos dois caminhos. */
+  LiveKitSource: 1 << 1,
 } as const;
 
 export enum ChatScope {

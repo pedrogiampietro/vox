@@ -459,7 +459,7 @@ export class VoiceRouter {
       serverId: session.serverId,
       clientId: session.id,
       channelId: state.channelId,
-      clientFlags: state.clientFlags & ClientFlags.MutedMic ? 1 : 0,
+      clientFlags: state.clientFlags & (ClientFlags.MutedMic | ClientFlags.LiveKitVoice),
       edgeGroup: hashGroup(session.voice?.voiceGroupId),
     };
   }

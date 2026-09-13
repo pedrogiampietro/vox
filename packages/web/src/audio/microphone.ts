@@ -90,12 +90,18 @@ export class Microphone {
   level = 0;
   /** Verdadeiro enquanto estiver realmente mandando pacotes. */
   transmitting = false;
+  /** Permite que um transporte alternativo acompanhe o VAD sem recapturar o mic. */
+  onTransmissionChange: ((active: boolean) => void) | null = null;
   /** Tecla de push-to-talk pressionada. */
   pttDown = false;
   /** Microfone silenciado pelo usuario. */
   muted = false;
 
   settings: MicSettings = { ...DEFAULT_MIC };
+
+  get mediaStreamTrack(): MediaStreamTrack | null {
+    return this.stream?.getAudioTracks()[0] ?? null;
+  }
 
   static get supported(): boolean {
     return typeof AudioEncoder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
@@ -262,6 +268,7 @@ export class Microphone {
       if (now >= calibration.until) this.finishCalibration(calibration);
       this.setRecordGate(false);
       this.transmitting = false;
+      this.updateTransmission(false);
       return;
     }
 
@@ -286,6 +293,7 @@ export class Microphone {
       }
       this.wasTransmitting = false;
       this.transmitting = false;
+      this.updateTransmission(false);
       return;
     }
 
@@ -293,6 +301,7 @@ export class Microphone {
     if (!encoder || encoder.state !== 'configured') return;
 
     this.transmitting = true;
+    this.updateTransmission(true);
     this.setRecordGate(true);
     this.wasTransmitting = true;
     this.pending.push(VoiceFlags.None);
@@ -327,6 +336,7 @@ export class Microphone {
 
   async stop(): Promise<void> {
     this.transmitting = false;
+    this.updateTransmission(false);
     this.level = 0;
     this.vadLevel = 0;
     this.hangoverUntil = 0;
@@ -364,6 +374,14 @@ export class Microphone {
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
   }
+
+  private updateTransmission(active: boolean): void {
+    if (this.transmitting === active && active === this.lastTransmission) return;
+    this.lastTransmission = active;
+    this.onTransmissionChange?.(active);
+  }
+
+  private lastTransmission = false;
 }
 
 function normalizeSettings(settings: MicSettings): MicSettings {

@@ -29,7 +29,7 @@ import { spawnAllJukeboxes, spawnJukebox, stopAllJukeboxes, stopJukebox } from '
 import { VoiceRouter } from './voice-router.js';
 import { orderVoiceEdges } from './voice-edge-selection.js';
 import { serverMetrics } from './metrics.js';
-import { issueLiveKitToken } from './livekit.js';
+import { issueLiveKitToken, issueLiveKitVoiceToken } from './livekit.js';
 
 // --------------------------------------------------------------- estado --
 
@@ -95,7 +95,7 @@ function liveKitCorsHeaders(): Record<string, string> {
   };
 }
 
-function handleLiveKitToken(req: IncomingMessage, res: ServerResponse): void {
+function handleLiveKitToken(req: IncomingMessage, res: ServerResponse, voice = false): void {
   const headers = liveKitCorsHeaders();
   if (req.method === 'OPTIONS') {
     res.writeHead(204, headers).end();
@@ -132,7 +132,8 @@ function handleLiveKitToken(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
 
-  void issueLiveKitToken(session).then((credentials) => {
+  const issue = voice ? issueLiveKitVoiceToken : issueLiveKitToken;
+  void issue(session).then((credentials) => {
     if (!credentials) {
       res.writeHead(503, { ...headers, 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: 'LiveKit nao configurado no servidor' }));
@@ -144,7 +145,7 @@ function handleLiveKitToken(req: IncomingMessage, res: ServerResponse): void {
     console.error('[livekit] falha ao emitir token:', error);
     if (!res.headersSent) {
       res.writeHead(503, { ...headers, 'content-type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: 'nao foi possivel preparar o compartilhamento' }));
+      res.end(JSON.stringify({ error: voice ? 'nao foi possivel preparar o fallback de voz' : 'nao foi possivel preparar o compartilhamento' }));
     }
   });
 }
@@ -154,6 +155,9 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
 
   if (path === '/api/livekit/token') {
     return handleLiveKitToken(req, res);
+  }
+  if (path === '/api/livekit/voice-token') {
+    return handleLiveKitToken(req, res, true);
   }
 
   // A raiz do dominio principal e a vitrine publica. Subdominios de servidores

@@ -1452,11 +1452,14 @@ function updateLiveConnectionStatus(): void {
 
 function fillConnectionStatus(stat: HTMLElement): void {
   const connection = client.connection;
-  const usingQuic = connection.voiceTransport === 'quic';
-  const transport = text('span', 'via', usingQuic ? 'QUIC' : 'WS');
+  const usingLiveKit = client.liveKitVoiceActive;
+  const usingQuic = !usingLiveKit && connection.voiceTransport === 'quic';
+  const transport = text('span', 'via', usingLiveKit ? 'LIVEKIT' : usingQuic ? 'QUIC' : 'WS');
   const voiceRtt = text('b', 'voice-rtt', usingQuic && connection.voiceRtt > 0 ? `${connection.voiceRtt}ms` : '—');
-  const voiceRegion = text('span', 'voice-region', usingQuic ? (connection.voiceRegion || 'edge') : 'voz');
-  const voiceQuality = text('span', `voice-quality ${connection.voiceQuality}`, voiceQualityLabel(connection.voiceQuality));
+  const voiceRegion = text('span', 'voice-region', usingLiveKit ? 'global' : usingQuic ? (connection.voiceRegion || 'edge') : 'voz');
+  const voiceQuality = usingLiveKit
+    ? text('span', 'voice-quality good', 'fallback ativo')
+    : text('span', `voice-quality ${connection.voiceQuality}`, voiceQualityLabel(connection.voiceQuality));
   const parts: HTMLElement[] = [
     text('span', '', 'ctrl'),
     text('b', '', `${connection.rtt}ms`),
@@ -1473,7 +1476,7 @@ function fillConnectionStatus(stat: HTMLElement): void {
 
   // Jitter e perda so aparecem depois que alguem falou: antes disso seriam dois
   // zeros ocupando o header sem dizer nada.
-  if (connection.rxJitterMs > 0 || connection.rxLossPct > 0) {
+  if (!usingLiveKit && (connection.rxJitterMs > 0 || connection.rxLossPct > 0)) {
     parts.push(
       text('span', '', '·'),
       text('span', '', 'jit'),

@@ -29,6 +29,7 @@ import {
   RemoveReason,
   VOICE_TOKEN_BYTES,
   decodeClientMessage,
+  decodeVoice,
   encodeServerMessage,
   stampSender,
   MAX_CHAT_TEXT,
@@ -36,6 +37,7 @@ import {
   MAX_NICKNAME,
   MAX_VOICE_PACKET,
   VOICE_HEADER_SIZE,
+  VoiceFlags,
   DEFAULT_PRESET_ID,
   canonicalRespawnIn,
   findPreset,
@@ -732,6 +734,8 @@ export class Hub {
     }
 
     stampSender(frame, s.id);
+    const sourceUsesLiveKit = Boolean(s.flags & ClientFlags.LiveKitVoice)
+      || Boolean((decodeVoice(frame)?.flags ?? 0) & VoiceFlags.LiveKitSource);
     if (this.deps.voiceRouter?.route(s, channel.info.id, frame)) return;
     // O edge ja entregou este frame aos clientes da mesma regiao. Reenviar
     // para eles pela origem so cria trafego e trabalho que o edge descarta ao
@@ -744,6 +748,10 @@ export class Hub {
     for (let i = 0; i < members.length; i++) {
       const peer = members[i]!;
       if (peer === s) continue;
+      // Quem ja esta na sala LiveKit recebe o remetente por la. O frame
+      // continua indo para clientes legados, que ainda dependem do transporte
+      // Vox durante a migracao gradual.
+      if (sourceUsesLiveKit && (peer.flags & ClientFlags.LiveKitVoice)) continue;
       if (sourceEdgeId && peer.voice?.edgeId === sourceEdgeId) continue;
       if (peer.flags & ClientFlags.MutedSpeakers) continue;
       recipients++;

@@ -33,6 +33,8 @@ const MAX_DATAGRAM: usize = 64 * 1024;
 const MAX_RECIPIENTS: usize = 4096;
 const MAX_CHANNEL_QUEUE: usize = 2048;
 const MAX_FRAME_AGE: Duration = Duration::from_millis(250);
+const LIVEKIT_VOICE_FLAG: u8 = 1 << 5;
+const LIVEKIT_SOURCE_FLAG: u8 = 1 << 1;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ClientKey {
@@ -44,6 +46,7 @@ struct ClientKey {
 struct ClientState {
     channel_id: u32,
     muted: bool,
+    livekit: bool,
     edge_group: u32,
 }
 
@@ -217,6 +220,7 @@ fn handle_command(
                 ClientState {
                     channel_id,
                     muted: flags & 1 != 0,
+                    livekit: flags & LIVEKIT_VOICE_FLAG as u32 != 0,
                     edge_group,
                 },
             );
@@ -291,6 +295,11 @@ fn route_voice(
         .get(&source)
         .map(|state| state.edge_group)
         .unwrap_or(0);
+    let source_livekit = clients
+        .get(&source)
+        .map(|state| state.livekit)
+        .unwrap_or(false)
+        || frame.get(5).map(|flags| flags & LIVEKIT_SOURCE_FLAG != 0).unwrap_or(false);
     let Some(members) = channel_members.get(&(source.server_id, channel_id)) else {
         return;
     };
@@ -299,7 +308,7 @@ fn route_voice(
         let Some(state) = clients.get(key) else {
             continue;
         };
-        if *key == source || state.muted {
+        if *key == source || state.muted || (source_livekit && state.livekit) {
             continue;
         }
         // O edge regional já entregou o frame localmente. Evita eco na volta

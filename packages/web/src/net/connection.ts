@@ -12,6 +12,7 @@ import {
   PROTOCOL_VERSION,
   VOICE_PROBE_BYTES,
   VOICE_PROBE_MAGIC,
+  VoiceFlags,
   decodeServerMessage,
   decodeVoice,
   decodeVoiceBatch,
@@ -46,6 +47,8 @@ export interface ConnectionHandlers {
   onVoice(p: VoicePacket): void;
   onVoiceTransport?(transport: VoiceTransport): void;
   onVoiceStats?(): void;
+  /** Dispara quando QUIC e WS estao ruins de forma persistente. */
+  onVoiceFallbackNeeded?(reason: string): void;
 }
 
 export interface LiveKitCredentials {
@@ -102,6 +105,7 @@ const VOICE_FAILOVER_BAD_WINDOWS = 2;
 const VOICE_FAILOVER_RECOVER_LOSS_PCT = 5;
 const VOICE_FAILOVER_EDGE_COOLDOWN_MS = 30_000;
 const VOICE_FAILOVER_EDGE_MAX_COOLDOWN_MS = 5 * 60_000;
+const LIVEKIT_FALLBACK_REQUEST_COOLDOWN_MS = 30_000;
 
 type EdgeHealthState = VoiceEdgeHealth & { handshakeSamples: number[] };
 
@@ -153,6 +157,7 @@ export class Connection {
   private readonly edgeHealth = new Map<string, EdgeHealthState>();
   private badVoiceProbes = 0;
   private badVoiceLossWindows = 0;
+  private lastLiveKitFallbackRequestAt = 0;
 
   /** WebSocket ate o WebTransport subir; 'quic' quando a voz migrou. */
   voiceTransport: VoiceTransport = 'ws';
@@ -420,14 +425,27 @@ export class Connection {
 
   /** Pede ao backend um token efemero; o segredo LiveKit nunca chega ao web. */
   async requestLiveKitToken(channelId: number): Promise<LiveKitCredentials> {
+    return this.requestLiveKitCredentials(channelId, '/api/livekit/token', 'canal de tela invalido');
+  }
+
+  /** Pede credencial efemera da sala de voz de contingencia. */
+  async requestLiveKitVoiceToken(channelId: number): Promise<LiveKitCredentials> {
+    return this.requestLiveKitCredentials(channelId, '/api/livekit/voice-token', 'canal de voz invalido');
+  }
+
+  private async requestLiveKitCredentials(
+    channelId: number,
+    path: string,
+    invalidChannelMessage: string,
+  ): Promise<LiveKitCredentials> {
     const token = this.voiceToken;
     const target = this.target;
     if (!token || !target || !this.online) throw new Error('sessao Vox ainda nao esta pronta');
-    if (!Number.isInteger(channelId) || channelId <= 0) throw new Error('canal de tela invalido');
+    if (!Number.isInteger(channelId) || channelId <= 0) throw new Error(invalidChannelMessage);
 
     const endpoint = new URL(resolveUrl(target.address, target.serverId));
     endpoint.protocol = endpoint.protocol === 'wss:' ? 'https:' : 'http:';
-    endpoint.pathname = '/api/livekit/token';
+    endpoint.pathname = path;
     endpoint.search = `?channelId=${encodeURIComponent(String(channelId))}`;
 
     const controller = new AbortController();
@@ -449,7 +467,8 @@ export class Connection {
   }
 
   /** Caminho quente: sem alocacao alem do proprio frame. */
-  sendVoice(frame: Uint8Array): void {
+  sendVoice(frame: Uint8Array, liveKitSource = false): void {
+    if (liveKitSource && frame.length > 5) frame[5] = (frame[5] ?? 0) | VoiceFlags.LiveKitSource;
     const writer = this.wtWriter;
     if (writer) {
       if (this.wtInflight >= MAX_INFLIGHT_DATAGRAMS) {
@@ -848,7 +867,20 @@ export class Connection {
         this.dropVoiceChannel(this.generation, true);
       }
     } else {
-      this.badVoiceLossWindows = 0;
+      if (lossPct >= VOICE_FAILOVER_LOSS_PCT) {
+        this.badVoiceLossWindows++;
+        const now = Date.now();
+        if (
+          this.badVoiceLossWindows >= VOICE_FAILOVER_BAD_WINDOWS
+          && now - this.lastLiveKitFallbackRequestAt >= LIVEKIT_FALLBACK_REQUEST_COOLDOWN_MS
+        ) {
+          this.lastLiveKitFallbackRequestAt = now;
+          this.badVoiceLossWindows = 0;
+          this.handlers.onVoiceFallbackNeeded?.(`perda persistente no WS (${lossPct.toFixed(1)}%)`);
+        }
+      } else if (lossPct <= VOICE_FAILOVER_RECOVER_LOSS_PCT) {
+        this.badVoiceLossWindows = 0;
+      }
     }
   }
 
@@ -884,6 +916,7 @@ export class Connection {
     this.voiceQuality = 'unknown';
     this.badVoiceProbes = 0;
     this.badVoiceLossWindows = 0;
+    this.lastLiveKitFallbackRequestAt = 0;
     this.voiceHost = '';
     this.voiceRegion = '';
     this.voicePacketsSent = 0;

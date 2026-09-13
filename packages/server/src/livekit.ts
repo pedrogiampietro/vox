@@ -8,12 +8,18 @@ export interface LiveKitCredentials {
   room: string;
 }
 
-/** Emite um token curto e limitado ao canal atual do Vox. */
-export async function issueLiveKitToken(session: Session): Promise<LiveKitCredentials | null> {
-  if (!config.livekitUrl || !config.livekitApiKey || !config.livekitApiSecret) return null;
+function issueToken(
+  session: Session,
+  roomPrefix: string,
+  identityPrefix: string,
+  source: TrackSource,
+): Promise<LiveKitCredentials | null> {
+  if (!config.livekitUrl || !config.livekitApiKey || !config.livekitApiSecret) {
+    return Promise.resolve(null);
+  }
 
-  const room = `vox-${session.serverId}-${session.channelId}`;
-  const identity = `vox-${session.serverId}-${session.id}`;
+  const room = `${roomPrefix}-${session.serverId}-${session.channelId}`;
+  const identity = `${identityPrefix}-${session.serverId}-${session.id}`;
   const token = new AccessToken(config.livekitApiKey, config.livekitApiSecret, {
     identity,
     name: session.nickname,
@@ -23,9 +29,19 @@ export async function issueLiveKitToken(session: Session): Promise<LiveKitCreden
     room,
     roomJoin: true,
     canSubscribe: true,
-    canPublishSources: [TrackSource.SCREEN_SHARE],
+    canPublishSources: [source],
     canPublishData: false,
   });
 
-  return { url: config.livekitUrl, token: await token.toJwt(), room };
+  return token.toJwt().then((jwt) => ({ url: config.livekitUrl, token: jwt, room }));
+}
+
+/** Emite um token curto e limitado ao canal atual do Vox. */
+export function issueLiveKitToken(session: Session): Promise<LiveKitCredentials | null> {
+  return issueToken(session, 'vox', 'vox', TrackSource.SCREEN_SHARE);
+}
+
+/** Token de voz separado do compartilhamento de tela, usado no failover. */
+export function issueLiveKitVoiceToken(session: Session): Promise<LiveKitCredentials | null> {
+  return issueToken(session, 'vox-voice', 'vox-voice', TrackSource.MICROPHONE);
 }

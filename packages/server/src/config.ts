@@ -193,7 +193,7 @@ export const config = {
   /** Nome exibido quando o cliente escolhe o WebTransport da própria origem. */
   voiceOriginRegion: str('VOX_VOICE_ORIGIN_REGION', 'Origem'),
 
-  /** LiveKit Cloud para distribuição de compartilhamento de tela. */
+  /** LiveKit Cloud para tela e fallback de voz global. */
   livekitUrl: str('LIVEKIT_URL', '').replace(/\/$/, ''),
   livekitApiKey: str('LIVEKIT_API_KEY', ''),
   /** Nunca sai do backend nem entra no bundle web. */

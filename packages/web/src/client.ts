@@ -7,6 +7,7 @@
 import { BotControlAction, ChannelFlags, ChatScope, ClientFlags, DEFAULT_GROUP_DEFS, DEFAULT_PERMISSIONS, DEFAULT_PRESET_ID, FailureCode, Group, NO_CHANNEL, Op, PermissionAction, findPreset, parsePreset } from '@vox/protocol';
 import type { BotStateInfo, ChannelInfo, ClientInfo, GroupDef, PermissionEntry, PlayerInfo, RespClaimInfo, ServerMessage, ServerPreset, UserProfile } from '@vox/protocol';
 import { Connection, type LinkState, type Target, type VoiceTransport } from './net/connection.js';
+import { LiveKitVoice, type LiveKitVoiceState } from './net/livekit-voice.js';
 import { DEFAULT_MIC, Microphone, type MicSettings } from './audio/microphone.js';
 import { VoiceMixer, type VoicePlaybackHealth, type VoiceSenderStats } from './audio/mixer.js';
 import { VoiceRecorder, type RecordingTelemetry, type VoiceRecordingResult } from './audio/recording.js';
@@ -129,6 +130,8 @@ export class VoxClient {
   private profileSentForConnection = false;
   private profileReceivedForConnection = false;
   private adaptiveBitrateChangedAt = 0;
+  private liveKitFallbackAttemptAt = 0;
+  private liveKitFallbackStarting = false;
 
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
@@ -149,6 +152,7 @@ export class VoxClient {
   readonly connection: Connection;
   private pendingProfile: { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>; expected: UserProfile } | null = null;
   readonly microphone: Microphone;
+  readonly liveKitVoice: LiveKitVoice;
   readonly screen: ScreenShare;
 
   constructor(
@@ -156,6 +160,10 @@ export class VoxClient {
     private readonly onLiveConnectionStatus: () => void = () => {},
   ) {
     this.peers = loadPeerPrefs();
+    this.liveKitVoice = new LiveKitVoice({
+      onState: (state, detail) => this.handleLiveKitVoiceState(state, detail),
+      onTalkingChange: () => this.onLiveConnectionStatus(),
+    });
     this.connection = new Connection({
       onState: (link, detail) => {
         const wasOnline = this.link === 'online';
@@ -172,6 +180,7 @@ export class VoxClient {
       },
       onMessage: (m) => this.apply(m),
       onVoice: (p) => this.mixer?.push(p),
+      onVoiceFallbackNeeded: (reason) => void this.startLiveKitFallback(reason),
       // Métricas de voz mudam continuamente. A tela atualiza somente o
       // indicador no header; reconstruir o shell aqui faria o scroll piscar.
       onVoiceTransport: () => this.onLiveConnectionStatus(),
@@ -180,7 +189,8 @@ export class VoxClient {
         this.onLiveConnectionStatus();
       },
     });
-    this.microphone = new Microphone((frame) => this.connection.sendVoice(frame));
+    this.microphone = new Microphone((frame) => this.connection.sendVoice(frame, this.liveKitVoice.active));
+    this.microphone.onTransmissionChange = (active) => this.liveKitVoice.setTransmissionEnabled(active);
     this.screen = new ScreenShare(
       {
         selfId: () => this.selfId,
@@ -212,6 +222,14 @@ export class VoxClient {
     return this.microphone.level;
   }
 
+  get liveKitVoiceActive(): boolean {
+    return this.liveKitVoice.active;
+  }
+
+  get liveKitVoiceState(): LiveKitVoiceState {
+    return this.liveKitVoice.state;
+  }
+
   isVoiceSilenced(c: ClientInfo): boolean {
     const ch = this.channels.get(c.channelId);
     if (!ch) return false;
@@ -227,7 +245,7 @@ export class VoxClient {
       if (me && this.isVoiceSilenced(me)) return false;
       return true;
     }
-    return this.mixer?.isTalking(clientId) ?? false;
+    return (this.mixer?.isTalking(clientId) ?? false) || this.liveKitVoice.isTalking(clientId);
   }
 
   membersOf(channelId: number): ClientInfo[] {
@@ -302,6 +320,8 @@ export class VoxClient {
     this.preamp = prefs.preamp;
     this.outputDeviceId = prefs.outputDeviceId ?? '';
     this.microphone.reconfigure(this.mic);
+    this.liveKitVoice.setOutputVolume(this.outputVolume);
+    void this.liveKitVoice.setOutputDevice(this.outputDeviceId);
     if (this.mixer) {
       this.mixer.volume = this.outputVolume;
       this.mixer.preamp = this.preamp;
@@ -311,6 +331,7 @@ export class VoxClient {
 
   disconnect(): void {
     this.connectGeneration++;
+    this.stopLiveKitFallback();
     this.connection.close();
   }
 
@@ -337,6 +358,7 @@ export class VoxClient {
     this.profileSentForConnection = false;
     this.profileReceivedForConnection = false;
     this.screen.close();
+    this.liveKitVoice.disconnect();
     // Offline de verdade: nao ha reconexao a caminho para justificar segurar o
     // dispositivo, entao o microfone sai na hora.
     this.cancelMicRelease();
@@ -357,6 +379,7 @@ export class VoxClient {
    * que ja ignora socket fechado.
    */
   private suspend(): void {
+    this.stopLiveKitFallback();
     this.mixer?.clear();
     if (this.micRelease !== null) return;
     this.micRelease = setTimeout(() => {
@@ -475,8 +498,72 @@ export class VoxClient {
     }
   }
 
+  /** Ativa a sala LiveKit somente depois de duas janelas ruins no caminho Vox. */
+  private async startLiveKitFallback(reason: string): Promise<void> {
+    if (
+      this.liveKitFallbackStarting
+      || this.liveKitVoice.active
+      || this.link !== 'online'
+      || !this.self?.channelId
+      || !this.microphone.mediaStreamTrack
+    ) return;
+    const now = Date.now();
+    if (now < this.liveKitFallbackAttemptAt) return;
+
+    const generation = this.connectGeneration;
+    const channelId = this.self.channelId;
+    const source = this.microphone.mediaStreamTrack;
+    if (!source) return;
+    this.liveKitFallbackStarting = true;
+    this.onLiveConnectionStatus();
+    try {
+      const credentials = await this.connection.requestLiveKitVoiceToken(channelId);
+      if (generation !== this.connectGeneration || this.link !== 'online' || this.self?.channelId !== channelId) return;
+      await this.liveKitVoice.connect(credentials, source, this.microphone.muted, this.microphone.transmitting);
+      if (generation !== this.connectGeneration || this.link !== 'online' || this.self?.channelId !== channelId) {
+        this.stopLiveKitFallback();
+      }
+    } catch (error) {
+      this.liveKitFallbackAttemptAt = Date.now() + 30_000;
+      this.warn(`fallback LiveKit indisponível: ${describeError(error)}`);
+    } finally {
+      this.liveKitFallbackStarting = false;
+      this.onLiveConnectionStatus();
+    }
+  }
+
+  private handleLiveKitVoiceState(state: LiveKitVoiceState, detail: string): void {
+    if (state === 'connected') {
+      this.setLiveKitVoiceFlag(true);
+    } else if (state === 'failed' || state === 'idle') {
+      this.liveKitFallbackAttemptAt = Date.now() + 30_000;
+      this.setLiveKitVoiceFlag(false);
+    }
+    if (state === 'failed' && !this.liveKitFallbackStarting) this.warn(detail);
+    this.onLiveConnectionStatus();
+    this.onChange();
+  }
+
+  private stopLiveKitFallback(): void {
+    const wasActive = this.liveKitVoice.active || Boolean(this.flags & ClientFlags.LiveKitVoice);
+    this.liveKitVoice.disconnect();
+    if (wasActive) this.setLiveKitVoiceFlag(false);
+  }
+
+  private setLiveKitVoiceFlag(enabled: boolean): void {
+    const me = this.self;
+    const current = Boolean((me?.flags ?? 0) & ClientFlags.LiveKitVoice);
+    if (current === enabled) return;
+    const next = enabled ? this.flags | ClientFlags.LiveKitVoice : this.flags & ~ClientFlags.LiveKitVoice;
+    if (me) me.flags = next;
+    this.connection.send({ t: Op.SetSelfState, flags: next });
+    this.syncMicMute();
+    this.onLiveConnectionStatus();
+  }
+
   async applyMicSettings(patch: Partial<MicSettings>): Promise<void> {
     const restart = patch.deviceId !== undefined && patch.deviceId !== this.mic.deviceId;
+    if (restart && this.liveKitVoice.active) this.stopLiveKitFallback();
     this.mic = { ...this.mic, ...patch };
     this.microphone.reconfigure(patch);
     if (restart && this.link === 'online') await this.startMic();
@@ -576,6 +663,7 @@ export class VoxClient {
   setOutputVolume(v: number): void {
     this.outputVolume = v;
     if (this.mixer && !(this.flags & ClientFlags.MutedSpeakers)) this.mixer.volume = v;
+    this.liveKitVoice.setOutputVolume(v);
     this.saveAudioPrefs();
     this.onChange();
   }
@@ -584,6 +672,7 @@ export class VoxClient {
   setOutputVolumeDirect(v: number): void {
     this.outputVolume = v;
     if (this.mixer && !(this.flags & ClientFlags.MutedSpeakers)) this.mixer.volume = v;
+    this.liveKitVoice.setOutputVolume(v);
   }
 
   outputDeviceId = '';
@@ -593,6 +682,7 @@ export class VoxClient {
     if (this.ctx && 'setSinkId' in this.ctx) {
       await (this.ctx as unknown as { setSinkId(id: string): Promise<void> }).setSinkId(deviceId);
     }
+    await this.liveKitVoice.setOutputDevice(deviceId);
     this.saveAudioPrefs();
   }
 
@@ -697,6 +787,7 @@ export class VoxClient {
     const prefs = { ...this.prefsOf(client), volume };
     this.savePrefs(client, prefs);
     this.mixer?.setVolume(client.id, volume);
+    this.liveKitVoice.setPeerVolume(client.id, volume);
     // Nao dispara onChange: o handler do slider ja atualiza o label; um
     // re-render completo destroi o input no meio do drag, travando o cursor.
   }
@@ -705,6 +796,7 @@ export class VoxClient {
     const prefs = { ...this.prefsOf(client), muted: !this.isUserMuted(client) };
     this.savePrefs(client, prefs);
     this.mixer?.setMuted(client.id, prefs.muted);
+    this.liveKitVoice.setPeerMuted(client.id, prefs.muted);
     this.onChange();
   }
 
@@ -720,6 +812,8 @@ export class VoxClient {
     const prefs = this.prefsOf(client);
     if (prefs.volume !== 1) this.mixer?.setVolume(client.id, prefs.volume);
     if (prefs.muted) this.mixer?.setMuted(client.id, true);
+    if (prefs.volume !== 1) this.liveKitVoice.setPeerVolume(client.id, prefs.volume);
+    if (prefs.muted) this.liveKitVoice.setPeerMuted(client.id, true);
   }
 
   // ------------------------------------------------------------ comandos --
@@ -943,6 +1037,7 @@ export class VoxClient {
     this.connection.send({ t: Op.SetSelfState, flags });
     this.playFlagChange(previous, flags);
     if (this.mixer) this.mixer.volume = flags & ClientFlags.MutedSpeakers ? 0 : this.outputVolume;
+    this.liveKitVoice.setMutedSpeakers(Boolean(flags & ClientFlags.MutedSpeakers));
     const me = this.self;
     if (me) me.flags = flags;
     this.syncMicMute();
@@ -954,6 +1049,8 @@ export class VoxClient {
     const userMuted = (me?.flags ?? 0) & ClientFlags.MutedMic;
     const silenced = me ? this.isVoiceSilenced(me) : false;
     this.microphone.muted = !!(userMuted || silenced);
+    this.liveKitVoice.setMuted(this.microphone.muted);
+    this.liveKitVoice.setTransmissionEnabled(this.microphone.transmitting);
   }
 
   setPtt(down: boolean): void {
@@ -1103,6 +1200,7 @@ export class VoxClient {
         const c = this.clients.get(m.clientId);
         if (c) c.channelId = m.channelId;
         if (m.clientId === this.selfId) {
+          this.stopLiveKitFallback();
           this.play('channel');
           this.syncMicMute();
           // Mudei de canal — recalcula oferta de tela para o novo grupo.
