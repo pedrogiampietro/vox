@@ -76,6 +76,15 @@ type RuntimeMetrics = {
     }[];
   };
   edges: {
+    localVoice?: {
+      reportedAt: number;
+      droppedPackets: number;
+      clients: {
+        clientId: number; sessionId: string; receivedPackets: number; submittedPackets: number;
+        backpressureDrops: number; writeErrors: number; upstreamDrops: number;
+        inflight: number; peakInflight: number; reportedAt: number;
+      }[];
+    } | null;
     id: string;
     connected: boolean;
     available: boolean;
@@ -569,6 +578,17 @@ function renderRuntimeInsights(runtime: RuntimeMetrics): HTMLElement {
       row.append(text('span', 'mono runtime-edge-error', `última falha: ${handshakes.lastFailure}`));
     }
     edgeList.append(row);
+    const local = edge.localVoice;
+    if (local) {
+      const details = $('details');
+      details.append(text('summary', 'mono subtle',
+        `diagnóstico do edge · ${local.droppedPackets} descartes locais${Date.now() - local.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
+      for (const client of local.clients) {
+        details.append(text('div', 'mono subtle',
+          `cliente #${client.clientId} · sessão ${client.sessionId.slice(0, 6)} · recebidos ${client.receivedPackets} · enviados ao QUIC ${client.submittedPackets} · fila ${client.inflight}/8 (pico ${client.peakInflight}) · descartes: fila ${client.backpressureDrops}, escrita ${client.writeErrors}, origem ${client.upstreamDrops}${Date.now() - client.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
+      }
+      edgeList.append(details);
+    }
   }
   if ((runtime.edges ?? []).length === 0) edgeList.append(text('span', 'mono subtle', 'nenhuma tentativa QUIC registrada ainda'));
   edges.append(edgeList);

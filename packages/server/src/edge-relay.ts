@@ -14,6 +14,7 @@ import type { Server as HttpsServer } from 'node:https';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { FrameKind, MAX_VOICE_PACKET, VOICE_TOKEN_BYTES } from '@vox/protocol';
+import { EDGE_VOICE_TELEMETRY, EDGE_TELEMETRY_HEADER, decodeEdgeTelemetry } from '@vox/protocol';
 import { config } from './config.js';
 import { serverMetrics } from './metrics.js';
 import type { Registry } from './registry.js';
@@ -42,8 +43,9 @@ export function attachEdgeWebSocket(
   const wss = new WebSocketServer({
     noServer: true,
     perMessageDeflate: false,
-    maxPayload: MAX_VOICE_PACKET + 32,
+    maxPayload: Math.max(MAX_VOICE_PACKET + 32, 2048),
   });
+  wss.on('headers', (headers) => headers.push(`${EDGE_TELEMETRY_HEADER}: 1`));
 
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const path = new URL(req.url ?? '/', 'http://localhost').pathname;
@@ -188,6 +190,13 @@ function serveMultiplexed(ws: WebSocket, registry: Registry, announcedEdgeId: st
       const status = decodeEdgeStatus(frame);
       if (!status) return close(ws, 1008, 'status de edge invalido');
       serverMetrics.updateEdgeStatus(edgeId, status);
+      return;
+    }
+
+    if (kind === EDGE_VOICE_TELEMETRY) {
+      const telemetry = decodeEdgeTelemetry(frame);
+      if (!telemetry) return close(ws, 1008, 'telemetria de edge invalida');
+      serverMetrics.updateEdgeVoiceTelemetry(edgeId, telemetry);
       return;
     }
 

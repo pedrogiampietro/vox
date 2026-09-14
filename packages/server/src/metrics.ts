@@ -1,5 +1,9 @@
 import os from 'node:os';
+import { appendFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import type { EdgeClientTelemetry, EdgeVoiceTelemetry } from '@vox/protocol';
+import { config } from './config.js';
 
 export type TrafficKind = 'control' | 'voice';
 export type VoiceTransportKind = 'ws' | 'quic';
@@ -24,6 +28,12 @@ export interface EdgeMetricsSnapshot {
   lastSeenAt: number;
   upstreams: number;
   sessions: number;
+  localVoice: {
+    reportedAt: number;
+    droppedPackets: number;
+    droppedBytes: number;
+    clients: (EdgeClientTelemetry & { reportedAt: number })[];
+  } | null;
   handshakes: {
     attempts: number;
     successes: number;
@@ -134,6 +144,8 @@ interface EdgeTotals {
   outboundBytes: number;
   droppedPackets: number;
   droppedBytes: number;
+  telemetryBootId: string;
+  localVoice: EdgeMetricsSnapshot['localVoice'];
 }
 
 interface ChannelTotals {
@@ -149,6 +161,7 @@ interface ChannelTotals {
  * funciona quando a voz troca WebSocket por WebTransport.
  */
 export class RuntimeMetricsCollector {
+  private telemetryWrite: Promise<void> = Promise.resolve();
   private readonly totals: TrafficTotals = {
     inbound: 0,
     outbound: 0,
@@ -263,6 +276,43 @@ export class RuntimeMetricsCollector {
     }
     if (direction === 'inbound') edge.inboundBytes += bytes;
     else edge.outboundBytes += bytes;
+  }
+
+  updateEdgeVoiceTelemetry(edgeId: string, report: EdgeVoiceTelemetry): void {
+    const edge = this.edge(edgeId);
+    const now = Date.now();
+    if (edge.telemetryBootId !== report.bootId || !edge.localVoice) {
+      edge.telemetryBootId = report.bootId;
+      edge.localVoice = { reportedAt: now, droppedPackets: 0, droppedBytes: 0, clients: [] };
+    }
+    const local = edge.localVoice;
+    const packets = Math.max(0, report.droppedPackets - local.droppedPackets);
+    const bytes = Math.max(0, report.droppedBytes - local.droppedBytes);
+    edge.droppedPackets += packets;
+    edge.droppedBytes += bytes;
+    this.totals.voiceDroppedPackets += packets;
+    this.totals.voiceDroppedBytes += bytes;
+    local.droppedPackets = Math.max(local.droppedPackets, report.droppedPackets);
+    local.droppedBytes = Math.max(local.droppedBytes, report.droppedBytes);
+    local.reportedAt = now;
+    local.clients = local.clients.filter((c) => now - c.reportedAt < 120_000
+      && c.sessionId !== report.client?.sessionId);
+    if (report.client) local.clients.push({ ...report.client, reportedAt: now });
+    // Bound retained diagnostics, including recently disconnected sessions.
+    if (local.clients.length > 256) local.clients.splice(0, local.clients.length - 256);
+    this.persistEdgeTelemetry(edgeId, report);
+  }
+
+  private persistEdgeTelemetry(edgeId: string, report: EdgeVoiceTelemetry): void {
+    const day = new Date().toISOString().slice(0, 10);
+    const file = join(config.dataDir, `voice-telemetry-${day}.jsonl`);
+    const record = JSON.stringify({ at: Date.now(), edgeId, ...report }) + '\n';
+    // Keep writes ordered without blocking the voice path. A single daily file
+    // is easy to copy after an incident and remains append-only for recovery.
+    this.telemetryWrite = this.telemetryWrite
+      .then(() => mkdir(config.dataDir, { recursive: true }))
+      .then(() => appendFile(file, record, 'utf8'))
+      .catch(() => undefined);
   }
 
   /**
@@ -477,6 +527,9 @@ export class RuntimeMetricsCollector {
         lastSeenAt: edge.lastSeenAt,
         upstreams: edge.upstreams,
         sessions: edge.sessions,
+        localVoice: edge.localVoice ? { ...edge.localVoice,
+          clients: edge.localVoice.clients.filter((c) => now - c.reportedAt < 120_000)
+            .map((c) => ({ ...c })) } : null,
         handshakes: {
           attempts: edge.handshakeAttempts,
           successes: edge.handshakeSuccesses,
@@ -527,6 +580,8 @@ export class RuntimeMetricsCollector {
       outboundBytes: 0,
       droppedPackets: 0,
       droppedBytes: 0,
+      telemetryBootId: '',
+      localVoice: null,
     };
     this.edges.set(key, created);
     return created;

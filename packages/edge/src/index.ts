@@ -11,8 +11,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { hostname as systemHostname } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { WebSocket } from 'ws';
+import { VoiceDelivery } from './voice-delivery.js';
 import {
   ChannelFlags,
+  EDGE_TELEMETRY_HEADER,
+  encodeEdgeTelemetry,
   ClientFlags,
   FrameKind,
   Group,
@@ -48,6 +51,12 @@ const originUrl = string('VOX_EDGE_ORIGIN', 'wss://server-1.v0x.online/internal/
 const secret = string('VOX_EDGE_SECRET', '');
 /** Nome estável deste edge, usado para a origem evitar eco regional. */
 const edgeId = string('VOX_EDGE_ID', '').trim() || stableEdgeId();
+const telemetryBootId = randomBytes(8).toString('hex');
+const localDrops = { droppedPackets: 0, droppedBytes: 0 };
+function recordLocalDrop(bytes: number): void {
+  localDrops.droppedPackets++;
+  localDrops.droppedBytes += bytes;
+}
 
 const handshakeStats = {
   attempts: 0,
@@ -164,7 +173,7 @@ class EdgeClient {
   group = Group.Guest;
 
   private readonly writer: WritableStreamDefaultWriter<Uint8Array>;
-  private inflight = 0;
+  readonly delivery: VoiceDelivery;
   private closed = false;
 
   constructor(
@@ -178,6 +187,8 @@ class EdgeClient {
       ? session.datagrams.createWritable()
       : session.datagrams.writable!;
     this.writer = datagrams.getWriter();
+    this.delivery = new VoiceDelivery(clientId, randomBytes(8).toString('hex'),
+      (frame) => this.writer.write(frame), recordLocalDrop, () => this.close());
   }
 
   applyState(state: VoiceState): void {
@@ -198,16 +209,15 @@ class EdgeClient {
 
   sendVoice(frame: Uint8Array): void {
     if (this.closed) return;
-    this.link.sendVoice(this.clientId, frame);
+    this.delivery.counters.receivedPackets++;
+    if (!this.link.sendVoice(this.clientId, frame)) {
+      this.delivery.counters.upstreamDrops++;
+      recordLocalDrop(frame.byteLength);
+    }
   }
 
   sendToBrowser(frame: Uint8Array): void {
-    if (this.closed || this.inflight >= 8) return;
-    this.inflight++;
-    this.writer.write(frame).then(
-      () => { this.inflight--; },
-      () => { this.inflight--; this.close(); },
-    );
+    this.delivery.send(frame);
   }
 
   onOriginVoice(frame: Uint8Array): void {
@@ -220,10 +230,12 @@ class EdgeClient {
   close(notifyOrigin = true): void {
     if (this.closed) return;
     this.closed = true;
+    this.delivery.close();
+    this.link.reportClient(this);
     this.router.remove(this);
     this.link.detach(this.clientId);
     if (notifyOrigin) this.link.release(this.clientId);
-    try { this.writer.close(); } catch { /* ja fechando */ }
+    void this.writer.close().catch(() => {});
     try { this.session.close(); } catch { /* ja fechada */ }
   }
 }
@@ -244,6 +256,7 @@ class OriginMuxLink {
   private reconnectAttempt = 0;
   private connectedAt = 0;
   private stopped = false;
+  private telemetrySupported = false;
 
   constructor() {
     this.readyPromise = Promise.reject(new Error('link ainda nao conectado'));
@@ -287,14 +300,15 @@ class OriginMuxLink {
     ws.send(new Uint8Array([EDGE_MUX_RELEASE, clientId & 0xff, (clientId >>> 8) & 0xff]), { binary: true });
   }
 
-  sendVoice(clientId: number, frame: Uint8Array): void {
+  sendVoice(clientId: number, frame: Uint8Array): boolean {
     const ws = this.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 64 * 1024) return false;
     const out = new Uint8Array(frame.byteLength + 3);
     out[0] = EDGE_MUX_VOICE;
     writeU16(out, 1, clientId);
     out.set(frame, 3);
     ws.send(out, { binary: true });
+    return true;
   }
 
   close(): void {
@@ -309,6 +323,8 @@ class OriginMuxLink {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     try {
       ws.send(encodeStatus(this.clients.size), { binary: true });
+      this.reportClient();
+      for (const client of this.clients.values()) this.reportClient(client);
     } catch {
       // A reconexao do upstream ja cuida da indisponibilidade.
     }
@@ -318,8 +334,17 @@ class OriginMuxLink {
     this.sendStatus();
   }
 
+  reportClient(client?: EdgeClient): void {
+    const ws = this.ws;
+    if (!this.telemetrySupported || !ws || ws.readyState !== WebSocket.OPEN
+      || ws.bufferedAmount > 64 * 1024) return;
+    ws.send(encodeEdgeTelemetry({ bootId: telemetryBootId, ...localDrops,
+      client: client ? { ...client.delivery.counters } : null }), { binary: true });
+  }
+
   private connect(): void {
     if (this.stopped) return;
+    this.telemetrySupported = false;
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -334,6 +359,9 @@ class OriginMuxLink {
       perMessageDeflate: false,
     });
     this.ws = ws;
+    ws.once('upgrade', (response) => {
+      this.telemetrySupported = response.headers[EDGE_TELEMETRY_HEADER] === '1';
+    });
     ws.binaryType = 'nodebuffer';
     let ready = false;
     const timeout = setTimeout(() => {
