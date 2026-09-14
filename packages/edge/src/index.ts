@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { hostname as systemHostname } from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { WebSocket } from 'ws';
-import { VoiceDelivery } from './voice-delivery.js';
+import { MAX_VOICE_INFLIGHT, VoiceDelivery } from './voice-delivery.js';
 import {
   ChannelFlags,
   EDGE_TELEMETRY_HEADER,

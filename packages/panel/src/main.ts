@@ -585,7 +585,7 @@ function renderRuntimeInsights(runtime: RuntimeMetrics): HTMLElement {
         `diagnóstico do edge · ${local.droppedPackets} descartes locais${Date.now() - local.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
       for (const client of local.clients) {
         details.append(text('div', 'mono subtle',
-          `cliente #${client.clientId} · sessão ${client.sessionId.slice(0, 6)} · recebidos ${client.receivedPackets} · enviados ao QUIC ${client.submittedPackets} · fila ${client.inflight}/8 (pico ${client.peakInflight}) · descartes: fila ${client.backpressureDrops}, escrita ${client.writeErrors}, origem ${client.upstreamDrops}${Date.now() - client.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
+          `cliente #${client.clientId} · sessão ${client.sessionId.slice(0, 6)} · recebidos ${client.receivedPackets} · enviados ao QUIC ${client.submittedPackets} · fila ${client.inflight}/24 (pico ${client.peakInflight}) · descartes: fila ${client.backpressureDrops}, escrita ${client.writeErrors}, origem ${client.upstreamDrops}${Date.now() - client.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
       }
       edgeList.append(details);
     }

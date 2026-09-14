@@ -1,5 +1,8 @@
 import type { EdgeClientTelemetry } from '@vox/protocol';
 
+/** Absorve picos curtos sem acumular segundos de áudio atrasado. */
+export const MAX_VOICE_INFLIGHT = 24;
+
 /** Counts our actual discards. A resolved QUIC write is not a delivery ACK. */
 export class VoiceDelivery {
   readonly counters: EdgeClientTelemetry;
@@ -16,7 +19,7 @@ export class VoiceDelivery {
 
   send(frame: Uint8Array): void {
     if (this.closed) return;
-    if (this.counters.inflight >= 8) {
+    if (this.counters.inflight >= MAX_VOICE_INFLIGHT) {
       this.counters.backpressureDrops++;
       this.onDrop(frame.byteLength);
       return;
