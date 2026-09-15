@@ -38,6 +38,7 @@ export interface EdgeMetricsSnapshot {
     attempts: number;
     successes: number;
     failures: number;
+    cancelled: number;
     successRate: number;
     p50Ms: number;
     p95Ms: number;
@@ -132,6 +133,7 @@ interface EdgeTotals {
   handshakeAttempts: number;
   handshakeSuccesses: number;
   handshakeFailures: number;
+  handshakeCancelled: number;
   handshakeDurations: number[];
   lastFailure: string;
   lastFailureAt: number;
@@ -341,6 +343,7 @@ export class RuntimeMetricsCollector {
     attempts: number;
     successes: number;
     failures: number;
+    cancelled: number;
     p50Ms: number;
     p95Ms: number;
     sessions: number;
@@ -354,6 +357,7 @@ export class RuntimeMetricsCollector {
     edge.handshakeAttempts = Math.max(0, Math.trunc(status.attempts));
     edge.handshakeSuccesses = Math.max(0, Math.trunc(status.successes));
     edge.handshakeFailures = Math.max(0, Math.trunc(status.failures));
+    edge.handshakeCancelled = Math.max(0, Math.trunc(status.cancelled));
     edge.reportedP50Ms = finiteNonNegative(status.p50Ms);
     edge.reportedP95Ms = finiteNonNegative(status.p95Ms);
     if (status.lastFailure) {
@@ -534,6 +538,7 @@ export class RuntimeMetricsCollector {
           attempts: edge.handshakeAttempts,
           successes: edge.handshakeSuccesses,
           failures: edge.handshakeFailures,
+          cancelled: edge.handshakeCancelled,
           successRate: edge.handshakeAttempts > 0
             ? round((edge.handshakeSuccesses / edge.handshakeAttempts) * 100)
             : 0,
@@ -568,6 +573,7 @@ export class RuntimeMetricsCollector {
       handshakeAttempts: 0,
       handshakeSuccesses: 0,
       handshakeFailures: 0,
+      handshakeCancelled: 0,
       handshakeDurations: [],
       lastFailure: '',
       lastFailureAt: 0,

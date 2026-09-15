@@ -95,6 +95,7 @@ type RuntimeMetrics = {
       attempts: number;
       successes: number;
       failures: number;
+      cancelled: number;
       successRate: number;
       p50Ms: number;
       p95Ms: number;
@@ -573,7 +574,7 @@ function renderRuntimeInsights(runtime: RuntimeMetrics): HTMLElement {
     row.append(
       text('strong', '', edge.id),
       text('span', `runtime-edge-state ${active ? 'online' : 'offline'}`, state),
-      text('span', 'mono subtle', `${edge.sessions} sessões · handshake ${handshakes.successRate.toFixed(1)}% · p50 ${formatMs(handshakes.p50Ms)} · p95 ${formatMs(handshakes.p95Ms)} · ${edge.traffic.droppedPackets} drops`),
+      text('span', 'mono subtle', `${edge.sessions} sessões · handshake ${handshakes.successRate.toFixed(1)}% · p50 ${formatMs(handshakes.p50Ms)} · p95 ${formatMs(handshakes.p95Ms)} · ${handshakes.cancelled} canceladas · ${edge.traffic.droppedPackets} drops`),
     );
     if (handshakes.lastFailure && handshakes.lastFailureAt >= handshakes.lastSuccessAt) {
       row.append(text('span', 'mono runtime-edge-error', `última falha: ${handshakes.lastFailure}`));

@@ -382,22 +382,36 @@ function decodeEdgeStatus(frame: Uint8Array): {
   attempts: number;
   successes: number;
   failures: number;
+  cancelled: number;
   p50Ms: number;
   p95Ms: number;
   sessions: number;
   lastFailure: string;
 } | null {
   if (frame.length < 20 || frame[0] !== EDGE_MUX_STATUS) return null;
-  const reasonLength = frame[19]!;
-  if (20 + reasonLength !== frame.length) return null;
-  return {
+  // Edges ainda em atualização usam o formato anterior, sem canceladas.
+  if (20 + frame[19]! === frame.length) return {
     attempts: readU32(frame, 1),
     successes: readU32(frame, 5),
     failures: readU32(frame, 9),
+    cancelled: 0,
     p50Ms: readU16(frame, 13),
     p95Ms: readU16(frame, 15),
     sessions: readU16(frame, 17),
     lastFailure: new TextDecoder().decode(frame.subarray(20)),
+  };
+  if (frame.length < 24) return null;
+  const reasonLength = frame[23]!;
+  if (24 + reasonLength !== frame.length) return null;
+  return {
+    attempts: readU32(frame, 1),
+    successes: readU32(frame, 5),
+    failures: readU32(frame, 9),
+    cancelled: readU32(frame, 13),
+    p50Ms: readU16(frame, 17),
+    p95Ms: readU16(frame, 19),
+    sessions: readU16(frame, 21),
+    lastFailure: new TextDecoder().decode(frame.subarray(24)),
   };
 }
 

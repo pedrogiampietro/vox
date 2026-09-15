@@ -62,6 +62,7 @@ const handshakeStats = {
   attempts: 0,
   successes: 0,
   failures: 0,
+  cancelled: 0,
   durations: [] as number[],
   lastFailure: '',
 };
@@ -494,7 +495,11 @@ async function serve(session: WTSession, router: EdgeRouter, origin: OriginMuxLi
     }
     // O cliente abre vários candidatos em paralelo. Se outro edge vencer,
     // este é fechado antes do token e não deve contar como falha real.
-    if ('closed' in token) return closeSession(session);
+    if ('closed' in token) {
+      handshakeStats.cancelled++;
+      origin.reportStatus();
+      return closeSession(session);
+    }
     countAttempt();
 
     let accepted: AcceptedState;
@@ -677,16 +682,17 @@ function decodeAccepted(frame: Uint8Array): AcceptedState | null {
 
 function encodeStatus(sessions: number): Uint8Array {
   const reason = new TextEncoder().encode(handshakeStats.lastFailure).slice(0, 120);
-  const out = new Uint8Array(20 + reason.length);
+  const out = new Uint8Array(24 + reason.length);
   out[0] = EDGE_MUX_STATUS;
   writeU32(out, 1, handshakeStats.attempts);
   writeU32(out, 5, handshakeStats.successes);
   writeU32(out, 9, handshakeStats.failures);
-  writeU16(out, 13, percentile(handshakeStats.durations, 0.5));
-  writeU16(out, 15, percentile(handshakeStats.durations, 0.95));
-  writeU16(out, 17, sessions);
-  out[19] = reason.length;
-  out.set(reason, 20);
+  writeU32(out, 13, handshakeStats.cancelled);
+  writeU16(out, 17, percentile(handshakeStats.durations, 0.5));
+  writeU16(out, 19, percentile(handshakeStats.durations, 0.95));
+  writeU16(out, 21, sessions);
+  out[23] = reason.length;
+  out.set(reason, 24);
   return out;
 }
 
