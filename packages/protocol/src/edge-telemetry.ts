@@ -12,6 +12,11 @@ export interface EdgeClientTelemetry {
   upstreamDrops: number;
   inflight: number;
   peakInflight: number;
+  /** Janela atual, reduzida quando a entrega para o navegador fica lenta. */
+  adaptiveLimit: number;
+  /** Média móvel e p95 do tempo que o runtime levou para aceitar um datagrama. */
+  writeLatencyMs: number;
+  writeLatencyP95Ms: number;
 }
 
 export interface EdgeVoiceTelemetry {
@@ -40,7 +45,8 @@ export function decodeEdgeTelemetry(frame: Uint8Array): EdgeVoiceTelemetry | nul
     if (c !== null && (!c || !counter(c.clientId) || c.clientId < 1 || c.clientId > 65535
       || typeof c.sessionId !== 'string' || !/^[a-f0-9]{16}$/.test(c.sessionId)
       || ![c.receivedPackets, c.submittedPackets, c.backpressureDrops, c.writeErrors,
-        c.upstreamDrops, c.inflight, c.peakInflight].every(counter))) return null;
+        c.upstreamDrops, c.inflight, c.peakInflight, c.adaptiveLimit].every(counter)
+      || ![c.writeLatencyMs, c.writeLatencyP95Ms].every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0))) return null;
     return value;
   } catch { return null; }
 }

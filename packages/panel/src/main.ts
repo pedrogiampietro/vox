@@ -82,7 +82,8 @@ type RuntimeMetrics = {
       clients: {
         clientId: number; sessionId: string; receivedPackets: number; submittedPackets: number;
         backpressureDrops: number; writeErrors: number; upstreamDrops: number;
-        inflight: number; peakInflight: number; reportedAt: number;
+        inflight: number; peakInflight: number; adaptiveLimit: number;
+        writeLatencyMs: number; writeLatencyP95Ms: number; reportedAt: number;
       }[];
     } | null;
     id: string;
@@ -585,7 +586,7 @@ function renderRuntimeInsights(runtime: RuntimeMetrics): HTMLElement {
         `diagnóstico do edge · ${local.droppedPackets} descartes locais${Date.now() - local.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
       for (const client of local.clients) {
         details.append(text('div', 'mono subtle',
-          `cliente #${client.clientId} · sessão ${client.sessionId.slice(0, 6)} · recebidos ${client.receivedPackets} · enviados ao QUIC ${client.submittedPackets} · fila ${client.inflight}/24 (pico ${client.peakInflight}) · descartes: fila ${client.backpressureDrops}, escrita ${client.writeErrors}, origem ${client.upstreamDrops}${Date.now() - client.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
+          `cliente #${client.clientId} · sessão ${client.sessionId.slice(0, 6)} · recebidos ${client.receivedPackets} · enviados ao QUIC ${client.submittedPackets} · entrega média ${formatMs(client.writeLatencyMs)} · p95 ${formatMs(client.writeLatencyP95Ms)} · fila ${client.inflight}/${client.adaptiveLimit} (pico ${client.peakInflight}) · descartes: fila ${client.backpressureDrops}, escrita ${client.writeErrors}, origem ${client.upstreamDrops}${Date.now() - client.reportedAt > 15_000 ? ' · amostra antiga' : ''}`));
       }
       edgeList.append(details);
     }
