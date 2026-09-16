@@ -298,6 +298,7 @@ export class Registry {
     channels: number;
     protected: boolean;
     admins: number;
+    liveKitVoiceModes: { channelId: number; members: number; reason: string; activatedAt: number }[];
   }[] {
     return this.list().map((hub) => ({
       id: hub.id,
@@ -310,6 +311,7 @@ export class Registry {
       channels: hub.channelList.length,
       protected: hub.settings.password !== '',
       admins: Object.values(hub.groupList()).filter((g) => g >= Group.Admin).length,
+      liveKitVoiceModes: hub.liveKitVoiceModeList(),
     }));
   }
 }

@@ -53,7 +53,9 @@ import { SOUND_EVENT_LABELS, SOUND_PACK_LABELS, type SoundName, type SoundPackId
 import { createLocaleSelect, t, translateTree } from './i18n.js';
 import { DEFAULT_PROFILE_ACCENT } from './profile.js';
 import { buildProfileEditor, renderProfileCover } from './profile-editor.js';
+import { applySavedTheme, applyTheme, loadTheme, THEMES, type ThemeId } from './themes.js';
 
+applySavedTheme();
 registerPwaServiceWorker();
 
 // ------------------------------------------------------------------- state --
@@ -3147,6 +3149,7 @@ function renderSettings(): HTMLElement {
   const nav = $('div', 'settings-nav');
   const sections = [
     { id: 'profile', icon: '●', label: t('Perfil') },
+    { id: 'appearance', icon: '◐', label: 'Tema' },
     { id: 'identity', icon: '◈', label: t('Identidade') },
     { id: 'capture', icon: '🎙', label: t('Capturar') },
     { id: 'playback', icon: '🔊', label: t('Reprodução') },
@@ -3186,6 +3189,7 @@ function renderSettings(): HTMLElement {
     body.replaceChildren();
     body.classList.toggle('profile-settings-body', activeSection === 'profile');
     if (activeSection === 'profile') buildProfileSection(body);
+    else if (activeSection === 'appearance') buildAppearanceSection(body, buildBody);
     else if (activeSection === 'identity') buildIdentitySection(body, buildBody);
     else if (activeSection === 'capture') buildCaptureSection(body, buildBody);
     else if (activeSection === 'playback') buildPlaybackSection(body);
@@ -5658,6 +5662,28 @@ function updateMemberSpeakingIndicators(): void {
   for (const el of document.querySelectorAll<HTMLElement>('[data-speaking-avatar]')) {
     el.classList.toggle('talking', client.isTalking(Number(el.dataset.speakingAvatar)));
   }
+}
+
+function buildAppearanceSection(body: HTMLElement, rebuild: () => void): void {
+  body.append(text('h3', '', 'TEMA'), text('p', 'settings-note', 'Escolha a aparência do v0x neste dispositivo.'));
+  const selected = loadTheme();
+  const grid = $('div', 'theme-grid');
+  for (const theme of THEMES) {
+    const option = $('button', `theme-option${selected === theme.id ? ' selected' : ''}`);
+    option.type = 'button';
+    option.setAttribute('aria-pressed', String(selected === theme.id));
+    option.append(
+      $('span', `theme-preview theme-preview-${theme.id}`),
+      text('strong', '', theme.name),
+      text('span', 'settings-note', theme.description),
+    );
+    option.addEventListener('click', () => {
+      applyTheme(theme.id as ThemeId);
+      rebuild();
+    });
+    grid.append(option);
+  }
+  body.append(grid);
 }
 
 function tick(): void {

@@ -8,10 +8,13 @@
  */
 
 import { Room, RoomEvent, Track } from 'livekit-client';
-import type { RemoteAudioTrack, RemoteTrack } from 'livekit-client';
+import type { RemoteAudioTrack, RemoteTrack, RemoteTrackPublication } from 'livekit-client';
 import type { LiveKitCredentials } from './connection.js';
 
 export type LiveKitVoiceState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'failed';
+
+/** Acima disso, mais vozes simultaneas viram ruido e gastam o plano sem ajudar. */
+const MAX_LIVEKIT_REMOTE_VOICES = 8;
 
 export interface LiveKitVoiceHandlers {
   onState(state: LiveKitVoiceState, detail: string): void;
@@ -71,6 +74,8 @@ export class LiveKitVoice {
     room
       .on(RoomEvent.TrackSubscribed, (track, _publication, participant) => this.onTrackSubscribed(room, generation, track, participant.identity))
       .on(RoomEvent.TrackUnsubscribed, (track) => this.onTrackUnsubscribed(room, generation, track))
+      .on(RoomEvent.TrackPublished, () => this.syncRemoteVoiceSubscriptions(room, generation))
+      .on(RoomEvent.TrackUnpublished, () => this.syncRemoteVoiceSubscriptions(room, generation))
       .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
         if (this.room !== room || generation !== this.generation) return;
         this.talking.clear();
@@ -78,6 +83,7 @@ export class LiveKitVoice {
           const clientId = clientIdFromIdentity(participant.identity);
           if (clientId > 0) this.talking.add(clientId);
         }
+        this.syncRemoteVoiceSubscriptions(room, generation);
         this.handlers.onTalkingChange?.();
       })
       .on(RoomEvent.Reconnecting, () => {
@@ -93,8 +99,11 @@ export class LiveKitVoice {
       });
 
     try {
-      await room.connect(credentials.url, credentials.token, { autoSubscribe: true });
+      // A inscricao e limitada localmente logo abaixo. O SFU continua sabendo
+      // quem esta falando, mas nao entrega 49 microfones a cada participante.
+      await room.connect(credentials.url, credentials.token, { autoSubscribe: false });
       if (this.room !== room || generation !== this.generation) throw new Error('fallback LiveKit substituido');
+      this.syncRemoteVoiceSubscriptions(room, generation);
 
       const publication = await room.localParticipant.publishTrack(source, {
         source: Track.Source.Microphone,
@@ -174,6 +183,24 @@ export class LiveKitVoice {
 
   isTalking(clientId: number): boolean {
     return this.talking.has(clientId);
+  }
+
+  /** Mantem as vozes ativas primeiro e usa as ja ouvidas para preencher vagas. */
+  private syncRemoteVoiceSubscriptions(room: Room, generation: number): void {
+    if (this.room !== room || generation !== this.generation) return;
+    const publications: { publication: RemoteTrackPublication; active: boolean; subscribed: boolean; identity: string }[] = [];
+    for (const participant of room.remoteParticipants.values()) {
+      const active = this.talking.has(clientIdFromIdentity(participant.identity));
+      for (const publication of participant.audioTrackPublications.values()) {
+        if (publication.source !== Track.Source.Microphone) continue;
+        publications.push({ publication, active, subscribed: publication.isSubscribed, identity: participant.identity });
+      }
+    }
+    publications.sort((a, b) => Number(b.active) - Number(a.active)
+      || Number(b.subscribed) - Number(a.subscribed)
+      || a.identity.localeCompare(b.identity));
+    const allowed = new Set(publications.slice(0, MAX_LIVEKIT_REMOTE_VOICES).map(({ publication }) => publication.trackSid));
+    for (const { publication } of publications) publication.setSubscribed(allowed.has(publication.trackSid));
   }
 
   private onTrackSubscribed(room: Room, generation: number, track: RemoteTrack, participantIdentity: string): void {

@@ -246,6 +246,32 @@ body {
   color: var(--alert);
 }
 
+.livekit-voice-panel,
+.livekit-voice-list {
+  display: grid;
+  gap: 9px;
+}
+
+.livekit-voice-title {
+  color: var(--amber);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.livekit-voice-panel p { margin: 0; }
+
+.livekit-voice-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: rgba(16, 15, 14, 0.38);
+}
+
 .runtime-empty {
   margin: 0;
 }

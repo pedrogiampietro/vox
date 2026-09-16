@@ -132,6 +132,8 @@ export class VoxClient {
   private adaptiveBitrateChangedAt = 0;
   private liveKitFallbackAttemptAt = 0;
   private liveKitFallbackStarting = false;
+  /** Modo coordenado pelo servidor para o canal atual. */
+  private liveKitVoiceChannelId = 0;
 
   private ctx: AudioContext | null = null;
   private workletsReady: Promise<void> | null = null;
@@ -180,7 +182,7 @@ export class VoxClient {
       },
       onMessage: (m) => this.apply(m),
       onVoice: (p) => this.mixer?.push(p),
-      onVoiceFallbackNeeded: (reason) => void this.startLiveKitFallback(reason),
+      onVoiceFallbackNeeded: (reason) => this.requestLiveKitChannelFallback(reason),
       // Métricas de voz mudam continuamente. A tela atualiza somente o
       // indicador no header; reconstruir o shell aqui faria o scroll piscar.
       onVoiceTransport: () => this.onLiveConnectionStatus(),
@@ -357,6 +359,7 @@ export class VoxClient {
     this.botState = null;
     this.profileSentForConnection = false;
     this.profileReceivedForConnection = false;
+    this.liveKitVoiceChannelId = 0;
     this.screen.close();
     this.liveKitVoice.disconnect();
     // Offline de verdade: nao ha reconexao a caminho para justificar segurar o
@@ -484,6 +487,7 @@ export class VoxClient {
       this.mixer.preamp = this.preamp;
       this.startVoiceSampler();
     }
+    this.syncChannelVoiceMode();
     this.sounds ??= new Sounds(this.ctx);
     this.applySoundPrefs();
   }
@@ -492,13 +496,28 @@ export class VoxClient {
     if (!this.ctx) return;
     try {
       await this.microphone.start(this.ctx, this.mic);
+      this.syncChannelVoiceMode();
     } catch (err) {
       this.warn(`microfone indisponivel: ${describeError(err)}`);
       this.setFlags(this.flags | ClientFlags.NoInput | ClientFlags.MutedMic);
     }
   }
 
-  /** Ativa a sala LiveKit somente depois de duas janelas ruins no caminho Vox. */
+  /** Pede uma troca coordenada: todos no canal usam a mesma rota de voz. */
+  private requestLiveKitChannelFallback(reason: string): void {
+    const channelId = this.self?.channelId ?? 0;
+    if (!channelId) return;
+    this.connection.send({ t: Op.RequestLiveKitVoice, channelId, lossPct: this.connection.rxLossPct });
+    this.warn(`voz instável detectada; protegendo o canal via LiveKit (${reason})`);
+  }
+
+  private syncChannelVoiceMode(): void {
+    const channelId = this.self?.channelId ?? 0;
+    if (this.liveKitVoiceChannelId !== channelId || !channelId) return;
+    void this.startLiveKitFallback('modo protegido do canal');
+  }
+
+  /** Ativa a sala LiveKit quando o canal inteiro foi colocado em protecao. */
   private async startLiveKitFallback(reason: string): Promise<void> {
     if (
       this.liveKitFallbackStarting
@@ -1128,6 +1147,7 @@ export class VoxClient {
         for (const claim of m.claims) this.claims.set(claim.id, claim);
         void this.startMic();
         this.syncMicMute();
+        this.syncChannelVoiceMode();
         // Pede aos compartilhadores já presentes que reenviem seu estado de
         // transmissão para quem acabou de entrar.
         this.screen.syncPresence();
@@ -1201,6 +1221,7 @@ export class VoxClient {
         if (c) c.channelId = m.channelId;
         if (m.clientId === this.selfId) {
           this.stopLiveKitFallback();
+          this.liveKitVoiceChannelId = 0;
           this.play('channel');
           this.syncMicMute();
           // Mudei de canal — recalcula oferta de tela para o novo grupo.
@@ -1211,6 +1232,13 @@ export class VoxClient {
         }
         break;
       }
+
+      case Op.VoiceMode:
+        if (m.livekit && m.channelId === this.self?.channelId) {
+          this.liveKitVoiceChannelId = m.channelId;
+          this.syncChannelVoiceMode();
+        }
+        break;
 
       case Op.ClientState: {
         const c = this.clients.get(m.clientId);

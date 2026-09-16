@@ -19,8 +19,9 @@
  * 17: permissões de visibilidade/entrada em canais e canal sem voz.
  * 18: mover canais na arvore (drag-and-drop) com permissao propria.
  * 19: perfil visual por identidade (avatar, moldura, cor e status).
+ * 20: modo de voz coordenado por canal (Vox ou LiveKit).
  */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 /** Desafio assinado no handshake, para provar a posse da chave privada. */
 export const CHALLENGE_BYTES = 32;
@@ -84,6 +85,8 @@ export enum Op {
   SetPreset = 0x7b,
   EditServer = 0x7c,
   SetProfile = 0x7d,
+  /** Cliente reporta perda sustentada; o servidor pode proteger o canal inteiro. */
+  RequestLiveKitVoice = 0x7e,
 
   // servidor -> cliente
   Welcome = 0x81,
@@ -110,6 +113,8 @@ export enum Op {
   PresetState = 0xc7,
   ServerUpdate = 0xc8,
   ProfileUpdate = 0xc9,
+  /** Troca coordenada de rota de voz para todos os membros de um canal. */
+  VoiceMode = 0xca,
 }
 
 export enum BotControlAction {

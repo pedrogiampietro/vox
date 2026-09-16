@@ -289,6 +289,7 @@ export class AdminApi {
         password: hub.settings.password ? '(definida)' : '',
         channels: hub.channelList,
         clients: hub.clientList(),
+        liveKitVoiceModes: hub.liveKitVoiceModeList(),
         bans: hub.banList(),
         groups: hub.groupList(),
       });

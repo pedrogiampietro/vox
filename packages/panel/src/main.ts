@@ -11,6 +11,7 @@ type ServerSummary = {
   channels: number;
   protected: boolean;
   admins: number;
+  liveKitVoiceModes: { channelId: number; members: number; reason: string; activatedAt: number }[];
 };
 
 type Overview = {
@@ -235,6 +236,7 @@ type ServerDetail = {
   providerLabel: string;
   channels: ChannelInfo[];
   clients: ClientInfo[];
+  liveKitVoiceModes: { channelId: number; members: number; reason: string; activatedAt: number }[];
   bans: Ban[];
   groups: Record<string, Group>;
 };
@@ -417,6 +419,7 @@ function renderMain(): HTMLElement {
       grid.append(stat('admins', String(server.admins), `servidor #${server.id}`, 'span-3'));
       grid.append(stat('atualizado', overview ? new Date(overview.stamp).toLocaleTimeString() : '--', 'SSE ativo', 'span-3'));
       grid.append(renderRuntimeMetrics(overview?.runtime ?? null));
+      grid.append(renderLiveKitVoiceModes(server, detail));
       grid.append(renderServerSettings(detail), renderClients(detail), renderDownloads());
     } else if (activeTab === 'server') {
       grid.append(renderServerSettings(detail), renderAnnouncement(detail));
@@ -443,6 +446,32 @@ function renderMain(): HTMLElement {
 
   main.append(grid);
   return main;
+}
+
+function renderLiveKitVoiceModes(summary: ServerSummary, server: ServerDetail): HTMLElement {
+  const box = $('section', 'panel span-12 livekit-voice-panel');
+  box.append(text('strong', 'livekit-voice-title', 'proteção de voz LiveKit'));
+  // A origem e o SSE de overview, que chega a cada poucos segundos. Assim o
+  // diagnostico muda ao vivo sem refazer uma chamada extra do painel.
+  const modes = summary.liveKitVoiceModes ?? server.liveKitVoiceModes ?? [];
+  if (modes.length === 0) {
+    box.append(text('p', 'subtle', 'Nenhum canal está no LiveKit agora. Voz usando os edges Vox normalmente.'));
+    return box;
+  }
+  const byId = new Map(server.channels.map((channel) => [channel.id, channel]));
+  const list = $('div', 'livekit-voice-list');
+  for (const mode of modes) {
+    const channel = byId.get(mode.channelId);
+    const row = $('div', 'livekit-voice-row');
+    row.append(
+      text('strong', '', channel?.name ?? `canal #${mode.channelId}`),
+      text('span', 'runtime-edge-state online', 'LIVEKIT'),
+      text('span', 'mono subtle', `${mode.members} participantes · ${mode.reason} · desde ${new Date(mode.activatedAt).toLocaleTimeString()}`),
+    );
+    list.append(row);
+  }
+  box.append(list);
+  return box;
 }
 
 function renderTabs(): HTMLElement {

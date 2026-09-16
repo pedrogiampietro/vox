@@ -88,6 +88,10 @@ interface Channel {
   members: Set<Session>;
 }
 
+const LIVEKIT_CHANNEL_MEMBER_THRESHOLD = 12;
+const LIVEKIT_CHANNEL_LOSS_THRESHOLD = 8;
+interface LiveKitChannelMode { reason: string; activatedAt: number; }
+
 // Permissoes agora vem de hub.permissionFor(action). Dono ajusta via UI.
 
 export class Hub {
@@ -98,6 +102,8 @@ export class Hub {
    * novo para cada pacote e só é invalidado quando a composição do canal muda.
    */
   private readonly voiceMemberCache = new Map<number, Session[]>();
+  /** Rota temporaria, em memoria: volta ao Vox naturalmente quando o canal esvazia. */
+  private readonly liveKitVoiceChannels = new Map<number, LiveKitChannelMode>();
   /**
    * Atualizacoes de visibilidade para sessoes restritas sao agrupadas. Um
    * burst de entradas nao deve gerar um Snapshot completo por evento.
@@ -315,6 +321,16 @@ export class Hub {
 
   clientList(): ClientInfo[] {
     return [...this.sessions.values()].map((s) => this.describe(s));
+  }
+
+  /** Estado efemero para o painel: nao persiste depois que o canal esvazia. */
+  liveKitVoiceModeList(): { channelId: number; members: number; reason: string; activatedAt: number }[] {
+    return [...this.liveKitVoiceChannels.entries()].map(([channelId, mode]) => ({
+      channelId,
+      members: this.channels.get(channelId)?.members.size ?? 0,
+      reason: mode.reason,
+      activatedAt: mode.activatedAt,
+    }));
   }
 
   /**
@@ -567,6 +583,26 @@ export class Hub {
   private removeMember(channel: Channel, session: Session): void {
     channel.members.delete(session);
     this.voiceMemberCache.delete(channel.info.id);
+    if (channel.members.size === 0) this.liveKitVoiceChannels.delete(channel.info.id);
+  }
+
+  private sendVoiceMode(session: Session, channelId: number): void {
+    const mode = this.liveKitVoiceChannels.get(channelId);
+    if (mode) session.send(encodeServerMessage({ t: Op.VoiceMode, channelId, livekit: true, reason: mode.reason }));
+  }
+
+  /** Uma vez protegido, o canal fica inteiro no LiveKit ate todos sairem. */
+  private protectChannelWithLiveKit(channel: Channel, reason: string): boolean {
+    if (this.liveKitVoiceChannels.has(channel.info.id)) return false;
+    this.liveKitVoiceChannels.set(channel.info.id, { reason, activatedAt: Date.now() });
+    const frame = encodeServerMessage({ t: Op.VoiceMode, channelId: channel.info.id, livekit: true, reason });
+    for (const member of channel.members) member.send(frame);
+    return true;
+  }
+
+  private assessChannelVoiceMode(channel: Channel): boolean {
+    if (channel.members.size < LIVEKIT_CHANNEL_MEMBER_THRESHOLD) return false;
+    return this.protectChannelWithLiveKit(channel, `canal com ${channel.members.size} participantes`);
   }
 
   private allocChannelId(): number {
@@ -805,6 +841,16 @@ export class Hub {
             this.broadcast({ t: Op.ClientAdd, client: this.describe(s) });
           }
         }
+        break;
+      }
+
+      case Op.RequestLiveKitVoice: {
+        // So a propria sessao pode pedir protecao para o canal em que esta.
+        // O cliente ja exige duas janelas ruins; o servidor valida o limiar
+        // para impedir que um pedido isolado mova uma sala saudavel.
+        if (m.channelId !== s.channelId || m.lossPct < LIVEKIT_CHANNEL_LOSS_THRESHOLD) break;
+        const channel = this.channels.get(s.channelId);
+        if (channel) this.protectChannelWithLiveKit(channel, `perda persistente (${m.lossPct.toFixed(1)}%)`);
         break;
       }
 
@@ -1184,6 +1230,7 @@ export class Hub {
     s.send(encodeServerMessage({ t: Op.GroupDefs, groups: this.groupDefs }));
     s.send(encodeServerMessage({ t: Op.Permissions, entries: this.permissionList() }));
     s.send(encodeServerMessage(this.presetStateMessage()));
+    this.sendVoiceMode(s, s.channelId);
     if (s.group >= Group.Dono) {
       s.send(encodeServerMessage({ t: Op.BotState, state: this.botState() }));
     }
@@ -1376,6 +1423,7 @@ export class Hub {
     target.channelId = channelId;
     this.syncVoiceState(target);
     this.broadcastClientMove(target, previousChannelId, channelId);
+    if (!this.assessChannelVoiceMode(ch)) this.sendVoiceMode(target, channelId);
   }
 
   /** Estado minimo que um edge precisa para encaminhar voz localmente. */
@@ -1425,6 +1473,7 @@ export class Hub {
     s.channelId = channelId;
     this.syncVoiceState(s);
     this.broadcastClientMove(s, previousChannelId, channelId);
+    if (!this.assessChannelVoiceMode(target)) this.sendVoiceMode(s, channelId);
   }
 
   private afkChannelId(): number {

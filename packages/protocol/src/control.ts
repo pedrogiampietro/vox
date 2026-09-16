@@ -75,7 +75,8 @@ export type ClientMessage =
   */
   | { t: Op.SetPreset; presetId: string; custom: string }
   | { t: Op.EditServer; name: string; motd: string; maxClients: number }
-  | { t: Op.SetProfile; avatar: string; border: ProfileBorder; accent: string; statusText: string; banner?: string; bannerStyle?: ProfileBannerStyle };
+  | { t: Op.SetProfile; avatar: string; border: ProfileBorder; accent: string; statusText: string; banner?: string; bannerStyle?: ProfileBannerStyle }
+  | { t: Op.RequestLiveKitVoice; channelId: number; lossPct: number };
 
 export type ServerMessage =
   | { t: Op.Challenge; nonce: Uint8Array }
@@ -134,6 +135,7 @@ export type ServerMessage =
   | { t: Op.PresetState; presetId: string; custom: string }
   | { t: Op.ServerUpdate; name: string; motd: string; maxClients: number }
   | { t: Op.ProfileUpdate; profile: UserProfile }
+  | { t: Op.VoiceMode; channelId: number; livekit: boolean; reason: string }
   | { t: Op.ScreenSignalDeliver; senderId: number; targetId: number; kind: string; data: string };
 
 export const MAX_CONTROL_FRAME = 64 * 1024;
@@ -450,6 +452,9 @@ export function encodeClientMessage(m: ClientMessage): Uint8Array {
       w.str(m.avatar).str(m.border).str(m.accent).str(m.statusText);
       if (m.banner !== undefined || m.bannerStyle !== undefined) w.str(m.banner ?? '').str(m.bannerStyle ?? 'signature');
       break;
+    case Op.RequestLiveKitVoice:
+      w.u16(m.channelId).u16(Math.round(Math.max(0, Math.min(100, m.lossPct)) * 10));
+      break;
   }
   return w.finish();
 }
@@ -555,6 +560,8 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         t, avatar: r.str(), border: r.str() as ProfileBorder, accent: r.str(), statusText: r.str(),
         ...(r.remaining > 0 ? { banner: r.str(), bannerStyle: r.str() as ProfileBannerStyle } : {}),
       };
+    case Op.RequestLiveKitVoice:
+      return { t, channelId: r.u16(), lossPct: r.u16() / 10 };
     default:
       throw new Error(`opcode desconhecido do cliente: ${t}`);
   }
@@ -647,6 +654,9 @@ export function encodeServerMessage(m: ServerMessage): Uint8Array {
     case Op.ProfileUpdate:
       writeProfile(w, m.profile);
       break;
+    case Op.VoiceMode:
+      w.u16(m.channelId).u8(m.livekit ? 1 : 0).str(m.reason);
+      break;
   }
   return w.finish();
 }
@@ -724,6 +734,8 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       return { t, name: r.str(), motd: r.str(), maxClients: r.u16() };
     case Op.ProfileUpdate:
       return { t, profile: readProfile(r) };
+    case Op.VoiceMode:
+      return { t, channelId: r.u16(), livekit: r.u8() === 1, reason: r.str() };
     default:
       throw new Error(`opcode desconhecido do servidor: ${t}`);
   }
