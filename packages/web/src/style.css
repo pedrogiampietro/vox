@@ -45,6 +45,9 @@
 .theme-preview-forest { --theme-ink: #0b120e; --theme-panel: #121d16; --theme-accent: #b6d75c; }
 .theme-preview-violet { --theme-ink: #100b18; --theme-panel: #191126; --theme-accent: #bc8cff; }
 .theme-preview-light { --theme-ink: #f5f2eb; --theme-panel: #fffdf8; --theme-accent: #a4610d; border-color: #aa9e8d; }
+.theme-preview-glacier { --theme-ink: #edf5fb; --theme-panel: #fafdff; --theme-accent: #1976a8; border-color: #91aabd; }
+.theme-preview-sage { --theme-ink: #f0f5ed; --theme-panel: #fbfdf9; --theme-accent: #5d7d35; border-color: #94aa8b; }
+.theme-preview-lavender { --theme-ink: #f5f1fa; --theme-panel: #fdfaff; --theme-accent: #7651a7; border-color: #a993bc; }
 
 @media (max-width: 520px) { .theme-grid { grid-template-columns: 1fr; } }
 

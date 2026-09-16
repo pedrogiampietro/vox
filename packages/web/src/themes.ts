@@ -6,7 +6,10 @@ export const THEMES = [
   { id: 'midnight', name: 'Midnight', description: 'azul profundo e frio' },
   { id: 'forest', name: 'Forest', description: 'verde de terminal' },
   { id: 'violet', name: 'Violet', description: 'roxo elétrico discreto' },
-  { id: 'light', name: 'Claro', description: 'papel claro e alto contraste' },
+  { id: 'light', name: 'Marfim', description: 'papel quente e alto contraste' },
+  { id: 'glacier', name: 'Glacier', description: 'claro azul-gelo' },
+  { id: 'sage', name: 'Sage', description: 'claro verde-sálvia' },
+  { id: 'lavender', name: 'Lavender', description: 'claro lavanda suave' },
 ] as const;
 
 export type ThemeId = typeof THEMES[number]['id'];
